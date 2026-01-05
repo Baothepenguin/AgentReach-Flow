@@ -2,6 +2,8 @@ import {
   users,
   clients,
   brandingKits,
+  projects,
+  htmlTemplates,
   subscriptions,
   invoices,
   newsletters,
@@ -16,6 +18,10 @@ import {
   type InsertClient,
   type BrandingKit,
   type InsertBrandingKit,
+  type Project,
+  type InsertProject,
+  type HtmlTemplate,
+  type InsertHtmlTemplate,
   type Subscription,
   type InsertSubscription,
   type Invoice,
@@ -103,6 +109,19 @@ export interface IStorage {
   getValidReviewToken(token: string): Promise<ReviewToken | undefined>;
   createReviewToken(data: InsertReviewToken): Promise<ReviewToken>;
   markTokenUsed(id: string): Promise<void>;
+
+  // Projects
+  getProjectsByClient(clientId: string): Promise<Project[]>;
+  getProject(id: string): Promise<Project | undefined>;
+  createProject(project: InsertProject): Promise<Project>;
+  updateProject(id: string, data: Partial<InsertProject>): Promise<Project | undefined>;
+
+  // HTML Templates
+  getTemplates(): Promise<HtmlTemplate[]>;
+  getTemplate(id: string): Promise<HtmlTemplate | undefined>;
+  getDefaultTemplate(): Promise<HtmlTemplate | undefined>;
+  createTemplate(template: InsertHtmlTemplate): Promise<HtmlTemplate>;
+  updateTemplate(id: string, data: Partial<InsertHtmlTemplate>): Promise<HtmlTemplate | undefined>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -407,6 +426,66 @@ export class DatabaseStorage implements IStorage {
 
   async markTokenUsed(id: string): Promise<void> {
     await db.update(reviewTokens).set({ usedAt: new Date() }).where(eq(reviewTokens.id, id));
+  }
+
+  // Projects
+  async getProjectsByClient(clientId: string): Promise<Project[]> {
+    return db
+      .select()
+      .from(projects)
+      .where(eq(projects.clientId, clientId))
+      .orderBy(desc(projects.createdAt));
+  }
+
+  async getProject(id: string): Promise<Project | undefined> {
+    const [project] = await db.select().from(projects).where(eq(projects.id, id));
+    return project;
+  }
+
+  async createProject(insertProject: InsertProject): Promise<Project> {
+    const [project] = await db.insert(projects).values(insertProject).returning();
+    return project;
+  }
+
+  async updateProject(id: string, data: Partial<InsertProject>): Promise<Project | undefined> {
+    const [project] = await db
+      .update(projects)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(projects.id, id))
+      .returning();
+    return project;
+  }
+
+  // HTML Templates
+  async getTemplates(): Promise<HtmlTemplate[]> {
+    return db
+      .select()
+      .from(htmlTemplates)
+      .orderBy(desc(htmlTemplates.createdAt));
+  }
+
+  async getTemplate(id: string): Promise<HtmlTemplate | undefined> {
+    const [template] = await db.select().from(htmlTemplates).where(eq(htmlTemplates.id, id));
+    return template;
+  }
+
+  async getDefaultTemplate(): Promise<HtmlTemplate | undefined> {
+    const [template] = await db.select().from(htmlTemplates).where(eq(htmlTemplates.isDefault, true));
+    return template;
+  }
+
+  async createTemplate(insertTemplate: InsertHtmlTemplate): Promise<HtmlTemplate> {
+    const [template] = await db.insert(htmlTemplates).values(insertTemplate).returning();
+    return template;
+  }
+
+  async updateTemplate(id: string, data: Partial<InsertHtmlTemplate>): Promise<HtmlTemplate | undefined> {
+    const [template] = await db
+      .update(htmlTemplates)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(htmlTemplates.id, id))
+      .returning();
+    return template;
   }
 }
 

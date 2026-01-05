@@ -21,7 +21,6 @@ import {
 } from "@/components/ui/dropdown-menu";
 import {
   Plus,
-  LogOut,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -48,7 +47,7 @@ interface ClientProfilePageProps {
 }
 
 export default function ClientProfilePage({ clientId }: ClientProfilePageProps) {
-  const { user, logout } = useAuth();
+  const { user } = useAuth();
   const { toast } = useToast();
   const [, setLocation] = useLocation();
 
@@ -402,9 +401,6 @@ export default function ClientProfilePage({ clientId }: ClientProfilePageProps) 
               </DropdownMenuContent>
             </DropdownMenu>
           )}
-          <Button variant="ghost" size="sm" onClick={logout} data-testid="button-logout">
-            <LogOut className="w-4 h-4" />
-          </Button>
         </header>
 
         {!selectedNewsletterId ? (

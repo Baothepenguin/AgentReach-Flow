@@ -46,6 +46,7 @@ export const clientsRelations = relations(clients, ({ one, many }) => ({
     fields: [clients.id],
     references: [brandingKits.clientId],
   }),
+  projects: many(projects),
   subscriptions: many(subscriptions),
   invoices: many(invoices),
   newsletters: many(newsletters),
@@ -58,6 +59,72 @@ export const insertClientSchema = createInsertSchema(clients).omit({
 });
 export type InsertClient = z.infer<typeof insertClientSchema>;
 export type Client = typeof clients.$inferSelect;
+
+// ============================================================================
+// PROJECTS - Client projects that contain newsletters
+// ============================================================================
+export const projects = pgTable("projects", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  clientId: varchar("client_id").notNull().references(() => clients.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  description: text("description"),
+  status: text("status", { enum: ["active", "paused", "completed", "archived"] }).notNull().default("active"),
+  templateId: varchar("template_id").references(() => htmlTemplates.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const projectsRelations = relations(projects, ({ one, many }) => ({
+  client: one(clients, {
+    fields: [projects.clientId],
+    references: [clients.id],
+  }),
+  template: one(htmlTemplates, {
+    fields: [projects.templateId],
+    references: [htmlTemplates.id],
+  }),
+  newsletters: many(newsletters),
+}));
+
+export const insertProjectSchema = createInsertSchema(projects).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type InsertProject = z.infer<typeof insertProjectSchema>;
+export type Project = typeof projects.$inferSelect;
+
+// ============================================================================
+// HTML TEMPLATES - Base templates for newsletters
+// ============================================================================
+export const htmlTemplates = pgTable("html_templates", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  description: text("description"),
+  html: text("html").notNull(),
+  thumbnail: text("thumbnail"),
+  category: text("category", { enum: ["minimal", "modern", "classic", "custom"] }).notNull().default("custom"),
+  isDefault: boolean("is_default").notNull().default(false),
+  createdById: varchar("created_by_id").references(() => users.id),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const htmlTemplatesRelations = relations(htmlTemplates, ({ one, many }) => ({
+  createdBy: one(users, {
+    fields: [htmlTemplates.createdById],
+    references: [users.id],
+  }),
+  projects: many(projects),
+}));
+
+export const insertHtmlTemplateSchema = createInsertSchema(htmlTemplates).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type InsertHtmlTemplate = z.infer<typeof insertHtmlTemplateSchema>;
+export type HtmlTemplate = typeof htmlTemplates.$inferSelect;
 
 // ============================================================================
 // BRANDING KITS - Client branding assets
@@ -189,6 +256,7 @@ export type NewsletterStatus = typeof NEWSLETTER_STATUSES[number];
 export const newsletters = pgTable("newsletters", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   clientId: varchar("client_id").notNull().references(() => clients.id, { onDelete: "cascade" }),
+  projectId: varchar("project_id").references(() => projects.id, { onDelete: "set null" }),
   invoiceId: varchar("invoice_id").references(() => invoices.id, { onDelete: "set null" }),
   title: text("title").notNull(),
   expectedSendDate: date("expected_send_date").notNull(),
@@ -209,6 +277,10 @@ export const newslettersRelations = relations(newsletters, ({ one, many }) => ({
   client: one(clients, {
     fields: [newsletters.clientId],
     references: [clients.id],
+  }),
+  project: one(projects, {
+    fields: [newsletters.projectId],
+    references: [projects.id],
   }),
   invoice: one(invoices, {
     fields: [newsletters.invoiceId],

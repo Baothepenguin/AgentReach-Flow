@@ -713,5 +713,118 @@ export async function registerRoutes(
     }
   });
 
+  // ============================================================================
+  // PROJECTS
+  // ============================================================================
+  app.get("/api/clients/:clientId/projects", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const projects = await storage.getProjectsByClient(req.params.clientId);
+      res.json(projects);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to get projects" });
+    }
+  });
+
+  app.post("/api/clients/:clientId/projects", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const { name, description, templateId } = req.body;
+      if (!name) {
+        return res.status(400).json({ error: "Project name required" });
+      }
+      const project = await storage.createProject({
+        clientId: req.params.clientId,
+        name,
+        description,
+        templateId,
+        status: "active",
+      });
+      res.json(project);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to create project" });
+    }
+  });
+
+  app.get("/api/projects/:id", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const project = await storage.getProject(req.params.id);
+      if (!project) {
+        return res.status(404).json({ error: "Project not found" });
+      }
+      res.json(project);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to get project" });
+    }
+  });
+
+  app.patch("/api/projects/:id", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const project = await storage.updateProject(req.params.id, req.body);
+      if (!project) {
+        return res.status(404).json({ error: "Project not found" });
+      }
+      res.json(project);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to update project" });
+    }
+  });
+
+  // ============================================================================
+  // HTML TEMPLATES
+  // ============================================================================
+  app.get("/api/templates", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const templates = await storage.getTemplates();
+      res.json(templates);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to get templates" });
+    }
+  });
+
+  app.post("/api/templates", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = (req as Request & { userId: string }).userId;
+      const { name, description, html, category, isDefault, thumbnail } = req.body;
+      if (!name || !html) {
+        return res.status(400).json({ error: "Name and HTML required" });
+      }
+      const template = await storage.createTemplate({
+        name,
+        description,
+        html,
+        category: category || "custom",
+        isDefault: isDefault || false,
+        thumbnail,
+        createdById: userId,
+      });
+      res.json(template);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to create template" });
+    }
+  });
+
+  app.get("/api/templates/:id", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const template = await storage.getTemplate(req.params.id);
+      if (!template) {
+        return res.status(404).json({ error: "Template not found" });
+      }
+      res.json(template);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to get template" });
+    }
+  });
+
+  app.patch("/api/templates/:id", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const template = await storage.updateTemplate(req.params.id, req.body);
+      if (!template) {
+        return res.status(404).json({ error: "Template not found" });
+      }
+      res.json(template);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to update template" });
+    }
+  });
+
   return httpServer;
 }

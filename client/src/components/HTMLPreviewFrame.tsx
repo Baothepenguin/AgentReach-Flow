@@ -2,8 +2,7 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
-import { Monitor, Smartphone, ArrowRight, Sparkles, Bold, Palette, Trash2, Undo2, Redo2 } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { ArrowRight, Sparkles, Bold, Trash2, Undo2, Redo2, Monitor } from "lucide-react";
 
 interface HTMLPreviewFrameProps {
   html: string;
@@ -14,12 +13,7 @@ interface HTMLPreviewFrameProps {
   isAiProcessing?: boolean;
 }
 
-type DeviceSize = "desktop" | "mobile";
-
-const deviceSizes: Record<DeviceSize, { width: number; label: string }> = {
-  desktop: { width: 680, label: "Desktop" },
-  mobile: { width: 375, label: "Mobile" },
-};
+const PREVIEW_WIDTH = 680;
 
 export function HTMLPreviewFrame({ 
   html, 
@@ -29,7 +23,6 @@ export function HTMLPreviewFrame({
   onAiCommand,
   isAiProcessing 
 }: HTMLPreviewFrameProps) {
-  const [device, setDevice] = useState<DeviceSize>("desktop");
   const [aiInput, setAiInput] = useState("");
   const [showToolbar, setShowToolbar] = useState(false);
   const [toolbarPosition, setToolbarPosition] = useState({ x: 0, y: 0 });
@@ -151,32 +144,11 @@ export function HTMLPreviewFrame({
 
   return (
     <div className="flex flex-col h-full relative">
-      <div className="flex items-center justify-center p-2 border-b bg-card/50">
-        <div className="inline-flex rounded-lg p-0.5 bg-muted/50">
-          {(Object.keys(deviceSizes) as DeviceSize[]).map((d) => (
-            <button
-              key={d}
-              onClick={() => setDevice(d)}
-              className={cn(
-                "flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition-all",
-                device === d 
-                  ? "bg-background shadow-sm text-foreground" 
-                  : "text-muted-foreground hover:text-foreground"
-              )}
-              data-testid={`button-device-${d}`}
-            >
-              {d === "desktop" ? <Monitor className="w-3.5 h-3.5" /> : <Smartphone className="w-3.5 h-3.5" />}
-              {deviceSizes[d].label}
-            </button>
-          ))}
-        </div>
-      </div>
-      
       <div className="flex-1 flex items-start justify-center p-6 bg-muted/20 overflow-auto">
         {isLoading ? (
           <div
             className="bg-white rounded-lg shadow-lg overflow-hidden"
-            style={{ width: deviceSizes[device].width }}
+            style={{ width: PREVIEW_WIDTH }}
           >
             <Skeleton className="h-48 w-full" />
             <div className="p-4 space-y-3">
@@ -188,7 +160,7 @@ export function HTMLPreviewFrame({
         ) : html ? (
           <div
             className="bg-white rounded-lg shadow-lg overflow-hidden transition-all duration-300 glow-green-hover"
-            style={{ width: deviceSizes[device].width }}
+            style={{ width: PREVIEW_WIDTH }}
           >
             <iframe
               ref={iframeRef}
@@ -203,7 +175,7 @@ export function HTMLPreviewFrame({
         ) : (
           <div 
             className="flex flex-col items-center justify-center text-center p-12 rounded-lg border-2 border-dashed border-muted-foreground/20"
-            style={{ width: deviceSizes[device].width }}
+            style={{ width: PREVIEW_WIDTH }}
           >
             <div className="w-16 h-16 rounded-full bg-muted/50 flex items-center justify-center mb-4">
               <Monitor className="w-8 h-8 text-muted-foreground/50" />
