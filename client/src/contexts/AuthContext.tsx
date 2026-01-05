@@ -21,6 +21,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   async function checkAuth() {
     try {
+      // In development, auto-login as dev user
+      if (import.meta.env.DEV) {
+        const devRes = await fetch("/api/auth/dev-login", { method: "POST" });
+        if (devRes.ok) {
+          const data = await devRes.json();
+          setUser(data.user);
+          setIsLoading(false);
+          return;
+        }
+      }
+      
       const res = await fetch("/api/auth/me");
       if (res.ok) {
         const data = await res.json();

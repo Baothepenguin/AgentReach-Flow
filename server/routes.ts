@@ -94,6 +94,30 @@ export async function registerRoutes(
     });
   });
 
+  // Dev-only auto-login endpoint
+  if (process.env.NODE_ENV !== "production") {
+    app.post("/api/auth/dev-login", async (req: Request, res: Response) => {
+      try {
+        const devEmail = "dev@agentreach.test";
+        let user = await storage.getUserByEmail(devEmail);
+        if (!user) {
+          const passwordHash = await bcrypt.hash("devpassword123", 12);
+          user = await storage.createUser({
+            email: devEmail,
+            passwordHash,
+            name: "Dev User",
+            role: "producer",
+          });
+        }
+        (req.session as { userId?: string }).userId = user.id;
+        res.json({ user: { id: user.id, email: user.email, name: user.name, role: user.role } });
+      } catch (error) {
+        console.error("Dev login error:", error);
+        res.status(500).json({ error: "Dev login failed" });
+      }
+    });
+  }
+
   const requireAuth = (req: Request, res: Response, next: Function) => {
     const userId = (req.session as { userId?: string }).userId;
     if (!userId) {
