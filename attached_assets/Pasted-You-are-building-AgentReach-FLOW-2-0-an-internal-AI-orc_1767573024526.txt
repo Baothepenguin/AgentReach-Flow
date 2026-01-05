@@ -1,0 +1,234 @@
+You are building **AgentReach FLOW 2.0**, an internal AI-orchestrated command center that replaces Notion + Postcards for producing branded real-estate email newsletters at scale (1,000+ clients). This is not a prototype. Build the initial full system with a clean architecture, strong schemas, validations, and a production-ready UI.
+## **0) Non-negotiable product principles**
+1. **Single source of truth:** PostgreSQL is the source of truth (NOT Notion).
+2. **Newsletters are JSON modules, not HTML blobs.** HTML is compiled deterministically from module JSON.
+3. **AI never edits HTML.** AI returns structured operations that mutate JSON modules.
+4. **AI must not change modules unless explicitly requested.** Enforce this in code (not only in prompt text).
+5. **All AI-generated events/news must include sources and be reviewable in a side panel.**
+6. **Email rendering must be Outlook/Gmail compatible:** no flexbox/grid; use nested tables + inline styles; support VML backgrounds for hero sections.
+## **1) Tech stack (Replit-friendly)**
+* Next.js (React 19) + TypeScript
+* TailwindCSS for app UI (not emails)
+* PostgreSQL (Replit Postgres / Neon)
+* Drizzle ORM + Drizzle migrations
+* Zod for runtime validation
+* Auth: simple internal auth (credentials) with session cookies (NextAuth Credentials OR custom). Keep it simple but secure.
+* HTML email preview: render compiled HTML in an **`<iframe>`** with a safe sandbox.
+* Integrations:
+  * Stripe webhooks for subscription status + “Past Due” locking
+  * Slack incoming webhook notifications
+  * Email sending for client approval emails (Nodemailer via Gmail SMTP OR Gmail API OAuth if feasible quickly). Use SMTP first, architect for OAuth later.
+## **2) Core workflows**
+### **Producer workflow**
+1. Create/select Client
+2. Create Newsletter for a month (or duplicate last newsletter as a starting point)
+3. Use AI to generate content drafts (welcome, events, market update, etc.) with sources
+4. Apply AI edits surgically to selected modules (or global styles)
+5. Producer marks “Ready for Client Review”
+6. Client reviews on FLOW Review Page and clicks Approve or Request Changes
+7. Producer exports HTML (Mailchimp-friendly and self-hosted options) and marks “Approved / Waiting to Send / Sent”
+### **Client workflow (Review page)**
+* Secure review link (tokenized)
+* Shows a preview of the email
+* Buttons: Approve / Request Changes (with comment box)
+## **3) Data model (Postgres + Drizzle)**
+Create these tables (names can vary but keep structure):
+### **users**
+* id (uuid)
+* email (unique)
+* name
+* password_hash OR auth_provider fields
+* role: 'admin' | 'producer'
+### **clients**
+* id (uuid)
+* name
+* primary_email
+* secondary_email (nullable)
+* phone (nullable)
+* location_city (nullable)
+* location_region (nullable) // e.g., Kelowna / Okanagan
+* newsletter_frequency: 'weekly' | 'monthly'
+* status: 'active' | 'paused' | 'past_due' | 'canceled'
+* stripe_customer_id (nullable)
+* stripe_subscription_id (nullable)
+* created_at, updated_at
+### **client_dna**
+* client_id (pk/fk)
+* tone (text)
+* must_include (jsonb string[])
+* avoid_topics (jsonb string[])
+* local_landmarks (jsonb string[])
+* brand_colors (jsonb {primary, secondary, accent})
+* fonts (jsonb {heading, body})
+* notes (text)
+* updated_at
+### **assets**
+* id (uuid)
+* client_id (fk)
+* type: 'logo' | 'headshot' | 'image' | 'other'
+* url
+* meta (jsonb)
+* created_at
+### **newsletters**
+* id (uuid)
+* client_id (fk)
+* title
+* period_start (date) // month start
+* status: 'draft' | 'internal_review' | 'client_review' | 'revisions' | 'approved' | 'scheduled' | 'sent'
+* current_version_id (fk nullable)
+* created_by (fk users)
+* created_at, updated_at
+### **newsletter_versions**
+* id (uuid)
+* newsletter_id (fk)
+* version_number (int)
+* snapshot_json (jsonb) // full module array + theme + metadata
+* created_by (fk users)
+* change_summary (text nullable)
+* created_at
+### **ai_drafts**
+Stores AI outputs + sources for producer side panel.
+* id (uuid)
+* newsletter_id (fk)
+* created_by (fk users)
+* intent (text)
+* draft_json (jsonb) // structured content draft OR operation proposal
+* sources_json (jsonb) // normalized list of sources + mapping to items
+* validation_json (jsonb) // warnings/errors
+* created_at
+### **tasks_flags**
+* id (uuid)
+* newsletter_id (fk)
+* severity: 'info'|'warning'|'blocker'
+* code: string
+* message: string
+* created_at
+* resolved_at (nullable)
+### **integration_settings (single row or per workspace)**
+* id
+* slack_webhook_url
+* smtp_host, smtp_user, smtp_pass OR gmail_oauth fields
+* stripe_webhook_secret
+* updated_at
+## **4) Newsletter module system (JSON)**
+Define a strict Zod schema for:
+* **`NewsletterDocument`**:
+  * **`templateId: 'agent-001'`**
+  * **`theme: { bg, text, accent, muted, fontHeading, fontBody }`**
+  * **`modules: NewsletterModule[]`**
+* Modules must have **`id`**, **`type`**, **`props`**, **`locked`** flags.
+Minimum module types for initial build:
+* HeaderNav (logo + nav links)
+* Hero (background image + title + subtitle)
+* RichText (intro / paragraphs / signature)
+* EventsList (list of events)
+* CTA (headline + button text + url + optional background)
+* MarketUpdate (bullets or paragraphs + optional metrics)
+* NewsCards (3 items with headline/summary/image/url/source)
+* ListingsGrid (cards with image, price, beds/baths, url)
+* Testimonial
+* AgentBio (photo, name, title, contact, socials)
+* FooterCompliance (copyright, brokerage, unsubscribe placeholder)
+## **5) Canonical template: Agent 001**
+Use the **Mitchell newsletter structure** as the canonical layout reference, but define the default theme as **black/white**.
+* No reliance on Postcards classes.
+* Build a deterministic compiler: **`compileNewsletterToHtml(NewsletterDocument) => string`**.
+### **Email HTML constraints**
+* Nested tables only for layout
+* Inline styles only (minimal **`<style>`** allowed for media queries)
+* Support Outlook background images via VML for Hero + certain sections
+* Always include safe font fallbacks
+* Validate: no **`display:flex`**, **`grid`**, external CSS frameworks, JS, **`<video>`**
+## **6) Intent Router + Surgical AI editing**
+Build an AI “intent router” that turns producer natural language into structured operations.
+### **Input to AI**
+* User command text
+* Selected module(s) context (optional) — if none selected, AI must ask clarifying question unless it’s a truly global command (“change all buttons to red”)
+* Client DNA summary
+* Current newsletter JSON (or relevant subset)
+* Current date/time
+### **Output from AI (strict JSON)**
+The AI must return ONE of:
+* **`REQUEST_CLARIFICATION { question, options[] }`**
+* **`APPLY_PATCH { operations: Operation[] }`**
+* **`FLAG_FOR_REVIEW { severity, reason, suggestedNextStep }`**
+Operation types (Zod-validated):
+* **`UPDATE_MODULE_PROPS { moduleId, patch }`**
+* **`BULK_UPDATE { where: { type?: string, propMatch?: {...} }, patch }`**
+* **`REPLACE_LIST_ITEMS { moduleId, listField, items, sources }`** // for events/news regeneration
+* **`SET_THEME { patch }`**
+* **`NO_OP { reason }`**
+Hard rule enforcement in code:
+* If user didn’t specify a module AND command is not global, reject AI patch and convert to **`REQUEST_CLARIFICATION`**.
+## **7) Content generation (Newsletter Writer)**
+Implement an “Generate Draft Content” action that:
+1. Calls AI to produce **structured JSON** sections + itemized sources
+2. Saves it to **`ai_drafts`**
+3. Shows it in a right-side panel for producer review
+4. Producer can “Apply to Modules” (maps draft → selected module(s))
+### **Update your writer prompt into a JSON spec**
+Instead of freeform text, require:
+* welcome: string
+* events: [{ name, startDate, endDate?, address, city, region, url, sourceName, sourceDate }]
+* marketUpdate: { paragraphs: string[], metrics?: [{label,value,sourceUrl}] }
+* homeTip: string
+* marketNews: [{ headline, summary, url, sourceName, sourceDate }]
+* subjectLines: [{ subject, preview }]
+Validators:
+* Events must be within target month or spanning it
+* News must be within last 2–4 weeks (or flagged)
+* Every event/news item must have a URL source
+## **8) UI/UX requirements (internal app)**
+Design: modern, Japanese minimalism inspired.
+* White base, forest green accent for the APP UI (not necessarily emails)
+* Rounded corners, subtle hover, glass/bubble buttons
+* Layout:
+  * Left sidebar: Clients + status filters + search
+  * Main: Newsletter editor + preview
+  * Right panel (tabs): Modules / AI Draft / Sources / Warnings / Version History
+* The producer must be able to:
+  * reorder modules (drag/drop)
+  * edit module properties manually (forms)
+  * open an “AI command” box and apply operations
+  * see validations and blockers before moving status forward
+  * create versions (snapshot) on save/apply/status change
+## **9) Review page (client)**
+* Route: **`/review/:token`**
+* Token maps to newsletter + expires or can be regenerated
+* Shows compiled HTML preview
+* Approve button or Request Changes (comment required)
+* On submit: update newsletter status + create a version snapshot + Slack notify producer
+## **10) Integrations**
+### **Stripe**
+* Implement webhook endpoint **`/api/webhooks/stripe`**
+* Verify signature
+* Update **`clients.status`** based on subscription state
+* If past_due: lock editing/sending actions (read-only except admin)
+### **Slack**
+* Use incoming webhook URL stored in **`integration_settings`**
+* Notify on: ready_for_review, client_requested_changes, approved, past_due_lock
+### **Email sending (approval request)**
+* When producer clicks “Send for Approval”:
+  * send email to client with secure review link
+  * store “sent_at”
+* Use SMTP first; keep interface so it can be replaced by Gmail API later.
+## **11) Export**
+Provide two export modes:
+1. **Mailchimp-friendly HTML** (single HTML, remote images ok, safe font stack)
+2. **Self-hosted** (ensure all image URLs are already hosted; optional font links; always fallbacks) Also provide “Download HTML” and “Copy HTML”.
+## **12) Safety & quality gates**
+Before status can move to “client_review”:
+* No missing required modules (header/hero/footer)
+* No broken links in buttons
+* Events/news must have sources
+* No profanity filter hits
+* No empty placeholders (e.g., “News Story” default titles)
+## **13) Deliverables in repo**
+* Working Next.js app with above UI
+* DB migrations + seed script
+* Deterministic HTML compiler for template **`agent-001`**
+* AI service module with intent router + draft generator
+* Slack/Stripe/Email integration scaffolding
+* Validators + flags UI
+* README with setup + env vars
+Build this now.
