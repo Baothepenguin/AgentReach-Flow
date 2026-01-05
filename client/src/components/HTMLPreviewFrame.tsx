@@ -151,45 +151,24 @@ export function HTMLPreviewFrame({
 
   return (
     <div className="flex flex-col h-full relative">
-      <div className="flex items-center justify-center gap-2 p-3 border-b bg-card/50 glass-surface">
-        <div className="inline-flex rounded-lg p-1 bg-muted/50">
+      <div className="flex items-center justify-center p-2 border-b bg-card/50">
+        <div className="inline-flex rounded-lg p-0.5 bg-muted/50">
           {(Object.keys(deviceSizes) as DeviceSize[]).map((d) => (
             <button
               key={d}
               onClick={() => setDevice(d)}
               className={cn(
-                "flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-all",
+                "flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition-all",
                 device === d 
                   ? "bg-background shadow-sm text-foreground" 
                   : "text-muted-foreground hover:text-foreground"
               )}
               data-testid={`button-device-${d}`}
             >
-              {d === "desktop" ? <Monitor className="w-4 h-4" /> : <Smartphone className="w-4 h-4" />}
+              {d === "desktop" ? <Monitor className="w-3.5 h-3.5" /> : <Smartphone className="w-3.5 h-3.5" />}
               {deviceSizes[d].label}
             </button>
           ))}
-        </div>
-        
-        <div className="flex items-center gap-1 ml-4">
-          <Button
-            size="icon"
-            variant="ghost"
-            onClick={handleUndo}
-            disabled={undoStack.length === 0}
-            data-testid="button-undo"
-          >
-            <Undo2 className="w-4 h-4" />
-          </Button>
-          <Button
-            size="icon"
-            variant="ghost"
-            onClick={handleRedo}
-            disabled={redoStack.length === 0}
-            data-testid="button-redo"
-          >
-            <Redo2 className="w-4 h-4" />
-          </Button>
         </div>
       </div>
       
@@ -255,6 +234,13 @@ export function HTMLPreviewFrame({
           />
           <Button size="icon" variant="ghost" onClick={handleDelete} data-testid="toolbar-delete">
             <Trash2 className="w-4 h-4" />
+          </Button>
+          <div className="w-px h-5 bg-border mx-0.5" />
+          <Button size="icon" variant="ghost" onClick={handleUndo} disabled={undoStack.length === 0} data-testid="toolbar-undo">
+            <Undo2 className="w-4 h-4" />
+          </Button>
+          <Button size="icon" variant="ghost" onClick={handleRedo} disabled={redoStack.length === 0} data-testid="toolbar-redo">
+            <Redo2 className="w-4 h-4" />
           </Button>
         </div>
       )}

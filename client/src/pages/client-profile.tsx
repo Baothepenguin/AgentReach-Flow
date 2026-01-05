@@ -22,14 +22,14 @@ import {
 import {
   Plus,
   LogOut,
-  User,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
   Send,
   Download,
   Copy,
-  MoreHorizontal,
+  Share2,
+  ExternalLink,
   Mail,
   Phone,
   MapPin,
@@ -127,6 +127,20 @@ export default function ClientProfilePage({ clientId }: ClientProfilePageProps) 
     },
   });
 
+  const restoreVersionMutation = useMutation({
+    mutationFn: async (versionId: string) => {
+      const res = await apiRequest("POST", `/api/newsletters/${selectedNewsletterId}/restore/${versionId}`);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/newsletters", selectedNewsletterId] });
+      toast({ title: "Version restored" });
+    },
+    onError: (error) => {
+      toast({ title: "Failed to restore version", description: error.message, variant: "destructive" });
+    },
+  });
+
   const getClientLocation = () => {
     if (client?.locationCity && client?.locationRegion) {
       return `${client.locationCity}, ${client.locationRegion}`;
@@ -136,6 +150,60 @@ export default function ClientProfilePage({ clientId }: ClientProfilePageProps) 
 
   const getPlanLabel = (frequency: string) => {
     return frequency === "weekly" ? "Established (Weekly)" : "Starter (Monthly)";
+  };
+
+  const handleExportHtml = async () => {
+    if (!selectedNewsletterId) return;
+    try {
+      const response = await fetch(`/api/newsletters/${selectedNewsletterId}/export`, {
+        credentials: "include",
+      });
+      if (response.ok) {
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `${newsletterData?.newsletter?.title || "newsletter"}.html`;
+        a.click();
+        URL.revokeObjectURL(url);
+        toast({ title: "HTML exported" });
+      }
+    } catch {
+      toast({ title: "Export failed", variant: "destructive" });
+    }
+  };
+
+  const handleCopyHtml = async () => {
+    if (!newsletterData?.html) return;
+    try {
+      await navigator.clipboard.writeText(newsletterData.html);
+      toast({ title: "HTML copied to clipboard" });
+    } catch {
+      toast({ title: "Failed to copy", variant: "destructive" });
+    }
+  };
+
+  const handlePreview = () => {
+    if (!newsletterData?.html) return;
+    const win = window.open("", "_blank");
+    if (win) {
+      win.document.write(newsletterData.html);
+      win.document.close();
+    }
+  };
+
+  const handleSendForReview = async () => {
+    if (!selectedNewsletterId) return;
+    try {
+      const res = await apiRequest("POST", `/api/newsletters/${selectedNewsletterId}/send-for-review`);
+      const data = await res.json();
+      if (data.reviewUrl) {
+        await navigator.clipboard.writeText(data.reviewUrl);
+        toast({ title: "Review link copied to clipboard" });
+      }
+    } catch {
+      toast({ title: "Failed to generate review link", variant: "destructive" });
+    }
   };
 
   if (loadingClient) {
@@ -304,66 +372,39 @@ export default function ClientProfilePage({ clientId }: ClientProfilePageProps) 
       </div>
 
       <div className="flex-1 flex flex-col min-w-0">
-        <header className="flex items-center justify-between gap-4 px-4 h-14 border-b bg-background/50 glass-surface">
-          <div className="flex items-center gap-3 min-w-0">
-            {selectedNewsletterId && newsletterData?.newsletter ? (
-              <>
-                <span className="font-medium truncate">{newsletterData.newsletter.title}</span>
-                <StatusPill status={newsletterData.newsletter.status} size="sm" />
-              </>
-            ) : (
-              <span className="text-muted-foreground">Select a campaign</span>
-            )}
-          </div>
-          <div className="flex items-center gap-2">
-            {selectedNewsletterId && (
-              <>
-                <Button variant="outline" size="sm" data-testid="button-preview">
-                  Preview
-                </Button>
-                <Button variant="default" size="sm" data-testid="button-export-html">
-                  <Download className="w-4 h-4 mr-2" />
-                  Export
-                </Button>
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button variant="ghost" size="icon" data-testid="button-more-actions">
-                      <MoreHorizontal className="w-4 h-4" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
-                    <DropdownMenuItem data-testid="menu-send-review">
-                      <Send className="w-4 h-4 mr-2" />
-                      Send for Review
-                    </DropdownMenuItem>
-                    <DropdownMenuItem data-testid="menu-copy-html">
-                      <Copy className="w-4 h-4 mr-2" />
-                      Copy HTML
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </>
-            )}
+        <header className="flex items-center justify-end gap-2 px-4 h-12 border-b bg-background/50 glass-surface">
+          {selectedNewsletterId && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" className="gap-2" data-testid="button-user-menu">
-                  <User className="w-4 h-4" />
-                  <span className="hidden sm:inline">{user?.name}</span>
-                  <ChevronDown className="w-3 h-3" />
+                <Button variant="default" size="sm" className="glow-green-hover" data-testid="button-share">
+                  <Share2 className="w-4 h-4 mr-2" />
+                  Share
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
-                <DropdownMenuItem disabled>
-                  <span className="text-xs text-muted-foreground">{user?.email}</span>
+                <DropdownMenuItem onClick={handlePreview} data-testid="menu-preview">
+                  <ExternalLink className="w-4 h-4 mr-2" />
+                  Preview
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={handleExportHtml} data-testid="menu-export">
+                  <Download className="w-4 h-4 mr-2" />
+                  Export HTML
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={handleCopyHtml} data-testid="menu-copy-html">
+                  <Copy className="w-4 h-4 mr-2" />
+                  Copy HTML
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={logout} data-testid="button-logout">
-                  <LogOut className="w-4 h-4 mr-2" />
-                  Sign Out
+                <DropdownMenuItem onClick={handleSendForReview} data-testid="menu-send-review">
+                  <Send className="w-4 h-4 mr-2" />
+                  Send for Review
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
-          </div>
+          )}
+          <Button variant="ghost" size="sm" onClick={logout} data-testid="button-logout">
+            <LogOut className="w-4 h-4" />
+          </Button>
         </header>
 
         {!selectedNewsletterId ? (
@@ -400,9 +441,7 @@ export default function ClientProfilePage({ clientId }: ClientProfilePageProps) 
             versions={newsletterData.versions || []}
             currentVersionId={newsletterData.newsletter?.currentVersionId || null}
             status={newsletterData.newsletter?.status || "not_started"}
-            onRestoreVersion={(versionId) => {
-              toast({ title: "Restore version", description: `Would restore ${versionId}` });
-            }}
+            onRestoreVersion={(versionId) => restoreVersionMutation.mutate(versionId)}
           />
         </div>
       )}

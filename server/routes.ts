@@ -614,27 +614,30 @@ export async function registerRoutes(
           return res.json({ type: "error", message: htmlResponse.message });
         }
 
-        if (htmlResponse.html) {
-          const newDoc: NewsletterDocument = { ...document, html: htmlResponse.html };
-          const latestNum = await storage.getLatestVersionNumber(newsletter.id);
-
-          const newVersion = await storage.createVersion({
-            newsletterId: newsletter.id,
-            versionNumber: latestNum + 1,
-            snapshotJson: newDoc,
-            createdById: userId,
-            changeSummary: `AI: ${command.slice(0, 50)}...`,
-          });
-
-          await storage.updateNewsletter(newsletter.id, {
-            currentVersionId: newVersion.id,
-            documentJson: newDoc,
-            lastEditedById: userId,
-            lastEditedAt: new Date(),
-          });
-
-          return res.json({ type: "success", message: htmlResponse.message });
+        const trimmedHtml = htmlResponse.html?.trim() || "";
+        if (!trimmedHtml || !trimmedHtml.includes("<") || trimmedHtml.length < 100) {
+          return res.json({ type: "error", message: "AI returned invalid HTML. Please try a different command." });
         }
+
+        const newDoc: NewsletterDocument = { ...document, html: htmlResponse.html };
+        const latestNum = await storage.getLatestVersionNumber(newsletter.id);
+
+        const newVersion = await storage.createVersion({
+          newsletterId: newsletter.id,
+          versionNumber: latestNum + 1,
+          snapshotJson: newDoc,
+          createdById: userId,
+          changeSummary: `AI: ${command.slice(0, 50)}...`,
+        });
+
+        await storage.updateNewsletter(newsletter.id, {
+          currentVersionId: newVersion.id,
+          documentJson: newDoc,
+          lastEditedById: userId,
+          lastEditedAt: new Date(),
+        });
+
+        return res.json({ type: "success", message: htmlResponse.message });
       }
 
       const aiResponse = await processAICommand(command, selectedModuleId, document, brandingKit || null);
@@ -824,6 +827,46 @@ export async function registerRoutes(
       res.json({ success: true, reviewUrl });
     } catch (error) {
       res.status(500).json({ error: "Failed to send for review" });
+    }
+  });
+
+  app.post("/api/newsletters/:id/restore/:versionId", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = (req as Request & { userId: string }).userId;
+      const newsletter = await storage.getNewsletter(req.params.id);
+      if (!newsletter) {
+        return res.status(404).json({ error: "Newsletter not found" });
+      }
+
+      const versions = await storage.getVersionsByNewsletter(newsletter.id);
+      const targetVersion = versions.find((v) => v.id === req.params.versionId);
+      if (!targetVersion) {
+        return res.status(404).json({ error: "Version not found" });
+      }
+
+      const restoredDoc = targetVersion.snapshotJson as NewsletterDocument;
+      const latestNum = await storage.getLatestVersionNumber(newsletter.id);
+
+      const newVersion = await storage.createVersion({
+        newsletterId: newsletter.id,
+        versionNumber: latestNum + 1,
+        snapshotJson: restoredDoc,
+        createdById: userId,
+        changeSummary: `Restored from v${targetVersion.versionNumber}`,
+      });
+
+      const updated = await storage.updateNewsletter(newsletter.id, {
+        currentVersionId: newVersion.id,
+        documentJson: restoredDoc,
+        lastEditedById: userId,
+        lastEditedAt: new Date(),
+      });
+
+      const html = compileNewsletterToHtml(restoredDoc);
+
+      res.json({ newsletter: updated, html, version: newVersion });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to restore version" });
     }
   });
 
