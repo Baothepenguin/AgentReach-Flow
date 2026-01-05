@@ -1,8 +1,9 @@
 import {
   users,
   clients,
-  clientDna,
-  assets,
+  brandingKits,
+  subscriptions,
+  invoices,
   newsletters,
   newsletterVersions,
   aiDrafts,
@@ -13,8 +14,12 @@ import {
   type InsertUser,
   type Client,
   type InsertClient,
-  type ClientDna,
-  type InsertClientDna,
+  type BrandingKit,
+  type InsertBrandingKit,
+  type Subscription,
+  type InsertSubscription,
+  type Invoice,
+  type InsertInvoice,
   type Newsletter,
   type InsertNewsletter,
   type NewsletterVersion,
@@ -26,9 +31,11 @@ import {
   type ReviewToken,
   type InsertReviewToken,
   type NewsletterDocument,
+  type NewsletterStatus,
+  NEWSLETTER_STATUSES,
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, desc, and } from "drizzle-orm";
+import { eq, desc, and, ne, isNull, or, inArray, sql } from "drizzle-orm";
 import { randomUUID } from "crypto";
 
 export interface IStorage {
@@ -40,18 +47,41 @@ export interface IStorage {
   // Clients
   getClients(): Promise<Client[]>;
   getClient(id: string): Promise<Client | undefined>;
+  getClientWithRelations(id: string): Promise<{
+    client: Client;
+    brandingKit?: BrandingKit;
+    subscriptions: Subscription[];
+    invoices: Invoice[];
+    newsletters: Newsletter[];
+  } | undefined>;
   createClient(client: InsertClient): Promise<Client>;
   updateClient(id: string, data: Partial<InsertClient>): Promise<Client | undefined>;
 
-  // Client DNA
-  getClientDna(clientId: string): Promise<ClientDna | undefined>;
-  upsertClientDna(dna: InsertClientDna): Promise<ClientDna>;
+  // Branding Kits
+  getBrandingKit(clientId: string): Promise<BrandingKit | undefined>;
+  upsertBrandingKit(kit: InsertBrandingKit): Promise<BrandingKit>;
+
+  // Subscriptions
+  getSubscriptionsByClient(clientId: string): Promise<Subscription[]>;
+  getSubscription(id: string): Promise<Subscription | undefined>;
+  createSubscription(subscription: InsertSubscription): Promise<Subscription>;
+  updateSubscription(id: string, data: Partial<InsertSubscription>): Promise<Subscription | undefined>;
+
+  // Invoices
+  getInvoicesByClient(clientId: string): Promise<Invoice[]>;
+  getInvoice(id: string): Promise<Invoice | undefined>;
+  createInvoice(invoice: InsertInvoice): Promise<Invoice>;
+  updateInvoice(id: string, data: Partial<InsertInvoice>): Promise<Invoice | undefined>;
 
   // Newsletters
+  getAllNewsletters(): Promise<Newsletter[]>;
   getNewslettersByClient(clientId: string): Promise<Newsletter[]>;
+  getNewslettersByStatus(statuses: NewsletterStatus[]): Promise<Newsletter[]>;
   getNewsletter(id: string): Promise<Newsletter | undefined>;
+  getNewsletterWithClient(id: string): Promise<{ newsletter: Newsletter; client: Client } | undefined>;
   createNewsletter(newsletter: InsertNewsletter): Promise<Newsletter>;
   updateNewsletter(id: string, data: Partial<InsertNewsletter>): Promise<Newsletter | undefined>;
+  getLatestClientNewsletter(clientId: string): Promise<Newsletter | undefined>;
 
   // Newsletter Versions
   getVersionsByNewsletter(newsletterId: string): Promise<NewsletterVersion[]>;
@@ -70,6 +100,7 @@ export interface IStorage {
 
   // Review Tokens
   getReviewToken(token: string): Promise<ReviewToken | undefined>;
+  getValidReviewToken(token: string): Promise<ReviewToken | undefined>;
   createReviewToken(data: InsertReviewToken): Promise<ReviewToken>;
   markTokenUsed(id: string): Promise<void>;
 }
@@ -101,6 +132,32 @@ export class DatabaseStorage implements IStorage {
     return client;
   }
 
+  async getClientWithRelations(id: string): Promise<{
+    client: Client;
+    brandingKit?: BrandingKit;
+    subscriptions: Subscription[];
+    invoices: Invoice[];
+    newsletters: Newsletter[];
+  } | undefined> {
+    const client = await this.getClient(id);
+    if (!client) return undefined;
+
+    const [brandingKit, subs, invs, nls] = await Promise.all([
+      this.getBrandingKit(id),
+      this.getSubscriptionsByClient(id),
+      this.getInvoicesByClient(id),
+      this.getNewslettersByClient(id),
+    ]);
+
+    return {
+      client,
+      brandingKit: brandingKit || undefined,
+      subscriptions: subs,
+      invoices: invs,
+      newsletters: nls,
+    };
+  }
+
   async createClient(insertClient: InsertClient): Promise<Client> {
     const [client] = await db.insert(clients).values(insertClient).returning();
     return client;
@@ -115,38 +172,117 @@ export class DatabaseStorage implements IStorage {
     return client;
   }
 
-  // Client DNA
-  async getClientDna(clientId: string): Promise<ClientDna | undefined> {
-    const [dna] = await db.select().from(clientDna).where(eq(clientDna.clientId, clientId));
-    return dna;
+  // Branding Kits
+  async getBrandingKit(clientId: string): Promise<BrandingKit | undefined> {
+    const [kit] = await db.select().from(brandingKits).where(eq(brandingKits.clientId, clientId));
+    return kit;
   }
 
-  async upsertClientDna(dna: InsertClientDna): Promise<ClientDna> {
-    const existing = await this.getClientDna(dna.clientId);
+  async upsertBrandingKit(kit: InsertBrandingKit): Promise<BrandingKit> {
+    const existing = await this.getBrandingKit(kit.clientId);
     if (existing) {
       const [updated] = await db
-        .update(clientDna)
-        .set({ ...dna, updatedAt: new Date() })
-        .where(eq(clientDna.clientId, dna.clientId))
+        .update(brandingKits)
+        .set({ ...kit, updatedAt: new Date() })
+        .where(eq(brandingKits.clientId, kit.clientId))
         .returning();
       return updated;
     }
-    const [created] = await db.insert(clientDna).values(dna).returning();
+    const [created] = await db.insert(brandingKits).values(kit).returning();
     return created;
   }
 
+  // Subscriptions
+  async getSubscriptionsByClient(clientId: string): Promise<Subscription[]> {
+    return db
+      .select()
+      .from(subscriptions)
+      .where(eq(subscriptions.clientId, clientId))
+      .orderBy(desc(subscriptions.createdAt));
+  }
+
+  async getSubscription(id: string): Promise<Subscription | undefined> {
+    const [sub] = await db.select().from(subscriptions).where(eq(subscriptions.id, id));
+    return sub;
+  }
+
+  async createSubscription(insertSub: InsertSubscription): Promise<Subscription> {
+    const [sub] = await db.insert(subscriptions).values(insertSub).returning();
+    return sub;
+  }
+
+  async updateSubscription(id: string, data: Partial<InsertSubscription>): Promise<Subscription | undefined> {
+    const [sub] = await db
+      .update(subscriptions)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(subscriptions.id, id))
+      .returning();
+    return sub;
+  }
+
+  // Invoices
+  async getInvoicesByClient(clientId: string): Promise<Invoice[]> {
+    return db
+      .select()
+      .from(invoices)
+      .where(eq(invoices.clientId, clientId))
+      .orderBy(desc(invoices.createdAt));
+  }
+
+  async getInvoice(id: string): Promise<Invoice | undefined> {
+    const [inv] = await db.select().from(invoices).where(eq(invoices.id, id));
+    return inv;
+  }
+
+  async createInvoice(insertInvoice: InsertInvoice): Promise<Invoice> {
+    const [inv] = await db.insert(invoices).values(insertInvoice).returning();
+    return inv;
+  }
+
+  async updateInvoice(id: string, data: Partial<InsertInvoice>): Promise<Invoice | undefined> {
+    const [inv] = await db
+      .update(invoices)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(invoices.id, id))
+      .returning();
+    return inv;
+  }
+
   // Newsletters
+  async getAllNewsletters(): Promise<Newsletter[]> {
+    return db
+      .select()
+      .from(newsletters)
+      .orderBy(desc(newsletters.expectedSendDate));
+  }
+
   async getNewslettersByClient(clientId: string): Promise<Newsletter[]> {
     return db
       .select()
       .from(newsletters)
       .where(eq(newsletters.clientId, clientId))
-      .orderBy(desc(newsletters.periodStart));
+      .orderBy(desc(newsletters.expectedSendDate));
+  }
+
+  async getNewslettersByStatus(statuses: NewsletterStatus[]): Promise<Newsletter[]> {
+    return db
+      .select()
+      .from(newsletters)
+      .where(inArray(newsletters.status, statuses))
+      .orderBy(desc(newsletters.expectedSendDate));
   }
 
   async getNewsletter(id: string): Promise<Newsletter | undefined> {
     const [newsletter] = await db.select().from(newsletters).where(eq(newsletters.id, id));
     return newsletter;
+  }
+
+  async getNewsletterWithClient(id: string): Promise<{ newsletter: Newsletter; client: Client } | undefined> {
+    const newsletter = await this.getNewsletter(id);
+    if (!newsletter) return undefined;
+    const client = await this.getClient(newsletter.clientId);
+    if (!client) return undefined;
+    return { newsletter, client };
   }
 
   async createNewsletter(insertNewsletter: InsertNewsletter): Promise<Newsletter> {
@@ -160,6 +296,19 @@ export class DatabaseStorage implements IStorage {
       .set({ ...data, updatedAt: new Date() })
       .where(eq(newsletters.id, id))
       .returning();
+    return newsletter;
+  }
+
+  async getLatestClientNewsletter(clientId: string): Promise<Newsletter | undefined> {
+    const [newsletter] = await db
+      .select()
+      .from(newsletters)
+      .where(and(
+        eq(newsletters.clientId, clientId),
+        ne(newsletters.status, "not_started")
+      ))
+      .orderBy(desc(newsletters.createdAt))
+      .limit(1);
     return newsletter;
   }
 
@@ -233,6 +382,21 @@ export class DatabaseStorage implements IStorage {
   // Review Tokens
   async getReviewToken(token: string): Promise<ReviewToken | undefined> {
     const [rt] = await db.select().from(reviewTokens).where(eq(reviewTokens.token, token));
+    return rt;
+  }
+
+  async getValidReviewToken(token: string): Promise<ReviewToken | undefined> {
+    const [rt] = await db
+      .select()
+      .from(reviewTokens)
+      .where(and(
+        eq(reviewTokens.token, token),
+        sql`${reviewTokens.expiresAt} > NOW()`,
+        or(
+          eq(reviewTokens.singleUse, false),
+          isNull(reviewTokens.usedAt)
+        )
+      ));
     return rt;
   }
 

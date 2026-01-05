@@ -84,8 +84,10 @@ export default function DashboardPage() {
   });
 
   const createNewsletterMutation = useMutation({
-    mutationFn: (data: { title: string; periodStart: string }) =>
-      apiRequest("POST", `/api/clients/${selectedClientId}/newsletters`, data),
+    mutationFn: async (data: { title: string; periodStart: string }) => {
+      const res = await apiRequest("POST", `/api/clients/${selectedClientId}/newsletters`, data);
+      return res.json() as Promise<Newsletter>;
+    },
     onSuccess: (data: Newsletter) => {
       queryClient.invalidateQueries({ queryKey: ["/api/clients", selectedClientId, "newsletters"] });
       setSelectedNewsletterId(data.id);
@@ -108,11 +110,13 @@ export default function DashboardPage() {
   });
 
   const aiCommandMutation = useMutation({
-    mutationFn: (command: string) =>
-      apiRequest("POST", `/api/newsletters/${selectedNewsletterId}/ai-command`, {
+    mutationFn: async (command: string) => {
+      const res = await apiRequest("POST", `/api/newsletters/${selectedNewsletterId}/ai-command`, {
         command,
         selectedModuleId,
-      }),
+      });
+      return res.json() as Promise<{ type: string; message: string; options?: string[] }>;
+    },
     onSuccess: (response: { type: string; message: string; options?: string[] }) => {
       if (response.type === "success") {
         queryClient.invalidateQueries({ queryKey: ["/api/newsletters", selectedNewsletterId] });
@@ -146,13 +150,10 @@ export default function DashboardPage() {
       <div className="flex-1 flex flex-col min-w-0">
         <header className="flex items-center justify-between gap-4 px-4 h-14 border-b bg-background">
           <div className="flex items-center gap-3 min-w-0">
-            <Sparkles className="w-5 h-5 text-primary flex-shrink-0" />
-            <span className="font-semibold truncate">AgentReach FLOW</span>
-            {selectedClient && (
-              <>
-                <ChevronDown className="w-4 h-4 text-muted-foreground" />
-                <span className="text-muted-foreground truncate">{selectedClient.name}</span>
-              </>
+            {selectedClient ? (
+              <span className="font-semibold truncate">{selectedClient.name}</span>
+            ) : (
+              <span className="text-muted-foreground truncate">Select a client</span>
             )}
           </div>
           <div className="flex items-center gap-2">
@@ -259,7 +260,7 @@ export default function DashboardPage() {
                     </h3>
                     <div className="flex items-center gap-2 mt-0.5">
                       <StatusPill
-                        status={newsletterData?.newsletter?.status || "draft"}
+                        status={newsletterData?.newsletter?.status || "not_started"}
                         size="sm"
                       />
                     </div>

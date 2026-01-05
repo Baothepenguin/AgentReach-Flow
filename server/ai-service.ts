@@ -1,5 +1,5 @@
 import OpenAI from "openai";
-import type { NewsletterDocument, AIIntentResponse, AIGeneratedContent, NewsletterModule, ClientDna, AIDraftSource } from "@shared/schema";
+import type { NewsletterDocument, AIIntentResponse, AIGeneratedContent, NewsletterModule, BrandingKit, AIDraftSource, AIOperation } from "@shared/schema";
 import { randomUUID } from "crypto";
 
 const openai = new OpenAI({
@@ -11,7 +11,7 @@ export async function processAICommand(
   command: string,
   selectedModuleId: string | null,
   document: NewsletterDocument,
-  clientDna: ClientDna | null
+  brandingKit: BrandingKit | null
 ): Promise<AIIntentResponse> {
   const moduleContext = selectedModuleId
     ? document.modules.find((m) => m.id === selectedModuleId)
@@ -27,8 +27,8 @@ RULES:
 4. For global commands (like "change all button colors"), you can use BULK_UPDATE.
 5. For specific module edits, use UPDATE_MODULE_PROPS.
 
-Client DNA (tone/preferences):
-${clientDna ? JSON.stringify(clientDna, null, 2) : "No client preferences set"}
+Client branding and preferences:
+${brandingKit ? JSON.stringify(brandingKit, null, 2) : "No client preferences set"}
 
 Current newsletter document summary:
 - Template: ${document.templateId}
@@ -98,7 +98,7 @@ Respond ONLY with valid JSON matching one of these types:
 }
 
 export async function generateNewsletterContent(
-  clientDna: ClientDna | null,
+  brandingKit: BrandingKit | null,
   targetMonth: Date,
   region: string
 ): Promise<{ content: AIGeneratedContent; sources: AIDraftSource[] }> {
@@ -106,8 +106,8 @@ export async function generateNewsletterContent(
 
   const systemPrompt = `You are a real estate newsletter content writer. Generate engaging, professional content for a ${monthName} newsletter.
 
-Client preferences:
-${clientDna ? JSON.stringify(clientDna, null, 2) : "No specific preferences"}
+Client branding and preferences:
+${brandingKit ? JSON.stringify(brandingKit, null, 2) : "No specific preferences"}
 
 Region: ${region || "General"}
 
@@ -181,7 +181,7 @@ Respond with valid JSON only.`;
 
 export function applyOperationsToDocument(
   document: NewsletterDocument,
-  operations: AIIntentResponse["operations"] extends infer T ? (T extends undefined ? never : T) : never
+  operations: AIOperation[]
 ): NewsletterDocument {
   let newDoc = { ...document, modules: [...document.modules] };
 

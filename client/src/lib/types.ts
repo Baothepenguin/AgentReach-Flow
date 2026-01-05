@@ -1,5 +1,5 @@
 export type ClientStatus = "active" | "paused" | "past_due" | "canceled";
-export type NewsletterStatus = "draft" | "internal_review" | "client_review" | "revisions" | "approved" | "scheduled" | "sent";
+export type NewsletterStatus = "not_started" | "in_progress" | "internal_review" | "client_review" | "revisions" | "approved" | "sent";
 export type FlagSeverity = "info" | "warning" | "blocker";
 export type ModuleType = "HeaderNav" | "Hero" | "RichText" | "EventsList" | "CTA" | "MarketUpdate" | "NewsCards" | "ListingsGrid" | "Testimonial" | "AgentBio" | "FooterCompliance";
 
@@ -11,12 +11,12 @@ export const CLIENT_STATUS_LABELS: Record<ClientStatus, string> = {
 };
 
 export const NEWSLETTER_STATUS_LABELS: Record<NewsletterStatus, string> = {
-  draft: "Draft",
+  not_started: "Not Started",
+  in_progress: "In Progress",
   internal_review: "Internal Review",
   client_review: "Client Review",
   revisions: "Revisions",
   approved: "Approved",
-  scheduled: "Scheduled",
   sent: "Sent",
 };
 

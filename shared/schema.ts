@@ -1,5 +1,5 @@
 import { sql, relations } from "drizzle-orm";
-import { pgTable, text, varchar, timestamp, date, jsonb, integer, boolean, serial } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, timestamp, date, jsonb, integer, boolean, serial, decimal } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -35,20 +35,19 @@ export const clients = pgTable("clients", {
   phone: text("phone"),
   locationCity: text("location_city"),
   locationRegion: text("location_region"),
-  newsletterFrequency: text("newsletter_frequency", { enum: ["weekly", "monthly"] }).notNull().default("monthly"),
-  status: text("status", { enum: ["active", "paused", "past_due", "canceled"] }).notNull().default("active"),
-  stripeCustomerId: text("stripe_customer_id"),
-  stripeSubscriptionId: text("stripe_subscription_id"),
+  newsletterFrequency: text("newsletter_frequency", { enum: ["weekly", "biweekly", "monthly"] }).notNull().default("monthly"),
+  subscriptionStatus: text("subscription_status", { enum: ["active", "paused", "past_due", "canceled"] }).notNull().default("active"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
 export const clientsRelations = relations(clients, ({ one, many }) => ({
-  dna: one(clientDna, {
+  brandingKit: one(brandingKits, {
     fields: [clients.id],
-    references: [clientDna.clientId],
+    references: [brandingKits.clientId],
   }),
-  assets: many(assets),
+  subscriptions: many(subscriptions),
+  invoices: many(invoices),
   newsletters: many(newsletters),
 }));
 
@@ -61,72 +60,147 @@ export type InsertClient = z.infer<typeof insertClientSchema>;
 export type Client = typeof clients.$inferSelect;
 
 // ============================================================================
-// CLIENT DNA - Brand/Tone preferences
+// BRANDING KITS - Client branding assets
 // ============================================================================
-export const clientDna = pgTable("client_dna", {
-  clientId: varchar("client_id").primaryKey().references(() => clients.id, { onDelete: "cascade" }),
+export const brandingKits = pgTable("branding_kits", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  clientId: varchar("client_id").notNull().references(() => clients.id, { onDelete: "cascade" }).unique(),
+  title: text("title"),
+  phone: text("phone"),
+  email: text("email"),
+  secondaryEmail: text("secondary_email"),
+  headshot: text("headshot"),
+  logo: text("logo"),
+  companyName: text("company_name"),
+  companyLogo: text("company_logo"),
+  primaryColor: text("primary_color").default("#1a5f4a"),
+  secondaryColor: text("secondary_color").default("#000000"),
+  facebook: text("facebook"),
+  instagram: text("instagram"),
+  linkedin: text("linkedin"),
+  youtube: text("youtube"),
+  website: text("website"),
+  platform: text("platform", { enum: ["mailchimp", "constant_contact", "other"] }).default("mailchimp"),
+  platformAccountName: text("platform_account_name"),
   tone: text("tone"),
   mustInclude: jsonb("must_include").$type<string[]>().default([]),
   avoidTopics: jsonb("avoid_topics").$type<string[]>().default([]),
   localLandmarks: jsonb("local_landmarks").$type<string[]>().default([]),
-  brandColors: jsonb("brand_colors").$type<{ primary: string; secondary: string; accent: string }>(),
-  fonts: jsonb("fonts").$type<{ heading: string; body: string }>(),
   notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
-export const clientDnaRelations = relations(clientDna, ({ one }) => ({
+export const brandingKitsRelations = relations(brandingKits, ({ one }) => ({
   client: one(clients, {
-    fields: [clientDna.clientId],
+    fields: [brandingKits.clientId],
     references: [clients.id],
   }),
 }));
 
-export const insertClientDnaSchema = createInsertSchema(clientDna).omit({
-  updatedAt: true,
-});
-export type InsertClientDna = z.infer<typeof insertClientDnaSchema>;
-export type ClientDna = typeof clientDna.$inferSelect;
-
-// ============================================================================
-// ASSETS - Client media files
-// ============================================================================
-export const assets = pgTable("assets", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  clientId: varchar("client_id").notNull().references(() => clients.id, { onDelete: "cascade" }),
-  type: text("type", { enum: ["logo", "headshot", "image", "other"] }).notNull(),
-  url: text("url").notNull(),
-  meta: jsonb("meta").$type<Record<string, unknown>>(),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-});
-
-export const assetsRelations = relations(assets, ({ one }) => ({
-  client: one(clients, {
-    fields: [assets.clientId],
-    references: [clients.id],
-  }),
-}));
-
-export const insertAssetSchema = createInsertSchema(assets).omit({
+export const insertBrandingKitSchema = createInsertSchema(brandingKits).omit({
   id: true,
   createdAt: true,
+  updatedAt: true,
 });
-export type InsertAsset = z.infer<typeof insertAssetSchema>;
-export type Asset = typeof assets.$inferSelect;
+export type InsertBrandingKit = z.infer<typeof insertBrandingKitSchema>;
+export type BrandingKit = typeof brandingKits.$inferSelect;
+
+// ============================================================================
+// SUBSCRIPTIONS - Client payment plans
+// ============================================================================
+export const subscriptions = pgTable("subscriptions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  clientId: varchar("client_id").notNull().references(() => clients.id, { onDelete: "cascade" }),
+  amount: decimal("amount", { precision: 10, scale: 2 }).notNull(),
+  currency: text("currency").notNull().default("USD"),
+  mrr: decimal("mrr", { precision: 10, scale: 2 }),
+  status: text("status", { enum: ["active", "paused", "canceled", "past_due"] }).notNull().default("active"),
+  frequency: text("frequency", { enum: ["weekly", "biweekly", "monthly"] }).notNull().default("monthly"),
+  stripeSubscriptionId: text("stripe_subscription_id"),
+  startDate: date("start_date"),
+  endDate: date("end_date"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const subscriptionsRelations = relations(subscriptions, ({ one }) => ({
+  client: one(clients, {
+    fields: [subscriptions.clientId],
+    references: [clients.id],
+  }),
+}));
+
+export const insertSubscriptionSchema = createInsertSchema(subscriptions).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type InsertSubscription = z.infer<typeof insertSubscriptionSchema>;
+export type Subscription = typeof subscriptions.$inferSelect;
+
+// ============================================================================
+// INVOICES - Payment records linked to newsletters
+// ============================================================================
+export const invoices = pgTable("invoices", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  clientId: varchar("client_id").notNull().references(() => clients.id, { onDelete: "cascade" }),
+  amount: decimal("amount", { precision: 10, scale: 2 }).notNull(),
+  currency: text("currency").notNull().default("USD"),
+  transactionFee: decimal("transaction_fee", { precision: 10, scale: 2 }),
+  stripePaymentId: text("stripe_payment_id"),
+  status: text("status", { enum: ["pending", "paid", "failed", "refunded"] }).notNull().default("pending"),
+  paidAt: timestamp("paid_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const invoicesRelations = relations(invoices, ({ one, many }) => ({
+  client: one(clients, {
+    fields: [invoices.clientId],
+    references: [clients.id],
+  }),
+  newsletters: many(newsletters),
+}));
+
+export const insertInvoiceSchema = createInsertSchema(invoices).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type InsertInvoice = z.infer<typeof insertInvoiceSchema>;
+export type Invoice = typeof invoices.$inferSelect;
 
 // ============================================================================
 // NEWSLETTERS
 // ============================================================================
+export const NEWSLETTER_STATUSES = [
+  "not_started",
+  "in_progress", 
+  "internal_review",
+  "client_review",
+  "revisions",
+  "approved",
+  "sent"
+] as const;
+
+export type NewsletterStatus = typeof NEWSLETTER_STATUSES[number];
+
 export const newsletters = pgTable("newsletters", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   clientId: varchar("client_id").notNull().references(() => clients.id, { onDelete: "cascade" }),
+  invoiceId: varchar("invoice_id").references(() => invoices.id, { onDelete: "set null" }),
   title: text("title").notNull(),
-  periodStart: date("period_start").notNull(),
+  expectedSendDate: date("expected_send_date").notNull(),
   status: text("status", { 
-    enum: ["draft", "internal_review", "client_review", "revisions", "approved", "scheduled", "sent"] 
-  }).notNull().default("draft"),
+    enum: NEWSLETTER_STATUSES
+  }).notNull().default("not_started"),
   currentVersionId: varchar("current_version_id"),
+  documentJson: jsonb("document_json").$type<NewsletterDocument>(),
+  assignedToId: varchar("assigned_to_id").references(() => users.id),
   createdById: varchar("created_by_id").references(() => users.id),
+  lastEditedById: varchar("last_edited_by_id").references(() => users.id),
+  lastEditedAt: timestamp("last_edited_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -136,8 +210,20 @@ export const newslettersRelations = relations(newsletters, ({ one, many }) => ({
     fields: [newsletters.clientId],
     references: [clients.id],
   }),
+  invoice: one(invoices, {
+    fields: [newsletters.invoiceId],
+    references: [invoices.id],
+  }),
+  assignedTo: one(users, {
+    fields: [newsletters.assignedToId],
+    references: [users.id],
+  }),
   createdBy: one(users, {
     fields: [newsletters.createdById],
+    references: [users.id],
+  }),
+  lastEditedBy: one(users, {
+    fields: [newsletters.lastEditedById],
     references: [users.id],
   }),
   versions: many(newsletterVersions),
@@ -245,13 +331,14 @@ export type InsertTasksFlags = z.infer<typeof insertTasksFlagsSchema>;
 export type TasksFlags = typeof tasksFlags.$inferSelect;
 
 // ============================================================================
-// REVIEW TOKENS - Secure client review links
+// REVIEW TOKENS - Secure client review links with expiration
 // ============================================================================
 export const reviewTokens = pgTable("review_tokens", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   newsletterId: varchar("newsletter_id").notNull().references(() => newsletters.id, { onDelete: "cascade" }),
   token: text("token").notNull().unique(),
-  expiresAt: timestamp("expires_at"),
+  expiresAt: timestamp("expires_at").notNull(),
+  singleUse: boolean("single_use").notNull().default(true),
   usedAt: timestamp("used_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
@@ -269,6 +356,15 @@ export const insertReviewTokenSchema = createInsertSchema(reviewTokens).omit({
 });
 export type InsertReviewToken = z.infer<typeof insertReviewTokenSchema>;
 export type ReviewToken = typeof reviewTokens.$inferSelect;
+
+// ============================================================================
+// SESSIONS - Persistent session store
+// ============================================================================
+export const sessions = pgTable("sessions", {
+  sid: varchar("sid").primaryKey(),
+  sess: jsonb("sess").notNull(),
+  expire: timestamp("expire").notNull(),
+});
 
 // ============================================================================
 // INTEGRATION SETTINGS - Global config
@@ -304,11 +400,20 @@ export interface NewsletterTheme {
   fontBody: string;
 }
 
+// Module metadata for tracking edits
+export interface ModuleMetadata {
+  lastEditedAt?: string;
+  lastEditedById?: string;
+  lastEditedByName?: string;
+  origin?: "human" | "ai";
+}
+
 // Base module interface
 export interface BaseModule {
   id: string;
   type: string;
   locked?: boolean;
+  metadata?: ModuleMetadata;
 }
 
 // Module types
@@ -509,9 +614,9 @@ export interface AIGeneratedContent {
   subjectLines?: Array<{ subject: string; preview: string }>;
 }
 
-// Default newsletter template
+// Default newsletter template (canonical)
 export const DEFAULT_NEWSLETTER_DOCUMENT: NewsletterDocument = {
-  templateId: "agent-001",
+  templateId: "canonical-001",
   theme: {
     bg: "#ffffff",
     text: "#1a1a1a",
@@ -524,47 +629,97 @@ export const DEFAULT_NEWSLETTER_DOCUMENT: NewsletterDocument = {
     {
       id: "header-1",
       type: "HeaderNav",
-      props: { navLinks: [] },
+      props: { 
+        logoUrl: "",
+        navLinks: [] 
+      },
     },
     {
       id: "hero-1",
       type: "Hero",
-      props: { title: "Monthly Newsletter", subtitle: "" },
+      props: { 
+        title: "Your Monthly Real Estate Newsletter",
+        subtitle: "Market insights, local events, and more",
+        backgroundUrl: ""
+      },
     },
     {
       id: "welcome-1",
       type: "RichText",
-      props: { content: "" },
+      props: { 
+        content: "<p>Welcome to this month's newsletter! Here's what's happening in your local real estate market and community.</p>" 
+      },
     },
     {
       id: "events-1",
       type: "EventsList",
-      props: { title: "Upcoming Events", events: [] },
+      props: { 
+        title: "Upcoming Local Events", 
+        events: [] 
+      },
     },
     {
       id: "market-1",
       type: "MarketUpdate",
-      props: { title: "Market Update", paragraphs: [] },
+      props: { 
+        title: "Market Update", 
+        paragraphs: [],
+        metrics: []
+      },
     },
     {
       id: "news-1",
       type: "NewsCards",
-      props: { title: "In The News", items: [] },
+      props: { 
+        title: "In The News", 
+        items: [] 
+      },
+    },
+    {
+      id: "listings-1",
+      type: "ListingsGrid",
+      props: {
+        title: "Featured Listings",
+        listings: []
+      },
     },
     {
       id: "cta-1",
       type: "CTA",
-      props: { headline: "Ready to Buy or Sell?", buttonText: "Contact Me", buttonUrl: "#" },
+      props: { 
+        headline: "Ready to Buy or Sell?", 
+        buttonText: "Contact Me", 
+        buttonUrl: "#" 
+      },
+    },
+    {
+      id: "testimonial-1",
+      type: "Testimonial",
+      props: {
+        quote: "",
+        author: "",
+        role: "Happy Client"
+      },
     },
     {
       id: "bio-1",
       type: "AgentBio",
-      props: { name: "", title: "Real Estate Agent" },
+      props: { 
+        name: "", 
+        title: "Real Estate Agent",
+        phone: "",
+        email: "",
+        socials: []
+      },
     },
     {
       id: "footer-1",
       type: "FooterCompliance",
-      props: {},
+      props: {
+        copyright: "",
+        brokerage: "",
+        unsubscribeText: "You received this email because you are subscribed to our newsletter. Click here to unsubscribe."
+      },
     },
   ],
 };

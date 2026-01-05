@@ -3,7 +3,7 @@ import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { compileNewsletterToHtml } from "./email-compiler";
 import { processAICommand, generateNewsletterContent, applyOperationsToDocument } from "./ai-service";
-import { DEFAULT_NEWSLETTER_DOCUMENT, type NewsletterDocument, type AIIntentResponse } from "@shared/schema";
+import { DEFAULT_NEWSLETTER_DOCUMENT, type NewsletterDocument, type AIIntentResponse, type NewsletterStatus, NEWSLETTER_STATUSES } from "@shared/schema";
 import { randomUUID } from "crypto";
 import session from "express-session";
 import MemoryStore from "memorystore";
@@ -103,6 +103,9 @@ export async function registerRoutes(
     next();
   };
 
+  // ============================================================================
+  // CLIENTS
+  // ============================================================================
   app.get("/api/clients", requireAuth, async (req: Request, res: Response) => {
     try {
       const clients = await storage.getClients();
@@ -115,12 +118,11 @@ export async function registerRoutes(
 
   app.get("/api/clients/:id", requireAuth, async (req: Request, res: Response) => {
     try {
-      const client = await storage.getClient(req.params.id);
-      if (!client) {
+      const data = await storage.getClientWithRelations(req.params.id);
+      if (!data) {
         return res.status(404).json({ error: "Client not found" });
       }
-      const dna = await storage.getClientDna(client.id);
-      res.json({ ...client, dna });
+      res.json(data);
     } catch (error) {
       res.status(500).json({ error: "Failed to fetch client" });
     }
@@ -129,7 +131,7 @@ export async function registerRoutes(
   app.post("/api/clients", requireAuth, async (req: Request, res: Response) => {
     try {
       const client = await storage.createClient(req.body);
-      await storage.upsertClientDna({ clientId: client.id });
+      await storage.upsertBrandingKit({ clientId: client.id });
       res.status(201).json(client);
     } catch (error) {
       console.error("Create client error:", error);
@@ -146,6 +148,203 @@ export async function registerRoutes(
     }
   });
 
+  // ============================================================================
+  // BRANDING KITS
+  // ============================================================================
+  app.get("/api/clients/:clientId/branding-kit", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const kit = await storage.getBrandingKit(req.params.clientId);
+      res.json(kit || null);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch branding kit" });
+    }
+  });
+
+  app.put("/api/clients/:clientId/branding-kit", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const kit = await storage.upsertBrandingKit({
+        clientId: req.params.clientId,
+        ...req.body,
+      });
+      res.json(kit);
+    } catch (error) {
+      console.error("Update branding kit error:", error);
+      res.status(500).json({ error: "Failed to update branding kit" });
+    }
+  });
+
+  // ============================================================================
+  // SUBSCRIPTIONS
+  // ============================================================================
+  app.get("/api/clients/:clientId/subscriptions", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const subscriptions = await storage.getSubscriptionsByClient(req.params.clientId);
+      res.json(subscriptions);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch subscriptions" });
+    }
+  });
+
+  app.post("/api/clients/:clientId/subscriptions", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const subscription = await storage.createSubscription({
+        clientId: req.params.clientId,
+        ...req.body,
+      });
+      res.status(201).json(subscription);
+    } catch (error) {
+      console.error("Create subscription error:", error);
+      res.status(500).json({ error: "Failed to create subscription" });
+    }
+  });
+
+  app.patch("/api/subscriptions/:id", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const subscription = await storage.updateSubscription(req.params.id, req.body);
+      res.json(subscription);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to update subscription" });
+    }
+  });
+
+  // ============================================================================
+  // INVOICES
+  // ============================================================================
+  app.get("/api/clients/:clientId/invoices", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const invoices = await storage.getInvoicesByClient(req.params.clientId);
+      res.json(invoices);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch invoices" });
+    }
+  });
+
+  app.post("/api/clients/:clientId/invoices", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = (req as Request & { userId: string }).userId;
+      const { amount, currency, expectedSendDate, stripePaymentId } = req.body;
+
+      const invoice = await storage.createInvoice({
+        clientId: req.params.clientId,
+        amount,
+        currency: currency || "USD",
+        stripePaymentId,
+        status: stripePaymentId ? "paid" : "pending",
+        paidAt: stripePaymentId ? new Date() : null,
+      });
+
+      const client = await storage.getClient(req.params.clientId);
+      if (!client) {
+        return res.status(404).json({ error: "Client not found" });
+      }
+
+      const sendDate = new Date(expectedSendDate);
+      const formattedDate = sendDate.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+      const title = `${client.name} - ${formattedDate}`;
+
+      const latestNewsletter = await storage.getLatestClientNewsletter(client.id);
+      let documentJson: NewsletterDocument;
+
+      if (latestNewsletter?.documentJson) {
+        documentJson = JSON.parse(JSON.stringify(latestNewsletter.documentJson));
+      } else {
+        documentJson = JSON.parse(JSON.stringify(DEFAULT_NEWSLETTER_DOCUMENT));
+        const brandingKit = await storage.getBrandingKit(client.id);
+        if (brandingKit) {
+          documentJson.theme.accent = brandingKit.primaryColor || "#1a5f4a";
+          const headerModule = documentJson.modules.find(m => m.type === "HeaderNav");
+          if (headerModule && headerModule.type === "HeaderNav") {
+            headerModule.props.logoUrl = brandingKit.logo || "";
+          }
+          const bioModule = documentJson.modules.find(m => m.type === "AgentBio");
+          if (bioModule && bioModule.type === "AgentBio") {
+            bioModule.props.name = client.name;
+            bioModule.props.title = brandingKit.title || "Real Estate Agent";
+            bioModule.props.phone = brandingKit.phone || "";
+            bioModule.props.email = brandingKit.email || client.primaryEmail;
+            bioModule.props.photoUrl = brandingKit.headshot || "";
+            const socials: Array<{ platform: string; url: string }> = [];
+            if (brandingKit.facebook) socials.push({ platform: "facebook", url: brandingKit.facebook });
+            if (brandingKit.instagram) socials.push({ platform: "instagram", url: brandingKit.instagram });
+            if (brandingKit.linkedin) socials.push({ platform: "linkedin", url: brandingKit.linkedin });
+            if (brandingKit.youtube) socials.push({ platform: "youtube", url: brandingKit.youtube });
+            if (brandingKit.website) socials.push({ platform: "website", url: brandingKit.website });
+            bioModule.props.socials = socials;
+          }
+          const footerModule = documentJson.modules.find(m => m.type === "FooterCompliance");
+          if (footerModule && footerModule.type === "FooterCompliance") {
+            footerModule.props.brokerage = brandingKit.companyName || "";
+          }
+        }
+      }
+
+      const newsletter = await storage.createNewsletter({
+        clientId: client.id,
+        invoiceId: invoice.id,
+        title,
+        expectedSendDate: expectedSendDate,
+        status: "not_started",
+        documentJson,
+        createdById: userId,
+      });
+
+      const version = await storage.createVersion({
+        newsletterId: newsletter.id,
+        versionNumber: 1,
+        snapshotJson: documentJson,
+        createdById: userId,
+        changeSummary: "Initial version from invoice",
+      });
+
+      await storage.updateNewsletter(newsletter.id, { currentVersionId: version.id });
+
+      res.status(201).json({ invoice, newsletter: { ...newsletter, currentVersionId: version.id } });
+    } catch (error) {
+      console.error("Create invoice error:", error);
+      res.status(500).json({ error: "Failed to create invoice" });
+    }
+  });
+
+  app.patch("/api/invoices/:id", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const invoice = await storage.updateInvoice(req.params.id, req.body);
+      res.json(invoice);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to update invoice" });
+    }
+  });
+
+  // ============================================================================
+  // NEWSLETTERS
+  // ============================================================================
+  app.get("/api/newsletters", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const { status } = req.query;
+      let newsletters;
+      
+      if (status && typeof status === "string") {
+        const statuses = status.split(",") as NewsletterStatus[];
+        newsletters = await storage.getNewslettersByStatus(statuses);
+      } else {
+        newsletters = await storage.getAllNewsletters();
+      }
+
+      const clients = await storage.getClients();
+      const clientMap = new Map(clients.map(c => [c.id, c]));
+
+      const enrichedNewsletters = newsletters.map(nl => ({
+        ...nl,
+        client: clientMap.get(nl.clientId),
+        isPaid: !!nl.invoiceId,
+      }));
+
+      res.json(enrichedNewsletters);
+    } catch (error) {
+      console.error("Get newsletters error:", error);
+      res.status(500).json({ error: "Failed to fetch newsletters" });
+    }
+  });
+
   app.get("/api/clients/:clientId/newsletters", requireAuth, async (req: Request, res: Response) => {
     try {
       const newsletters = await storage.getNewslettersByClient(req.params.clientId);
@@ -158,21 +357,50 @@ export async function registerRoutes(
   app.post("/api/clients/:clientId/newsletters", requireAuth, async (req: Request, res: Response) => {
     try {
       const userId = (req as Request & { userId: string }).userId;
-      const { title, periodStart } = req.body;
+      const { expectedSendDate } = req.body;
+
+      const client = await storage.getClient(req.params.clientId);
+      if (!client) {
+        return res.status(404).json({ error: "Client not found" });
+      }
+
+      const sendDate = new Date(expectedSendDate);
+      const formattedDate = sendDate.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+      const title = `${client.name} - ${formattedDate}`;
+
+      const latestNewsletter = await storage.getLatestClientNewsletter(client.id);
+      let documentJson: NewsletterDocument;
+
+      if (latestNewsletter?.documentJson) {
+        documentJson = JSON.parse(JSON.stringify(latestNewsletter.documentJson));
+      } else {
+        documentJson = JSON.parse(JSON.stringify(DEFAULT_NEWSLETTER_DOCUMENT));
+        const brandingKit = await storage.getBrandingKit(client.id);
+        if (brandingKit) {
+          documentJson.theme.accent = brandingKit.primaryColor || "#1a5f4a";
+          const bioModule = documentJson.modules.find(m => m.type === "AgentBio");
+          if (bioModule && bioModule.type === "AgentBio") {
+            bioModule.props.name = client.name;
+            bioModule.props.title = brandingKit.title || "Real Estate Agent";
+            bioModule.props.phone = brandingKit.phone || "";
+            bioModule.props.email = brandingKit.email || client.primaryEmail;
+          }
+        }
+      }
 
       const newsletter = await storage.createNewsletter({
         clientId: req.params.clientId,
         title,
-        periodStart,
-        status: "draft",
+        expectedSendDate,
+        status: "not_started",
+        documentJson,
         createdById: userId,
       });
 
-      const initialDoc = { ...DEFAULT_NEWSLETTER_DOCUMENT };
       const version = await storage.createVersion({
         newsletterId: newsletter.id,
         versionNumber: 1,
-        snapshotJson: initialDoc,
+        snapshotJson: documentJson,
         createdById: userId,
         changeSummary: "Initial version",
       });
@@ -188,16 +416,17 @@ export async function registerRoutes(
 
   app.get("/api/newsletters/:id", requireAuth, async (req: Request, res: Response) => {
     try {
-      const newsletter = await storage.getNewsletter(req.params.id);
-      if (!newsletter) {
+      const data = await storage.getNewsletterWithClient(req.params.id);
+      if (!data) {
         return res.status(404).json({ error: "Newsletter not found" });
       }
 
+      const { newsletter, client } = data;
       const versions = await storage.getVersionsByNewsletter(newsletter.id);
       const flags = await storage.getFlagsByNewsletter(newsletter.id);
       const aiDrafts = await storage.getAiDraftsByNewsletter(newsletter.id);
 
-      let document: NewsletterDocument = DEFAULT_NEWSLETTER_DOCUMENT;
+      let document: NewsletterDocument = newsletter.documentJson || DEFAULT_NEWSLETTER_DOCUMENT;
       if (newsletter.currentVersionId) {
         const currentVersion = versions.find((v) => v.id === newsletter.currentVersionId);
         if (currentVersion) {
@@ -206,14 +435,18 @@ export async function registerRoutes(
       }
 
       const html = compileNewsletterToHtml(document);
+      const invoice = newsletter.invoiceId ? await storage.getInvoice(newsletter.invoiceId) : null;
 
       res.json({
         newsletter,
+        client,
         document,
         versions,
         flags,
         aiDrafts,
         html,
+        invoice,
+        isPaid: !!newsletter.invoiceId,
       });
     } catch (error) {
       console.error("Get newsletter error:", error);
@@ -223,7 +456,12 @@ export async function registerRoutes(
 
   app.patch("/api/newsletters/:id", requireAuth, async (req: Request, res: Response) => {
     try {
-      const newsletter = await storage.updateNewsletter(req.params.id, req.body);
+      const userId = (req as Request & { userId: string }).userId;
+      const newsletter = await storage.updateNewsletter(req.params.id, {
+        ...req.body,
+        lastEditedById: userId,
+        lastEditedAt: new Date(),
+      });
       res.json(newsletter);
     } catch (error) {
       res.status(500).json({ error: "Failed to update newsletter" });
@@ -233,6 +471,7 @@ export async function registerRoutes(
   app.patch("/api/newsletters/:id/modules/:moduleId", requireAuth, async (req: Request, res: Response) => {
     try {
       const userId = (req as Request & { userId: string }).userId;
+      const user = await storage.getUser(userId);
       const newsletter = await storage.getNewsletter(req.params.id);
       if (!newsletter) {
         return res.status(404).json({ error: "Newsletter not found" });
@@ -247,7 +486,15 @@ export async function registerRoutes(
       }
 
       const document = currentVersion.snapshotJson as NewsletterDocument;
-      const updatedModule = req.body;
+      const updatedModule = {
+        ...req.body,
+        metadata: {
+          lastEditedAt: new Date().toISOString(),
+          lastEditedById: userId,
+          lastEditedByName: user?.name || "Unknown",
+          origin: "human" as const,
+        },
+      };
 
       const newModules = document.modules.map((m) =>
         m.id === req.params.moduleId ? updatedModule : m
@@ -263,7 +510,12 @@ export async function registerRoutes(
         changeSummary: `Updated module ${req.params.moduleId}`,
       });
 
-      await storage.updateNewsletter(newsletter.id, { currentVersionId: newVersion.id });
+      await storage.updateNewsletter(newsletter.id, {
+        currentVersionId: newVersion.id,
+        documentJson: newDoc,
+        lastEditedById: userId,
+        lastEditedAt: new Date(),
+      });
 
       res.json({ success: true, version: newVersion });
     } catch (error) {
@@ -283,13 +535,13 @@ export async function registerRoutes(
       }
 
       const client = await storage.getClient(newsletter.clientId);
-      const clientDna = client ? await storage.getClientDna(client.id) : null;
+      const brandingKit = client ? await storage.getBrandingKit(client.id) : null;
 
       const versions = await storage.getVersionsByNewsletter(newsletter.id);
       const currentVersion = versions.find((v) => v.id === newsletter.currentVersionId);
-      const document = (currentVersion?.snapshotJson || DEFAULT_NEWSLETTER_DOCUMENT) as NewsletterDocument;
+      const document = (currentVersion?.snapshotJson || newsletter.documentJson || DEFAULT_NEWSLETTER_DOCUMENT) as NewsletterDocument;
 
-      const aiResponse = await processAICommand(command, selectedModuleId, document, clientDna);
+      const aiResponse = await processAICommand(command, selectedModuleId, document, brandingKit || null);
 
       if (aiResponse.type === "REQUEST_CLARIFICATION") {
         return res.json({
@@ -318,7 +570,12 @@ export async function registerRoutes(
           changeSummary: `AI: ${command.slice(0, 50)}...`,
         });
 
-        await storage.updateNewsletter(newsletter.id, { currentVersionId: newVersion.id });
+        await storage.updateNewsletter(newsletter.id, {
+          currentVersionId: newVersion.id,
+          documentJson: newDoc,
+          lastEditedById: userId,
+          lastEditedAt: new Date(),
+        });
 
         return res.json({
           type: "success",
@@ -343,18 +600,18 @@ export async function registerRoutes(
       }
 
       const client = await storage.getClient(newsletter.clientId);
-      const clientDna = client ? await storage.getClientDna(client.id) : null;
+      const brandingKit = client ? await storage.getBrandingKit(client.id) : null;
 
-      const targetMonth = new Date(newsletter.periodStart);
+      const targetMonth = new Date(newsletter.expectedSendDate);
       const region = client?.locationRegion || client?.locationCity || "";
 
-      const { content, sources } = await generateNewsletterContent(clientDna, targetMonth, region);
+      const { content, sources } = await generateNewsletterContent(brandingKit || null, targetMonth, region);
 
       const draft = await storage.createAiDraft({
         newsletterId: newsletter.id,
         createdById: userId,
         intent: "Generate newsletter content",
-        draftJson: content,
+        draftJson: content as unknown as Record<string, unknown>,
         sourcesJson: sources,
         validationJson: { warnings: [], errors: [] },
       });
@@ -366,18 +623,13 @@ export async function registerRoutes(
     }
   });
 
+  // ============================================================================
+  // REVIEW TOKENS
+  // ============================================================================
   app.get("/api/review/:token", async (req: Request, res: Response) => {
     try {
-      const reviewToken = await storage.getReviewToken(req.params.token);
+      const reviewToken = await storage.getValidReviewToken(req.params.token);
       if (!reviewToken) {
-        return res.json({ expired: true });
-      }
-
-      if (reviewToken.expiresAt && new Date(reviewToken.expiresAt) < new Date()) {
-        return res.json({ expired: true });
-      }
-
-      if (reviewToken.usedAt) {
         return res.json({ expired: true });
       }
 
@@ -389,7 +641,7 @@ export async function registerRoutes(
       const client = await storage.getClient(newsletter.clientId);
       const versions = await storage.getVersionsByNewsletter(newsletter.id);
       const currentVersion = versions.find((v) => v.id === newsletter.currentVersionId);
-      const document = (currentVersion?.snapshotJson || DEFAULT_NEWSLETTER_DOCUMENT) as NewsletterDocument;
+      const document = (currentVersion?.snapshotJson || newsletter.documentJson || DEFAULT_NEWSLETTER_DOCUMENT) as NewsletterDocument;
       const html = compileNewsletterToHtml(document);
 
       res.json({
@@ -409,12 +661,14 @@ export async function registerRoutes(
 
   app.post("/api/review/:token/approve", async (req: Request, res: Response) => {
     try {
-      const reviewToken = await storage.getReviewToken(req.params.token);
+      const reviewToken = await storage.getValidReviewToken(req.params.token);
       if (!reviewToken) {
-        return res.status(404).json({ error: "Invalid token" });
+        return res.status(404).json({ error: "Invalid or expired token" });
       }
 
-      await storage.markTokenUsed(reviewToken.id);
+      if (reviewToken.singleUse) {
+        await storage.markTokenUsed(reviewToken.id);
+      }
       await storage.updateNewsletter(reviewToken.newsletterId, { status: "approved" });
 
       res.json({ success: true });
@@ -426,12 +680,14 @@ export async function registerRoutes(
   app.post("/api/review/:token/request-changes", async (req: Request, res: Response) => {
     try {
       const { comment } = req.body;
-      const reviewToken = await storage.getReviewToken(req.params.token);
+      const reviewToken = await storage.getValidReviewToken(req.params.token);
       if (!reviewToken) {
-        return res.status(404).json({ error: "Invalid token" });
+        return res.status(404).json({ error: "Invalid or expired token" });
       }
 
-      await storage.markTokenUsed(reviewToken.id);
+      if (reviewToken.singleUse) {
+        await storage.markTokenUsed(reviewToken.id);
+      }
       await storage.updateNewsletter(reviewToken.newsletterId, { status: "revisions" });
 
       await storage.createFlag({
@@ -462,6 +718,7 @@ export async function registerRoutes(
         newsletterId: newsletter.id,
         token,
         expiresAt,
+        singleUse: true,
       });
 
       await storage.updateNewsletter(newsletter.id, { status: "client_review" });
@@ -483,7 +740,7 @@ export async function registerRoutes(
 
       const versions = await storage.getVersionsByNewsletter(newsletter.id);
       const currentVersion = versions.find((v) => v.id === newsletter.currentVersionId);
-      const document = (currentVersion?.snapshotJson || DEFAULT_NEWSLETTER_DOCUMENT) as NewsletterDocument;
+      const document = (currentVersion?.snapshotJson || newsletter.documentJson || DEFAULT_NEWSLETTER_DOCUMENT) as NewsletterDocument;
       const html = compileNewsletterToHtml(document);
 
       res.setHeader("Content-Type", "text/html");
