@@ -5,7 +5,8 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import LoginPage from "@/pages/login";
-import DashboardPage from "@/pages/dashboard";
+import MasterDashboard from "@/pages/master-dashboard";
+import ClientProfilePage from "@/pages/client-profile";
 import ReviewPage from "@/pages/review";
 import NotFound from "@/pages/not-found";
 import { Loader2 } from "lucide-react";
@@ -33,7 +34,12 @@ function Router() {
     <Switch>
       <Route path="/" component={() => (
         <ProtectedRoute>
-          <DashboardPage />
+          <MasterDashboard />
+        </ProtectedRoute>
+      )} />
+      <Route path="/clients/:clientId" component={(params) => (
+        <ProtectedRoute>
+          <ClientProfilePage clientId={params.params.clientId} />
         </ProtectedRoute>
       )} />
       <Route path="/review/:token" component={ReviewPage} />

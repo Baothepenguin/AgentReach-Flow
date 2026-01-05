@@ -91,7 +91,7 @@ export function CreateNewsletterDialog({
         </div>
 
         <DialogFooter className="gap-2">
-          <Button type="button" variant="outline" onClick={handleClose} className="flex-1">
+          <Button type="button" variant="outline" onClick={handleClose} className="flex-1" data-testid="button-cancel-campaign">
             Cancel
           </Button>
           <Button 
