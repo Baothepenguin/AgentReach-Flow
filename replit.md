@@ -13,7 +13,12 @@ AgentReach FLOW is a newsletter production system for real estate agents that en
 ## Architecture
 
 ### Frontend (React + TypeScript)
-- **3-Column Layout**: Client sidebar (280px) | Newsletter editor | Right panel (360px)
+- **2-Level Navigation**:
+  - Master Dashboard (`/`) - Client grid view with search
+  - Client Profile (`/clients/:id`) - 3-column layout:
+    - Left (280px): Client DNA + campaigns list
+    - Center: Newsletter editor/preview
+    - Right (320px): Module panel, versions, AI drafts
 - **Routing**: Wouter for client-side routing
 - **State**: TanStack Query for server state, React context for auth
 - **Styling**: Tailwind CSS with shadcn/ui components
@@ -41,7 +46,9 @@ AgentReach FLOW is a newsletter production system for real estate agents that en
 
 ### Frontend
 - `client/src/App.tsx` - Root component with auth and routing
-- `client/src/pages/dashboard.tsx` - Main 3-column producer interface
+- `client/src/pages/master-dashboard.tsx` - Client grid view (home page)
+- `client/src/pages/client-profile.tsx` - 3-column client workspace
+- `client/src/pages/dashboard.tsx` - Legacy dashboard (deprecated)
 - `client/src/pages/login.tsx` - Login/register page
 - `client/src/pages/review.tsx` - Client review page (tokenized)
 - `client/src/contexts/AuthContext.tsx` - Auth state management
