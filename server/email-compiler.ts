@@ -1,11 +1,16 @@
-import type { NewsletterDocument, NewsletterModule, NewsletterTheme } from "@shared/schema";
+import type { NewsletterDocument, LegacyNewsletterDocument, NewsletterModule, NewsletterTheme } from "@shared/schema";
 
-export function compileNewsletterToHtml(doc: NewsletterDocument): string {
+export function compileNewsletterToHtml(doc: NewsletterDocument | LegacyNewsletterDocument): string {
   if (doc.html) {
     return doc.html;
   }
   
-  const { theme, modules } = doc;
+  const legacyDoc = doc as LegacyNewsletterDocument;
+  if (!legacyDoc.theme || !legacyDoc.modules) {
+    return "";
+  }
+  
+  const { theme, modules } = legacyDoc;
   
   const styles = `
     body, table, td, p, a, li, blockquote { 

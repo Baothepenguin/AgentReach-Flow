@@ -2,8 +2,8 @@ import type { Express, Request, Response } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { compileNewsletterToHtml } from "./email-compiler";
-import { processAICommand, processHtmlCommand, generateNewsletterContent, applyOperationsToDocument } from "./ai-service";
-import { DEFAULT_NEWSLETTER_DOCUMENT, type NewsletterDocument, type AIIntentResponse, type NewsletterStatus, NEWSLETTER_STATUSES } from "@shared/schema";
+import { processHtmlCommand } from "./ai-service";
+import { DEFAULT_NEWSLETTER_DOCUMENT, type NewsletterDocument, type LegacyNewsletterDocument, type NewsletterStatus, NEWSLETTER_STATUSES } from "@shared/schema";
 import { randomUUID } from "crypto";
 import session from "express-session";
 import MemoryStore from "memorystore";
@@ -269,37 +269,10 @@ export async function registerRoutes(
       const latestNewsletter = await storage.getLatestClientNewsletter(client.id);
       let documentJson: NewsletterDocument;
 
-      if (latestNewsletter?.documentJson) {
-        documentJson = JSON.parse(JSON.stringify(latestNewsletter.documentJson));
+      if (latestNewsletter?.documentJson?.html) {
+        documentJson = { html: latestNewsletter.documentJson.html };
       } else {
-        documentJson = JSON.parse(JSON.stringify(DEFAULT_NEWSLETTER_DOCUMENT));
-        const brandingKit = await storage.getBrandingKit(client.id);
-        if (brandingKit) {
-          documentJson.theme.accent = brandingKit.primaryColor || "#1a5f4a";
-          const headerModule = documentJson.modules.find(m => m.type === "HeaderNav");
-          if (headerModule && headerModule.type === "HeaderNav") {
-            headerModule.props.logoUrl = brandingKit.logo || "";
-          }
-          const bioModule = documentJson.modules.find(m => m.type === "AgentBio");
-          if (bioModule && bioModule.type === "AgentBio") {
-            bioModule.props.name = client.name;
-            bioModule.props.title = brandingKit.title || "Real Estate Agent";
-            bioModule.props.phone = brandingKit.phone || "";
-            bioModule.props.email = brandingKit.email || client.primaryEmail;
-            bioModule.props.photoUrl = brandingKit.headshot || "";
-            const socials: Array<{ platform: string; url: string }> = [];
-            if (brandingKit.facebook) socials.push({ platform: "facebook", url: brandingKit.facebook });
-            if (brandingKit.instagram) socials.push({ platform: "instagram", url: brandingKit.instagram });
-            if (brandingKit.linkedin) socials.push({ platform: "linkedin", url: brandingKit.linkedin });
-            if (brandingKit.youtube) socials.push({ platform: "youtube", url: brandingKit.youtube });
-            if (brandingKit.website) socials.push({ platform: "website", url: brandingKit.website });
-            bioModule.props.socials = socials;
-          }
-          const footerModule = documentJson.modules.find(m => m.type === "FooterCompliance");
-          if (footerModule && footerModule.type === "FooterCompliance") {
-            footerModule.props.brokerage = brandingKit.companyName || "";
-          }
-        }
+        documentJson = { html: "" };
       }
 
       const newsletter = await storage.createNewsletter({
@@ -395,30 +368,11 @@ export async function registerRoutes(
       let documentJson: NewsletterDocument;
 
       if (importedHtml && importedHtml.trim()) {
-        documentJson = {
-          templateId: "imported",
-          theme: { bg: "#ffffff", text: "#1a1a1a", accent: "#1a5f4a", muted: "#6b7280", fontHeading: "Georgia", fontBody: "Arial" },
-          modules: [],
-          html: importedHtml.trim(),
-        };
+        documentJson = { html: importedHtml.trim() };
       } else {
         const latestNewsletter = await storage.getLatestClientNewsletter(client.id);
-        if (latestNewsletter?.documentJson) {
-          documentJson = JSON.parse(JSON.stringify(latestNewsletter.documentJson));
-        } else {
-          documentJson = JSON.parse(JSON.stringify(DEFAULT_NEWSLETTER_DOCUMENT));
-          const brandingKit = await storage.getBrandingKit(client.id);
-          if (brandingKit) {
-            documentJson.theme.accent = brandingKit.primaryColor || "#1a5f4a";
-            const bioModule = documentJson.modules.find(m => m.type === "AgentBio");
-            if (bioModule && bioModule.type === "AgentBio") {
-              bioModule.props.name = client.name;
-              bioModule.props.title = brandingKit.title || "Real Estate Agent";
-              bioModule.props.phone = brandingKit.phone || "";
-              bioModule.props.email = brandingKit.email || client.primaryEmail;
-            }
-          }
-        }
+        const latestHtml = (latestNewsletter?.documentJson as NewsletterDocument | LegacyNewsletterDocument | null)?.html;
+        documentJson = { html: latestHtml || "" };
       }
 
       const newsletter = await storage.createNewsletter({
@@ -534,66 +488,10 @@ export async function registerRoutes(
     }
   });
 
-  app.patch("/api/newsletters/:id/modules/:moduleId", requireAuth, async (req: Request, res: Response) => {
-    try {
-      const userId = (req as Request & { userId: string }).userId;
-      const user = await storage.getUser(userId);
-      const newsletter = await storage.getNewsletter(req.params.id);
-      if (!newsletter) {
-        return res.status(404).json({ error: "Newsletter not found" });
-      }
-
-      const latestNum = await storage.getLatestVersionNumber(newsletter.id);
-      const versions = await storage.getVersionsByNewsletter(newsletter.id);
-      const currentVersion = versions.find((v) => v.id === newsletter.currentVersionId);
-
-      if (!currentVersion) {
-        return res.status(400).json({ error: "No current version" });
-      }
-
-      const document = currentVersion.snapshotJson as NewsletterDocument;
-      const updatedModule = {
-        ...req.body,
-        metadata: {
-          lastEditedAt: new Date().toISOString(),
-          lastEditedById: userId,
-          lastEditedByName: user?.name || "Unknown",
-          origin: "human" as const,
-        },
-      };
-
-      const newModules = document.modules.map((m) =>
-        m.id === req.params.moduleId ? updatedModule : m
-      );
-
-      const newDoc = { ...document, modules: newModules };
-
-      const newVersion = await storage.createVersion({
-        newsletterId: newsletter.id,
-        versionNumber: latestNum + 1,
-        snapshotJson: newDoc,
-        createdById: userId,
-        changeSummary: `Updated module ${req.params.moduleId}`,
-      });
-
-      await storage.updateNewsletter(newsletter.id, {
-        currentVersionId: newVersion.id,
-        documentJson: newDoc,
-        lastEditedById: userId,
-        lastEditedAt: new Date(),
-      });
-
-      res.json({ success: true, version: newVersion });
-    } catch (error) {
-      console.error("Update module error:", error);
-      res.status(500).json({ error: "Failed to update module" });
-    }
-  });
-
   app.post("/api/newsletters/:id/ai-command", requireAuth, async (req: Request, res: Response) => {
     try {
       const userId = (req as Request & { userId: string }).userId;
-      const { command, selectedModuleId } = req.body;
+      const { command } = req.body;
 
       const newsletter = await storage.getNewsletter(req.params.id);
       if (!newsletter) {
@@ -607,118 +505,43 @@ export async function registerRoutes(
       const currentVersion = versions.find((v) => v.id === newsletter.currentVersionId);
       const document = (currentVersion?.snapshotJson || newsletter.documentJson || DEFAULT_NEWSLETTER_DOCUMENT) as NewsletterDocument;
 
-      if (document.html) {
-        const htmlResponse = await processHtmlCommand(command, document.html, brandingKit || null);
-        
-        if (htmlResponse.type === "error") {
-          return res.json({ type: "error", message: htmlResponse.message });
-        }
-
-        const trimmedHtml = htmlResponse.html?.trim() || "";
-        if (!trimmedHtml || !trimmedHtml.includes("<") || trimmedHtml.length < 100) {
-          return res.json({ type: "error", message: "AI returned invalid HTML. Please try a different command." });
-        }
-
-        const newDoc: NewsletterDocument = { ...document, html: htmlResponse.html };
-        const latestNum = await storage.getLatestVersionNumber(newsletter.id);
-
-        const newVersion = await storage.createVersion({
-          newsletterId: newsletter.id,
-          versionNumber: latestNum + 1,
-          snapshotJson: newDoc,
-          createdById: userId,
-          changeSummary: `AI: ${command.slice(0, 50)}...`,
-        });
-
-        await storage.updateNewsletter(newsletter.id, {
-          currentVersionId: newVersion.id,
-          documentJson: newDoc,
-          lastEditedById: userId,
-          lastEditedAt: new Date(),
-        });
-
-        return res.json({ type: "success", message: htmlResponse.message });
+      if (!document.html) {
+        return res.json({ type: "error", message: "No HTML content to edit" });
       }
 
-      const aiResponse = await processAICommand(command, selectedModuleId, document, brandingKit || null);
-
-      if (aiResponse.type === "REQUEST_CLARIFICATION") {
-        return res.json({
-          type: "clarification",
-          message: aiResponse.question,
-          options: aiResponse.options,
-        });
+      const htmlResponse = await processHtmlCommand(command, document.html, brandingKit || null);
+      
+      if (htmlResponse.type === "error") {
+        return res.json({ type: "error", message: htmlResponse.message });
       }
 
-      if (aiResponse.type === "FLAG_FOR_REVIEW") {
-        return res.json({
-          type: "error",
-          message: aiResponse.reason,
-        });
+      const trimmedHtml = htmlResponse.html?.trim() || "";
+      if (!trimmedHtml || !trimmedHtml.includes("<") || trimmedHtml.length < 100) {
+        return res.json({ type: "error", message: "AI returned invalid HTML. Please try a different command." });
       }
 
-      if (aiResponse.type === "APPLY_PATCH" && aiResponse.operations) {
-        const newDoc = applyOperationsToDocument(document, aiResponse.operations);
-        const latestNum = await storage.getLatestVersionNumber(newsletter.id);
+      const newDoc: NewsletterDocument = { html: trimmedHtml };
+      const latestNum = await storage.getLatestVersionNumber(newsletter.id);
 
-        const newVersion = await storage.createVersion({
-          newsletterId: newsletter.id,
-          versionNumber: latestNum + 1,
-          snapshotJson: newDoc,
-          createdById: userId,
-          changeSummary: `AI: ${command.slice(0, 50)}...`,
-        });
+      const newVersion = await storage.createVersion({
+        newsletterId: newsletter.id,
+        versionNumber: latestNum + 1,
+        snapshotJson: newDoc,
+        createdById: userId,
+        changeSummary: `AI: ${command.slice(0, 50)}...`,
+      });
 
-        await storage.updateNewsletter(newsletter.id, {
-          currentVersionId: newVersion.id,
-          documentJson: newDoc,
-          lastEditedById: userId,
-          lastEditedAt: new Date(),
-        });
+      await storage.updateNewsletter(newsletter.id, {
+        currentVersionId: newVersion.id,
+        documentJson: newDoc,
+        lastEditedById: userId,
+        lastEditedAt: new Date(),
+      });
 
-        return res.json({
-          type: "success",
-          message: "Changes applied successfully",
-          version: newVersion,
-        });
-      }
-
-      res.json({ type: "error", message: "Unknown AI response type" });
+      return res.json({ type: "success", message: htmlResponse.message });
     } catch (error) {
       console.error("AI command error:", error);
       res.status(500).json({ error: "AI command failed" });
-    }
-  });
-
-  app.post("/api/newsletters/:id/generate-content", requireAuth, async (req: Request, res: Response) => {
-    try {
-      const userId = (req as Request & { userId: string }).userId;
-      const newsletter = await storage.getNewsletter(req.params.id);
-      if (!newsletter) {
-        return res.status(404).json({ error: "Newsletter not found" });
-      }
-
-      const client = await storage.getClient(newsletter.clientId);
-      const brandingKit = client ? await storage.getBrandingKit(client.id) : null;
-
-      const targetMonth = new Date(newsletter.expectedSendDate);
-      const region = client?.locationRegion || client?.locationCity || "";
-
-      const { content, sources } = await generateNewsletterContent(brandingKit || null, targetMonth, region);
-
-      const draft = await storage.createAiDraft({
-        newsletterId: newsletter.id,
-        createdById: userId,
-        intent: "Generate newsletter content",
-        draftJson: content as unknown as Record<string, unknown>,
-        sourcesJson: sources,
-        validationJson: { warnings: [], errors: [] },
-      });
-
-      res.json({ draft, content, sources });
-    } catch (error) {
-      console.error("Generate content error:", error);
-      res.status(500).json({ error: "Content generation failed" });
     }
   });
 

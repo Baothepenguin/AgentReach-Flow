@@ -555,12 +555,17 @@ export type NewsletterModule =
   | AgentBioModule
   | FooterComplianceModule;
 
-// Full newsletter document
+// Full newsletter document - simplified to just raw HTML
 export interface NewsletterDocument {
+  html: string;
+}
+
+// Legacy module-based document (deprecated, kept for migration)
+export interface LegacyNewsletterDocument {
   templateId: string;
   theme: NewsletterTheme;
   modules: NewsletterModule[];
-  html?: string; // Raw HTML for imported templates
+  html?: string;
 }
 
 // AI Draft source tracking
@@ -615,117 +620,17 @@ export interface AIGeneratedContent {
   subjectLines?: Array<{ subject: string; preview: string }>;
 }
 
-// Default newsletter template (canonical)
+// Default empty newsletter document
 export const DEFAULT_NEWSLETTER_DOCUMENT: NewsletterDocument = {
-  templateId: "canonical-001",
-  theme: {
-    bg: "#ffffff",
-    text: "#1a1a1a",
-    accent: "#1a5f4a",
-    muted: "#6b7280",
-    fontHeading: "Georgia, serif",
-    fontBody: "Arial, sans-serif",
-  },
-  modules: [
-    {
-      id: "header-1",
-      type: "HeaderNav",
-      props: { 
-        logoUrl: "",
-        navLinks: [] 
-      },
-    },
-    {
-      id: "hero-1",
-      type: "Hero",
-      props: { 
-        title: "Your Monthly Real Estate Newsletter",
-        subtitle: "Market insights, local events, and more",
-        backgroundUrl: ""
-      },
-    },
-    {
-      id: "welcome-1",
-      type: "RichText",
-      props: { 
-        content: "<p>Welcome to this month's newsletter! Here's what's happening in your local real estate market and community.</p>" 
-      },
-    },
-    {
-      id: "events-1",
-      type: "EventsList",
-      props: { 
-        title: "Upcoming Local Events", 
-        events: [] 
-      },
-    },
-    {
-      id: "market-1",
-      type: "MarketUpdate",
-      props: { 
-        title: "Market Update", 
-        paragraphs: [],
-        metrics: []
-      },
-    },
-    {
-      id: "news-1",
-      type: "NewsCards",
-      props: { 
-        title: "In The News", 
-        items: [] 
-      },
-    },
-    {
-      id: "listings-1",
-      type: "ListingsGrid",
-      props: {
-        title: "Featured Listings",
-        listings: []
-      },
-    },
-    {
-      id: "cta-1",
-      type: "CTA",
-      props: { 
-        headline: "Ready to Buy or Sell?", 
-        buttonText: "Contact Me", 
-        buttonUrl: "#" 
-      },
-    },
-    {
-      id: "testimonial-1",
-      type: "Testimonial",
-      props: {
-        quote: "",
-        author: "",
-        role: "Happy Client"
-      },
-    },
-    {
-      id: "bio-1",
-      type: "AgentBio",
-      props: { 
-        name: "", 
-        title: "Real Estate Agent",
-        phone: "",
-        email: "",
-        socials: []
-      },
-    },
-    {
-      id: "footer-1",
-      type: "FooterCompliance",
-      props: {
-        copyright: "",
-        brokerage: "",
-        unsubscribeText: "You received this email because you are subscribed to our newsletter. Click here to unsubscribe."
-      },
-    },
-  ],
+  html: "",
 };
 
 // Zod schemas for runtime validation
+export const newsletterDocumentSchema = z.object({
+  html: z.string(),
+});
+
+// Legacy schemas kept for migration
 export const newsletterThemeSchema = z.object({
   bg: z.string(),
   text: z.string(),
@@ -741,7 +646,7 @@ export const baseModuleSchema = z.object({
   locked: z.boolean().optional(),
 });
 
-export const newsletterDocumentSchema = z.object({
+export const legacyNewsletterDocumentSchema = z.object({
   templateId: z.string(),
   theme: newsletterThemeSchema,
   modules: z.array(z.object({
@@ -750,6 +655,7 @@ export const newsletterDocumentSchema = z.object({
     locked: z.boolean().optional(),
     props: z.record(z.unknown()),
   })),
+  html: z.string().optional(),
 });
 
 // Chat models for AI integrations (kept for compatibility)
