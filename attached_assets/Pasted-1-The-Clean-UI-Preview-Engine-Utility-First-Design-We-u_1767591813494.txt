@@ -1,0 +1,20 @@
+1. The Clean UI & Preview Engine
+Utility-First Design: We used Tailwind CSS for the interface, focusing on a strict spacing scale (mostly 4, 8, and 12-unit increments) and a neutral palette (slate-50 to slate-900) to let the colorful newsletter content pop.
+The Preview Mechanism: The NewsletterPreview component is a Modular React Wrapper. Instead of just rendering raw HTML, it renders React components that mimic email table structures. This allows for inline state updates (click-to-edit) without reloading an iframe.
+Responsive Toggle: The Desktop/Mobile toggle simply switches the max-width of the central container (e.g., max-w-[600px] to max-w-[375px]) with a transition-all class. This mimics how modern email clients (like HubSpot or Mailchimp) simulate mobile layouts.
+Typography: We utilized Plus Jakarta Sans for the UI to give it a "SaaS-native" feel, while the newsletter itself uses a font-stack fallback system to ensure compatibility across Outlook/Gmail.
+2. AI Intelligence & System Prompting
+Model Selection: We use gemini-3-flash-preview for high-speed generation and gemini-3-pro-preview for the marketing strategist chat.
+Grounding (The "Secret Sauce"): The AI is configured with the googleSearch tool. When a location (e.g., "Austin, TX") is passed, the model performs real-time searches for events and news.
+JSON Contract: The system instruction enforces a strict JSON schema. This ensures the AI output perfectly maps to our NewsletterModule interface, preventing "hallucinations" from breaking the UI.
+Revision Loop: The bottom "Process" bar uses a "Revision" prompt that takes the existing HTML/State and the user's instructions to perform surgical updates via the gemini-flash-lite model.
+3. Dashboard Multi-View Architecture
+State-Driven Views: The ClientDashboard uses a single state variable (view) to conditionally render three layouts:
+Grid (Card): Uses CSS Grid (grid-cols-1 md:grid-cols-3) for a visual, high-level overview of client status and payment health.
+List (Table): A standard <table> layout optimized for "Power Users" who need to see location data and last-sent timestamps rapidly.
+Calendar: Built using manual date math in TypeScript. It maps ClientFolder frequency (Monthly/Weekly) to specific date cells. This is crucial for real estate "production" environments to visualize the team's weekly output.
+4. Technical Stack Summary
+Framework: React 19 (TSX)
+State Management: Standard React useState/useEffect hooks (easily upgradeable to Redux/Zustand for larger teams).
+Storage: Decoupled service layer (storageService.ts). It currently uses localStorage for the preview but is pre-wired with commented-out hooks for Firebase Firestore integration.
+Export: The emailTemplate.ts utility translates the React-managed JSON state into production-ready, table-heavy inline HTML compatible with all major email service providers (ESPs).
