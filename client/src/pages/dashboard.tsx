@@ -84,7 +84,7 @@ export default function DashboardPage() {
   });
 
   const createNewsletterMutation = useMutation({
-    mutationFn: async (data: { title: string; periodStart: string }) => {
+    mutationFn: async (data: { expectedSendDate: string }) => {
       const res = await apiRequest("POST", `/api/clients/${selectedClientId}/newsletters`, data);
       return res.json() as Promise<Newsletter>;
     },

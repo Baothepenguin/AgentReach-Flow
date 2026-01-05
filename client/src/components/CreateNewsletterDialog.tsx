@@ -1,23 +1,15 @@
-import { useForm } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
-import { z } from "zod";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
-import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
-import { Loader2 } from "lucide-react";
-
-const createNewsletterSchema = z.object({
-  title: z.string().min(1, "Title is required"),
-  periodStart: z.string().min(1, "Month is required"),
-});
-
-type CreateNewsletterForm = z.infer<typeof createNewsletterSchema>;
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { cn } from "@/lib/utils";
+import { Loader2, Calendar } from "lucide-react";
+import { format, addDays, startOfDay } from "date-fns";
 
 interface CreateNewsletterDialogProps {
   open: boolean;
   onClose: () => void;
-  onSubmit: (data: CreateNewsletterForm) => Promise<void>;
+  onSubmit: (data: { expectedSendDate: string }) => Promise<void>;
   isSubmitting?: boolean;
   clientName?: string;
 }
@@ -29,80 +21,90 @@ export function CreateNewsletterDialog({
   isSubmitting,
   clientName,
 }: CreateNewsletterDialogProps) {
-  const currentMonth = new Date().toISOString().slice(0, 7);
-  
-  const form = useForm<CreateNewsletterForm>({
-    resolver: zodResolver(createNewsletterSchema),
-    defaultValues: {
-      title: "",
-      periodStart: currentMonth,
-    },
-  });
+  const [selectedDate, setSelectedDate] = useState<Date | null>(null);
 
-  const handleSubmit = async (data: CreateNewsletterForm) => {
+  const today = startOfDay(new Date());
+  const next30Days = Array.from({ length: 30 }, (_, i) => addDays(today, i + 1));
+
+  const handleSubmit = async () => {
+    if (!selectedDate) return;
     await onSubmit({
-      ...data,
-      periodStart: `${data.periodStart}-01`,
+      expectedSendDate: format(selectedDate, "yyyy-MM-dd"),
     });
-    form.reset();
+    setSelectedDate(null);
+  };
+
+  const handleClose = () => {
+    setSelectedDate(null);
+    onClose();
   };
 
   return (
-    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+    <Dialog open={open} onOpenChange={(o) => !o && handleClose()}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Create Newsletter</DialogTitle>
+          <DialogTitle className="text-xl font-semibold">Launch New Campaign</DialogTitle>
           <DialogDescription>
-            {clientName ? `Start a new newsletter for ${clientName}` : "Start a new newsletter"}
+            {clientName ? `Schedule a newsletter for ${clientName}` : "Select a send date"}
           </DialogDescription>
         </DialogHeader>
-        <Form {...form}>
-          <form onSubmit={form.handleSubmit(handleSubmit)} className="space-y-4">
-            <FormField
-              control={form.control}
-              name="title"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Newsletter Title</FormLabel>
-                  <FormControl>
-                    <Input
-                      {...field}
-                      placeholder="January 2025 Newsletter"
-                      data-testid="input-newsletter-title"
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <FormField
-              control={form.control}
-              name="periodStart"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Newsletter Month</FormLabel>
-                  <FormControl>
-                    <Input
-                      {...field}
-                      type="month"
-                      data-testid="input-newsletter-month"
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <DialogFooter className="pt-4">
-              <Button type="button" variant="outline" onClick={onClose}>
-                Cancel
-              </Button>
-              <Button type="submit" disabled={isSubmitting} data-testid="button-submit-newsletter">
-                {isSubmitting && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-                Create Newsletter
-              </Button>
-            </DialogFooter>
-          </form>
-        </Form>
+        
+        <div className="py-4">
+          <div className="flex items-center gap-2 mb-3 text-sm text-muted-foreground">
+            <Calendar className="w-4 h-4" />
+            <span>Select send date</span>
+          </div>
+          <ScrollArea className="h-64 rounded-lg border">
+            <div className="p-2 space-y-1">
+              {next30Days.map((date) => {
+                const isSelected = selectedDate && 
+                  format(selectedDate, "yyyy-MM-dd") === format(date, "yyyy-MM-dd");
+                const dayOfWeek = format(date, "EEE");
+                const dayMonth = format(date, "MMM d");
+                
+                return (
+                  <button
+                    key={date.toISOString()}
+                    type="button"
+                    onClick={() => setSelectedDate(date)}
+                    data-testid={`date-option-${format(date, "yyyy-MM-dd")}`}
+                    className={cn(
+                      "w-full flex items-center justify-between px-4 py-3 rounded-lg text-left transition-colors",
+                      "hover-elevate active-elevate-2",
+                      isSelected
+                        ? "bg-primary text-primary-foreground"
+                        : "bg-transparent"
+                    )}
+                  >
+                    <span className="font-medium">{dayMonth}</span>
+                    <span className={cn(
+                      "text-sm",
+                      isSelected ? "text-primary-foreground/80" : "text-muted-foreground"
+                    )}>
+                      {dayOfWeek}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </ScrollArea>
+        </div>
+
+        <DialogFooter className="gap-2">
+          <Button type="button" variant="outline" onClick={handleClose} className="flex-1">
+            Cancel
+          </Button>
+          <Button 
+            type="button" 
+            onClick={handleSubmit} 
+            disabled={isSubmitting || !selectedDate} 
+            className="flex-1 bg-primary"
+            data-testid="button-start-campaign"
+          >
+            {isSubmitting && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+            Start Campaign
+          </Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );
