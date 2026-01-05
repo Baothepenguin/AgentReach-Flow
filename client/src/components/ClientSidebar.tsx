@@ -40,7 +40,7 @@ export function ClientSidebar({ selectedClientId, onSelectClient, onCreateClient
     const matchesSearch =
       client.name.toLowerCase().includes(search.toLowerCase()) ||
       client.primaryEmail.toLowerCase().includes(search.toLowerCase());
-    const matchesStatus = statusFilters.length === 0 || statusFilters.includes(client.status as ClientStatus);
+    const matchesStatus = statusFilters.length === 0 || statusFilters.includes(client.subscriptionStatus as ClientStatus);
     return matchesSearch && matchesStatus;
   });
 

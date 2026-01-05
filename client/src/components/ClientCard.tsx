@@ -39,7 +39,7 @@ export function ClientCard({ client, isSelected, onClick }: ClientCardProps) {
             </div>
           )}
         </div>
-        <StatusPill status={client.status} size="sm" />
+        <StatusPill status={client.subscriptionStatus} size="sm" />
       </div>
     </button>
   );
