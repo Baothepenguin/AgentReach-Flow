@@ -1,14 +1,14 @@
 # AgentReach FLOW 2.0
 
-AI-orchestrated internal command center for producing branded real estate email newsletters.
+Client portal and CRM for managing real estate email newsletters.
 
 ## Overview
 
 AgentReach FLOW is a newsletter production system for real estate agents that enables:
-- AI-powered content generation and editing
-- Module-based email newsletter composition
+- Simple HTML email management (paste, preview, edit)
 - Client review workflow with tokenized links
-- HTML email compilation with Outlook/Gmail compatibility (VML support)
+- Version history tracking
+- Status pipeline (7 stages from not_started to sent)
 
 ## Architecture
 
@@ -17,8 +17,8 @@ AgentReach FLOW is a newsletter production system for real estate agents that en
   - Master Dashboard (`/`) - Client grid view with search
   - Client Profile (`/clients/:id`) - 3-column layout:
     - Left (280px): Client DNA + campaigns list
-    - Center: Newsletter editor/preview
-    - Right (320px): Module panel, versions, AI drafts
+    - Center: HTML editor/preview with click-to-edit
+    - Right (256px): Version history + status
 - **Routing**: Wouter for client-side routing
 - **State**: TanStack Query for server state, React context for auth
 - **Styling**: Tailwind CSS with shadcn/ui components
@@ -27,59 +27,52 @@ AgentReach FLOW is a newsletter production system for real estate agents that en
 ### Backend (Express + TypeScript)
 - **Database**: PostgreSQL with Drizzle ORM
 - **Auth**: Session-based with express-session
-- **AI**: OpenAI via Replit AI Integrations (gpt-4.1)
-- **Email**: HTML compiler with VML support for Outlook
+- **AI**: Optional OpenAI for HTML editing (gpt-4.1)
 
 ## Key Files
 
 ### Schema & Types
-- `shared/schema.ts` - Drizzle schemas and TypeScript types for all entities
-  - Users, Clients, ClientDna, Assets, Newsletters, NewsletterVersions
-  - AI Drafts, TasksFlags, ReviewTokens, IntegrationSettings
-  - Newsletter module type system (11 module types)
+- `shared/schema.ts` - Drizzle schemas and TypeScript types
+  - Users, Clients, BrandingKits, Newsletters, NewsletterVersions
+  - ReviewTokens for client review links
+  - Simple NewsletterDocument: { html: string }
 
 ### Backend
 - `server/routes.ts` - All API endpoints
 - `server/storage.ts` - DatabaseStorage class for data access
-- `server/ai-service.ts` - AI intent router and content generation
-- `server/email-compiler.ts` - HTML email compilation with VML
+- `server/ai-service.ts` - Optional AI HTML editing
+- `server/email-compiler.ts` - Returns raw HTML from document
 
 ### Frontend
 - `client/src/App.tsx` - Root component with auth and routing
 - `client/src/pages/master-dashboard.tsx` - Client grid view (home page)
 - `client/src/pages/client-profile.tsx` - 3-column client workspace
-- `client/src/pages/dashboard.tsx` - Legacy dashboard (deprecated)
 - `client/src/pages/login.tsx` - Login/register page
 - `client/src/pages/review.tsx` - Client review page (tokenized)
-- `client/src/contexts/AuthContext.tsx` - Auth state management
-- `client/src/components/` - All UI components
+- `client/src/components/HTMLPreviewFrame.tsx` - Click-to-edit HTML preview
+- `client/src/components/RightPanel.tsx` - Version history + status
+- `client/src/components/CreateNewsletterDialog.tsx` - New campaign with HTML import
 
 ## Database Schema
 
 ### Core Tables
 - `users` - Producer accounts (email, name, role)
 - `clients` - Client profiles (name, email, location, status)
-- `client_dna` - Brand/tone preferences for each client
-- `newsletters` - Newsletter instances (title, period, status)
-- `newsletter_versions` - Version snapshots with JSON document
-- `ai_drafts` - AI-generated content with sources
-- `tasks_flags` - Validation warnings and blockers
+- `branding_kits` - Brand preferences for each client
+- `newsletters` - Newsletter instances (title, period, status, documentJson)
+- `newsletter_versions` - Version snapshots
 - `review_tokens` - Secure client review links
 
-## Newsletter Module System
+## Newsletter Status Pipeline
 
-11 module types supported:
-1. **HeaderNav** - Logo and navigation links
-2. **Hero** - Title with optional background image
-3. **RichText** - Formatted text content
-4. **EventsList** - Local community events
-5. **CTA** - Call-to-action with button
-6. **MarketUpdate** - Market insights and metrics
-7. **NewsCards** - News article summaries
-8. **ListingsGrid** - Property listings
-9. **Testimonial** - Client quote
-10. **AgentBio** - Agent contact info
-11. **FooterCompliance** - Legal/brokerage info
+7 stages:
+1. `not_started` - New campaign created
+2. `in_progress` - Being edited
+3. `internal_review` - Ready for team review
+4. `client_review` - Sent to client
+5. `revisions` - Client requested changes
+6. `approved` - Client approved
+7. `sent` - Newsletter delivered
 
 ## API Endpoints
 
@@ -92,18 +85,17 @@ AgentReach FLOW is a newsletter production system for real estate agents that en
 ### Clients
 - `GET /api/clients` - List all clients
 - `POST /api/clients` - Create client
-- `GET /api/clients/:id` - Get client with DNA
+- `GET /api/clients/:id` - Get client with branding kit
 - `PATCH /api/clients/:id` - Update client
 
 ### Newsletters
 - `GET /api/clients/:clientId/newsletters` - List newsletters
-- `POST /api/clients/:clientId/newsletters` - Create newsletter
-- `GET /api/newsletters/:id` - Get newsletter with document, versions, flags
-- `PATCH /api/newsletters/:id` - Update newsletter
-- `PATCH /api/newsletters/:id/modules/:moduleId` - Update module
-- `POST /api/newsletters/:id/ai-command` - Execute AI command
-- `POST /api/newsletters/:id/generate-content` - Generate AI content
+- `POST /api/clients/:clientId/newsletters` - Create newsletter (with optional HTML import)
+- `GET /api/newsletters/:id` - Get newsletter with versions
+- `PATCH /api/newsletters/:id` - Update newsletter (status, html)
+- `POST /api/newsletters/:id/ai-command` - AI HTML editing (optional)
 - `POST /api/newsletters/:id/send-for-review` - Create review token
+- `POST /api/newsletters/:id/restore/:versionId` - Restore version
 - `GET /api/newsletters/:id/export` - Export HTML
 
 ### Review (Public)
@@ -124,5 +116,5 @@ The app runs on port 5000 with both frontend and backend served together.
 
 - Design style: Japanese minimalism
 - Primary accent: Forest green (#1a5f4a)
-- Font: Inter (sans), Georgia (serif for headings in emails)
+- Font: Inter (sans)
 - Dark mode: Fully supported with theme toggle
