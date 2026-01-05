@@ -61,6 +61,30 @@ export type InsertClient = z.infer<typeof insertClientSchema>;
 export type Client = typeof clients.$inferSelect;
 
 // ============================================================================
+// HTML TEMPLATES - Base templates for newsletters
+// ============================================================================
+export const htmlTemplates = pgTable("html_templates", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  description: text("description"),
+  html: text("html").notNull(),
+  thumbnail: text("thumbnail"),
+  category: text("category", { enum: ["minimal", "modern", "classic", "custom"] }).notNull().default("custom"),
+  isDefault: boolean("is_default").notNull().default(false),
+  createdById: varchar("created_by_id").references(() => users.id),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const insertHtmlTemplateSchema = createInsertSchema(htmlTemplates).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type InsertHtmlTemplate = z.infer<typeof insertHtmlTemplateSchema>;
+export type HtmlTemplate = typeof htmlTemplates.$inferSelect;
+
+// ============================================================================
 // PROJECTS - Client projects that contain newsletters
 // ============================================================================
 export const projects = pgTable("projects", {
@@ -94,22 +118,6 @@ export const insertProjectSchema = createInsertSchema(projects).omit({
 export type InsertProject = z.infer<typeof insertProjectSchema>;
 export type Project = typeof projects.$inferSelect;
 
-// ============================================================================
-// HTML TEMPLATES - Base templates for newsletters
-// ============================================================================
-export const htmlTemplates = pgTable("html_templates", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  name: text("name").notNull(),
-  description: text("description"),
-  html: text("html").notNull(),
-  thumbnail: text("thumbnail"),
-  category: text("category", { enum: ["minimal", "modern", "classic", "custom"] }).notNull().default("custom"),
-  isDefault: boolean("is_default").notNull().default(false),
-  createdById: varchar("created_by_id").references(() => users.id),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-  updatedAt: timestamp("updated_at").defaultNow().notNull(),
-});
-
 export const htmlTemplatesRelations = relations(htmlTemplates, ({ one, many }) => ({
   createdBy: one(users, {
     fields: [htmlTemplates.createdById],
@@ -117,14 +125,6 @@ export const htmlTemplatesRelations = relations(htmlTemplates, ({ one, many }) =
   }),
   projects: many(projects),
 }));
-
-export const insertHtmlTemplateSchema = createInsertSchema(htmlTemplates).omit({
-  id: true,
-  createdAt: true,
-  updatedAt: true,
-});
-export type InsertHtmlTemplate = z.infer<typeof insertHtmlTemplateSchema>;
-export type HtmlTemplate = typeof htmlTemplates.$inferSelect;
 
 // ============================================================================
 // BRANDING KITS - Client branding assets

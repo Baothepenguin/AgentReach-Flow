@@ -37,9 +37,11 @@ import {
   Building,
   Calendar,
   FileText,
+  Folder,
+  FolderOpen,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import type { Client, Newsletter, NewsletterVersion, NewsletterDocument, BrandingKit } from "@shared/schema";
+import type { Client, Newsletter, NewsletterVersion, NewsletterDocument, BrandingKit, Project } from "@shared/schema";
 import { format } from "date-fns";
 
 interface ClientProfilePageProps {
@@ -55,6 +57,8 @@ export default function ClientProfilePage({ clientId }: ClientProfilePageProps) 
   const [showCreateNewsletter, setShowCreateNewsletter] = useState(false);
   const [contactOpen, setContactOpen] = useState(false);
   const [brandOpen, setBrandOpen] = useState(false);
+  const [projectsOpen, setProjectsOpen] = useState(true);
+  const [expandedProjects, setExpandedProjects] = useState<Set<string>>(new Set());
 
   const { data: clientData, isLoading: loadingClient } = useQuery<{
     client: Client;
@@ -67,6 +71,11 @@ export default function ClientProfilePage({ clientId }: ClientProfilePageProps) 
   const client = clientData?.client;
   const brandingKit = clientData?.brandingKit;
   const newsletters = clientData?.newsletters;
+
+  const { data: projects } = useQuery<Project[]>({
+    queryKey: ["/api/clients", clientId, "projects"],
+    enabled: !!clientId,
+  });
 
   const { data: newsletterData, isLoading: loadingNewsletter } = useQuery<{
     newsletter: Newsletter;
@@ -149,6 +158,26 @@ export default function ClientProfilePage({ clientId }: ClientProfilePageProps) 
 
   const getPlanLabel = (frequency: string) => {
     return frequency === "weekly" ? "Established (Weekly)" : "Starter (Monthly)";
+  };
+
+  const toggleProject = (projectId: string) => {
+    setExpandedProjects((prev) => {
+      const next = new Set(prev);
+      if (next.has(projectId)) {
+        next.delete(projectId);
+      } else {
+        next.add(projectId);
+      }
+      return next;
+    });
+  };
+
+  const getNewslettersForProject = (projectId: string) => {
+    return newsletters?.filter((nl) => nl.projectId === projectId) || [];
+  };
+
+  const getUnassignedNewsletters = () => {
+    return newsletters?.filter((nl) => !nl.projectId) || [];
   };
 
   const handleExportHtml = async () => {
@@ -315,15 +344,28 @@ export default function ClientProfilePage({ clientId }: ClientProfilePageProps) 
               </Collapsible>
             )}
 
-            <div className="pt-2">
-              <div className="flex items-center justify-between p-2">
-                <span className="text-xs uppercase tracking-wider text-muted-foreground">Campaigns</span>
-                <Button variant="ghost" size="icon" onClick={() => setShowCreateNewsletter(true)} data-testid="button-new-campaign">
-                  <Plus className="w-4 h-4" />
-                </Button>
-              </div>
-              <div className="space-y-1">
-                {newsletters?.length === 0 ? (
+            <Collapsible open={projectsOpen} onOpenChange={setProjectsOpen}>
+              <CollapsibleTrigger asChild>
+                <button className="w-full flex items-center justify-between p-2 rounded-md text-sm font-medium hover-elevate" data-testid="toggle-projects">
+                  <span className="text-xs uppercase tracking-wider text-muted-foreground">Projects & Campaigns</span>
+                  <div className="flex items-center gap-1">
+                    <Button 
+                      variant="ghost" 
+                      size="sm"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setShowCreateNewsletter(true);
+                      }} 
+                      data-testid="button-new-campaign"
+                    >
+                      <Plus className="w-3 h-3" />
+                    </Button>
+                    <ChevronRight className={`w-4 h-4 transition-transform ${projectsOpen ? "rotate-90" : ""}`} />
+                  </div>
+                </button>
+              </CollapsibleTrigger>
+              <CollapsibleContent className="space-y-1 pt-1">
+                {(!newsletters || newsletters.length === 0) && (!projects || projects.length === 0) ? (
                   <div className="text-center py-6">
                     <FileText className="w-8 h-8 mx-auto text-muted-foreground/50 mb-2" />
                     <p className="text-sm text-muted-foreground">No campaigns yet</p>
@@ -332,33 +374,97 @@ export default function ClientProfilePage({ clientId }: ClientProfilePageProps) 
                     </Button>
                   </div>
                 ) : (
-                  newsletters?.map((nl) => (
-                    <div
-                      key={nl.id}
-                      onClick={() => setSelectedNewsletterId(nl.id)}
-                      className={`p-2 rounded-md cursor-pointer transition-colors ${
-                        nl.id === selectedNewsletterId ? "bg-primary/10 glow-green" : "hover-elevate"
-                      }`}
-                      data-testid={`button-campaign-${nl.id}`}
-                      role="button"
-                      tabIndex={0}
-                      onKeyDown={(e) => e.key === "Enter" && setSelectedNewsletterId(nl.id)}
-                    >
-                      <div className="flex items-start justify-between gap-2">
-                        <span className="font-medium text-sm truncate">{nl.title}</span>
-                        <StatusPill status={nl.status} size="sm" />
-                      </div>
-                      {nl.expectedSendDate && (
-                        <div className="flex items-center gap-1 text-xs text-muted-foreground mt-1">
-                          <Calendar className="w-3 h-3" />
-                          {format(new Date(nl.expectedSendDate), "MMM d")}
+                  <>
+                    {projects?.map((project) => {
+                      const projectNewsletters = getNewslettersForProject(project.id);
+                      const isExpanded = expandedProjects.has(project.id);
+                      return (
+                        <div key={project.id} className="space-y-0.5">
+                          <div
+                            onClick={() => toggleProject(project.id)}
+                            className="flex items-center gap-2 p-2 rounded-md cursor-pointer hover-elevate"
+                            data-testid={`project-${project.id}`}
+                            role="button"
+                            tabIndex={0}
+                            onKeyDown={(e) => e.key === "Enter" && toggleProject(project.id)}
+                          >
+                            {isExpanded ? (
+                              <FolderOpen className="w-4 h-4 text-muted-foreground" />
+                            ) : (
+                              <Folder className="w-4 h-4 text-muted-foreground" />
+                            )}
+                            <span className="font-medium text-sm truncate flex-1">{project.name}</span>
+                            <Badge variant="secondary" className="text-xs">{projectNewsletters.length}</Badge>
+                          </div>
+                          {isExpanded && projectNewsletters.length > 0 && (
+                            <div className="pl-6 space-y-0.5">
+                              {projectNewsletters.map((nl) => (
+                                <div
+                                  key={nl.id}
+                                  onClick={() => setSelectedNewsletterId(nl.id)}
+                                  className={`p-2 rounded-md cursor-pointer transition-colors ${
+                                    nl.id === selectedNewsletterId ? "bg-primary/10 glow-green" : "hover-elevate"
+                                  }`}
+                                  data-testid={`button-campaign-${nl.id}`}
+                                  role="button"
+                                  tabIndex={0}
+                                  onKeyDown={(e) => e.key === "Enter" && setSelectedNewsletterId(nl.id)}
+                                >
+                                  <div className="flex items-start justify-between gap-2">
+                                    <span className="font-medium text-sm truncate">{nl.title}</span>
+                                    <StatusPill status={nl.status} size="sm" />
+                                  </div>
+                                  {nl.expectedSendDate && (
+                                    <div className="flex items-center gap-1 text-xs text-muted-foreground mt-1">
+                                      <Calendar className="w-3 h-3" />
+                                      {format(new Date(nl.expectedSendDate), "MMM d")}
+                                    </div>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          )}
                         </div>
-                      )}
-                    </div>
-                  ))
+                      );
+                    })}
+
+                    {getUnassignedNewsletters().length > 0 && (
+                      <div className="space-y-0.5">
+                        {projects && projects.length > 0 && (
+                          <div className="flex items-center gap-2 p-2 text-xs text-muted-foreground">
+                            <span>Unassigned</span>
+                          </div>
+                        )}
+                        {getUnassignedNewsletters().map((nl) => (
+                          <div
+                            key={nl.id}
+                            onClick={() => setSelectedNewsletterId(nl.id)}
+                            className={`p-2 rounded-md cursor-pointer transition-colors ${
+                              nl.id === selectedNewsletterId ? "bg-primary/10 glow-green" : "hover-elevate"
+                            }`}
+                            data-testid={`button-campaign-${nl.id}`}
+                            role="button"
+                            tabIndex={0}
+                            onKeyDown={(e) => e.key === "Enter" && setSelectedNewsletterId(nl.id)}
+                          >
+                            <div className="flex items-start justify-between gap-2">
+                              <span className="font-medium text-sm truncate">{nl.title}</span>
+                              <StatusPill status={nl.status} size="sm" />
+                            </div>
+                            {nl.expectedSendDate && (
+                              <div className="flex items-center gap-1 text-xs text-muted-foreground mt-1">
+                                <Calendar className="w-3 h-3" />
+                                {format(new Date(nl.expectedSendDate), "MMM d")}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </>
                 )}
-              </div>
-            </div>
+              </CollapsibleContent>
+            </Collapsible>
           </div>
         </ScrollArea>
 

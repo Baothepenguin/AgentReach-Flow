@@ -9,15 +9,20 @@ AgentReach FLOW is a newsletter production system for real estate agents that en
 - Client review workflow with tokenized links
 - Version history tracking
 - Status pipeline (7 stages from not_started to sent)
+- Project-based organization (Client -> Project -> Newsletter hierarchy)
+- HTML templates for newsletter starting points
 
 ## Architecture
 
 ### Frontend (React + TypeScript)
 - **2-Level Navigation**:
-  - Master Dashboard (`/`) - Client grid view with search
+  - Master Dashboard (`/`) - Client view with Grid/List/Calendar toggle
+    - Grid: Card layout for quick browsing
+    - List: Tabular view with sortable columns
+    - Calendar: Monthly view showing newsletter due dates
   - Client Profile (`/clients/:id`) - 3-column layout:
-    - Left (280px): Client DNA + campaigns list
-    - Center: HTML editor/preview with click-to-edit
+    - Left (280px): Client DNA + Projects & Campaigns (collapsible with folder hierarchy)
+    - Center: HTML editor/preview with floating toolbar
     - Right (256px): Version history + status
 - **Routing**: Wouter for client-side routing
 - **State**: TanStack Query for server state, React context for auth
@@ -59,6 +64,8 @@ AgentReach FLOW is a newsletter production system for real estate agents that en
 - `users` - Producer accounts (email, name, role)
 - `clients` - Client profiles (name, email, location, status)
 - `branding_kits` - Brand preferences for each client
+- `html_templates` - Base HTML templates for newsletters
+- `projects` - Client projects that group newsletters
 - `newsletters` - Newsletter instances (title, period, status, documentJson)
 - `newsletter_versions` - Version snapshots
 - `review_tokens` - Secure client review links
@@ -102,6 +109,18 @@ AgentReach FLOW is a newsletter production system for real estate agents that en
 - `GET /api/review/:token` - Get review page data
 - `POST /api/review/:token/approve` - Approve newsletter
 - `POST /api/review/:token/request-changes` - Request revisions
+
+### Projects
+- `GET /api/clients/:clientId/projects` - List client projects
+- `POST /api/clients/:clientId/projects` - Create project
+- `GET /api/projects/:id` - Get project
+- `PATCH /api/projects/:id` - Update project
+
+### Templates
+- `GET /api/templates` - List all HTML templates
+- `POST /api/templates` - Create template
+- `GET /api/templates/:id` - Get template
+- `PATCH /api/templates/:id` - Update template
 
 ## Running the Project
 
