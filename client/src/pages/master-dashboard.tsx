@@ -3,7 +3,6 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useAuth } from "@/contexts/AuthContext";
-import { ThemeToggle } from "@/components/ThemeToggle";
 import { CreateClientDialog } from "@/components/CreateClientDialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -23,7 +22,6 @@ import {
   User,
   ChevronDown,
   Search,
-  Mail,
   MapPin,
   Calendar,
 } from "lucide-react";
@@ -61,6 +59,10 @@ export default function MasterDashboard() {
     return client.locationCity || client.locationRegion || null;
   };
 
+  const getPlanLabel = (frequency: string) => {
+    return frequency === "weekly" ? "Established" : "Starter";
+  };
+
   const filteredClients = clients?.filter((client) => {
     const location = getClientLocation(client);
     return (
@@ -85,7 +87,7 @@ export default function MasterDashboard() {
 
   return (
     <div className="min-h-screen bg-background">
-      <header className="sticky top-0 z-50 flex items-center justify-between gap-4 px-6 h-14 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+      <header className="sticky top-0 z-50 flex items-center justify-between gap-4 px-6 h-14 border-b bg-background/80 glass-surface">
         <div className="flex items-center gap-3">
           <span className="text-lg font-semibold">Clients</span>
           <Badge variant="secondary" className="text-xs">
@@ -93,7 +95,6 @@ export default function MasterDashboard() {
           </Badge>
         </div>
         <div className="flex items-center gap-2">
-          <ThemeToggle />
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" className="gap-2" data-testid="button-user-menu">
@@ -128,7 +129,7 @@ export default function MasterDashboard() {
               data-testid="input-search-clients"
             />
           </div>
-          <Button onClick={() => setShowCreateClient(true)} data-testid="button-add-client">
+          <Button onClick={() => setShowCreateClient(true)} className="glow-green-hover" data-testid="button-add-client">
             <Plus className="w-4 h-4 mr-2" />
             Add Client
           </Button>
@@ -151,21 +152,23 @@ export default function MasterDashboard() {
             {filteredClients.map((client) => (
               <Card
                 key={client.id}
-                className="cursor-pointer hover-elevate active-elevate-2 transition-all overflow-visible"
+                className="cursor-pointer hover-elevate glow-green-hover transition-all overflow-visible"
                 onClick={() => setLocation(`/clients/${client.id}`)}
                 data-testid={`card-client-${client.id}`}
                 role="button"
                 tabIndex={0}
-                onKeyDown={(e) => e.key === 'Enter' && setLocation(`/clients/${client.id}`)}
+                onKeyDown={(e) => e.key === "Enter" && setLocation(`/clients/${client.id}`)}
               >
-                <CardContent className="p-6">
-                  <div className="flex items-start justify-between gap-3 mb-4">
+                <CardContent className="p-5">
+                  <div className="flex items-start justify-between gap-3 mb-3">
                     <div className="min-w-0 flex-1">
-                      <h3 className="font-semibold text-lg truncate">{client.name}</h3>
-                      <div className="flex items-center gap-1.5 text-sm text-muted-foreground mt-1">
-                        <Mail className="w-3.5 h-3.5 flex-shrink-0" />
-                        <span className="truncate">{client.primaryEmail}</span>
-                      </div>
+                      <h3 className="font-semibold text-base truncate">{client.name}</h3>
+                      {getClientLocation(client) && (
+                        <div className="flex items-center gap-1 text-sm text-muted-foreground mt-0.5">
+                          <MapPin className="w-3 h-3 flex-shrink-0" />
+                          <span className="truncate">{getClientLocation(client)}</span>
+                        </div>
+                      )}
                     </div>
                     <Badge 
                       variant="secondary" 
@@ -175,18 +178,12 @@ export default function MasterDashboard() {
                     </Badge>
                   </div>
                   
-                  <div className="space-y-2 text-sm text-muted-foreground">
-                    {getClientLocation(client) && (
-                      <div className="flex items-center gap-1.5">
-                        <MapPin className="w-3.5 h-3.5 flex-shrink-0" />
-                        <span className="truncate">{getClientLocation(client)}</span>
-                      </div>
-                    )}
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-muted-foreground">{getPlanLabel(client.newsletterFrequency)}</span>
                     {client.createdAt && (
-                      <div className="flex items-center gap-1.5">
-                        <Calendar className="w-3.5 h-3.5 flex-shrink-0" />
-                        <span>Since {format(new Date(client.createdAt), "MMM yyyy")}</span>
-                      </div>
+                      <span className="text-xs text-muted-foreground/70">
+                        Since {format(new Date(client.createdAt), "MMM yyyy")}
+                      </span>
                     )}
                   </div>
                 </CardContent>
@@ -207,7 +204,7 @@ export default function MasterDashboard() {
                 : "Add your first client to start creating newsletters"}
             </p>
             {!searchQuery && (
-              <Button onClick={() => setShowCreateClient(true)} data-testid="button-add-first-client">
+              <Button onClick={() => setShowCreateClient(true)} className="glow-green-hover" data-testid="button-add-first-client">
                 <Plus className="w-4 h-4 mr-2" />
                 Add Your First Client
               </Button>

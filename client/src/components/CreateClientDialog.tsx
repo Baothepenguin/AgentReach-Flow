@@ -3,7 +3,6 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
@@ -49,7 +48,7 @@ export function CreateClientDialog({ open, onClose, onSubmit, isSubmitting }: Cr
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-md glass-card">
         <DialogHeader>
           <DialogTitle>Add New Client</DialogTitle>
           <DialogDescription>
@@ -92,7 +91,7 @@ export function CreateClientDialog({ open, onClose, onSubmit, isSubmitting }: Cr
                   <FormItem>
                     <FormLabel>City</FormLabel>
                     <FormControl>
-                      <Input {...field} placeholder="Kelowna" data-testid="input-client-city" />
+                      <Input {...field} placeholder="Austin" data-testid="input-client-city" />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -103,9 +102,9 @@ export function CreateClientDialog({ open, onClose, onSubmit, isSubmitting }: Cr
                 name="locationRegion"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Region</FormLabel>
+                    <FormLabel>State</FormLabel>
                     <FormControl>
-                      <Input {...field} placeholder="Okanagan" data-testid="input-client-region" />
+                      <Input {...field} placeholder="TX" data-testid="input-client-state" />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -119,7 +118,7 @@ export function CreateClientDialog({ open, onClose, onSubmit, isSubmitting }: Cr
                 <FormItem>
                   <FormLabel>Phone (Optional)</FormLabel>
                   <FormControl>
-                    <Input {...field} placeholder="+1 250 555 0100" data-testid="input-client-phone" />
+                    <Input {...field} placeholder="+1 512 555 0100" data-testid="input-client-phone" />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -130,27 +129,27 @@ export function CreateClientDialog({ open, onClose, onSubmit, isSubmitting }: Cr
               name="newsletterFrequency"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Newsletter Frequency</FormLabel>
+                  <FormLabel>Client Plan</FormLabel>
                   <Select onValueChange={field.onChange} defaultValue={field.value}>
                     <FormControl>
-                      <SelectTrigger data-testid="select-frequency">
-                        <SelectValue placeholder="Select frequency" />
+                      <SelectTrigger data-testid="select-plan">
+                        <SelectValue placeholder="Select plan" />
                       </SelectTrigger>
                     </FormControl>
                     <SelectContent>
-                      <SelectItem value="monthly">Monthly</SelectItem>
-                      <SelectItem value="weekly">Weekly</SelectItem>
+                      <SelectItem value="monthly">Starter (Monthly)</SelectItem>
+                      <SelectItem value="weekly">Established (Weekly)</SelectItem>
                     </SelectContent>
                   </Select>
                   <FormMessage />
                 </FormItem>
               )}
             />
-            <DialogFooter className="pt-4">
-              <Button type="button" variant="outline" onClick={onClose}>
+            <DialogFooter className="pt-4 gap-2">
+              <Button type="button" variant="outline" onClick={onClose} className="flex-1">
                 Cancel
               </Button>
-              <Button type="submit" disabled={isSubmitting} data-testid="button-submit-client">
+              <Button type="submit" disabled={isSubmitting} className="flex-1 glow-green-hover" data-testid="button-submit-client">
                 {isSubmitting && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
                 Create Client
               </Button>

@@ -175,6 +175,32 @@
   }
 }
 
+.glass-surface {
+  background: hsl(var(--background) / 0.7);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.glass-card {
+  background: hsl(var(--card) / 0.8);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid hsl(var(--border) / 0.5);
+}
+
+.glow-green {
+  box-shadow: 0 0 20px hsl(152 65% 28% / 0.15);
+}
+
+.glow-green-hover:hover {
+  box-shadow: 0 0 24px hsl(152 65% 28% / 0.25);
+  transition: box-shadow 0.3s ease;
+}
+
+.glow-green-intense {
+  box-shadow: 0 0 30px hsl(152 65% 28% / 0.35);
+}
+
 /**
  * Using the elevate system.
  * Automatic contrast adjustment.

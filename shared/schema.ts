@@ -560,6 +560,7 @@ export interface NewsletterDocument {
   templateId: string;
   theme: NewsletterTheme;
   modules: NewsletterModule[];
+  html?: string; // Raw HTML for imported templates
 }
 
 // AI Draft source tracking

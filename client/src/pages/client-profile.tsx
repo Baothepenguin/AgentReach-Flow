@@ -5,18 +5,13 @@ import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useAuth } from "@/contexts/AuthContext";
 import { RightPanel } from "@/components/RightPanel";
 import { HTMLPreviewFrame } from "@/components/HTMLPreviewFrame";
-import { NewsletterCard } from "@/components/NewsletterCard";
-import { ModuleEditor } from "@/components/ModuleEditor";
 import { CreateNewsletterDialog } from "@/components/CreateNewsletterDialog";
-import { AICommandBox } from "@/components/AICommandBox";
-import { ThemeToggle } from "@/components/ThemeToggle";
 import { StatusPill } from "@/components/StatusPill";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Separator } from "@/components/ui/separator";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -25,12 +20,12 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
-  Sparkles,
   Plus,
   LogOut,
   User,
   ChevronDown,
   ChevronLeft,
+  ChevronRight,
   Send,
   Download,
   Copy,
@@ -42,11 +37,10 @@ import {
   MessageSquare,
   Building,
   Calendar,
-  DollarSign,
   FileText,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import type { Client, Newsletter, NewsletterModule, NewsletterVersion, AiDraft, TasksFlags, AIDraftSource, NewsletterDocument, BrandingKit } from "@shared/schema";
+import type { Client, Newsletter, NewsletterVersion, NewsletterDocument, BrandingKit } from "@shared/schema";
 import { format } from "date-fns";
 
 interface ClientProfilePageProps {
@@ -59,11 +53,9 @@ export default function ClientProfilePage({ clientId }: ClientProfilePageProps) 
   const [, setLocation] = useLocation();
 
   const [selectedNewsletterId, setSelectedNewsletterId] = useState<string | null>(null);
-  const [selectedModuleId, setSelectedModuleId] = useState<string | null>(null);
-  const [editingModule, setEditingModule] = useState<NewsletterModule | null>(null);
   const [showCreateNewsletter, setShowCreateNewsletter] = useState(false);
-  const [showAICommand, setShowAICommand] = useState(false);
-  const [aiResponse, setAiResponse] = useState<{ type: "success" | "clarification" | "error"; message: string; options?: string[] } | null>(null);
+  const [contactOpen, setContactOpen] = useState(false);
+  const [brandOpen, setBrandOpen] = useState(false);
 
   const { data: clientData, isLoading: loadingClient } = useQuery<{
     client: Client;
@@ -81,8 +73,6 @@ export default function ClientProfilePage({ clientId }: ClientProfilePageProps) 
     newsletter: Newsletter;
     document: NewsletterDocument;
     versions: NewsletterVersion[];
-    flags: TasksFlags[];
-    aiDrafts: AiDraft[];
     html: string;
   }>({
     queryKey: ["/api/newsletters", selectedNewsletterId],
@@ -90,7 +80,7 @@ export default function ClientProfilePage({ clientId }: ClientProfilePageProps) 
   });
 
   const createNewsletterMutation = useMutation({
-    mutationFn: async (data: { expectedSendDate: string }) => {
+    mutationFn: async (data: { expectedSendDate: string; importedHtml?: string }) => {
       const res = await apiRequest("POST", `/api/clients/${clientId}/newsletters`, data);
       return res.json() as Promise<Newsletter>;
     },
@@ -98,20 +88,22 @@ export default function ClientProfilePage({ clientId }: ClientProfilePageProps) 
       queryClient.invalidateQueries({ queryKey: ["/api/clients", clientId] });
       setSelectedNewsletterId(data.id);
       setShowCreateNewsletter(false);
-      toast({ title: "Newsletter created" });
+      toast({ title: "Campaign created" });
     },
     onError: (error) => {
-      toast({ title: "Failed to create newsletter", description: error.message, variant: "destructive" });
+      toast({ title: "Failed to create campaign", description: error.message, variant: "destructive" });
     },
   });
 
-  const updateModuleMutation = useMutation({
-    mutationFn: (module: NewsletterModule) =>
-      apiRequest("PATCH", `/api/newsletters/${selectedNewsletterId}/modules/${module.id}`, module),
+  const updateHtmlMutation = useMutation({
+    mutationFn: async (html: string) => {
+      const res = await apiRequest("PATCH", `/api/newsletters/${selectedNewsletterId}`, { 
+        documentJson: { html } 
+      });
+      return res.json();
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/newsletters", selectedNewsletterId] });
-      setEditingModule(null);
-      toast({ title: "Module updated" });
     },
   });
 
@@ -119,26 +111,21 @@ export default function ClientProfilePage({ clientId }: ClientProfilePageProps) 
     mutationFn: async (command: string) => {
       const res = await apiRequest("POST", `/api/newsletters/${selectedNewsletterId}/ai-command`, {
         command,
-        selectedModuleId,
       });
-      return res.json() as Promise<{ type: string; message: string; options?: string[] }>;
+      return res.json() as Promise<{ type: string; message: string }>;
     },
     onSuccess: (response) => {
       if (response.type === "success") {
         queryClient.invalidateQueries({ queryKey: ["/api/newsletters", selectedNewsletterId] });
-        setAiResponse({ type: "success", message: response.message });
-      } else if (response.type === "clarification") {
-        setAiResponse({ type: "clarification", message: response.message, options: response.options });
+        toast({ title: "AI updated the newsletter" });
       } else {
-        setAiResponse({ type: "error", message: response.message });
+        toast({ title: response.message, variant: "destructive" });
       }
     },
     onError: (error) => {
-      setAiResponse({ type: "error", message: error.message });
+      toast({ title: "AI command failed", description: error.message, variant: "destructive" });
     },
   });
-
-  const sources: AIDraftSource[] = newsletterData?.aiDrafts?.flatMap((d) => d.sourcesJson || []) || [];
 
   const getClientLocation = () => {
     if (client?.locationCity && client?.locationRegion) {
@@ -147,14 +134,17 @@ export default function ClientProfilePage({ clientId }: ClientProfilePageProps) 
     return client?.locationCity || client?.locationRegion || null;
   };
 
+  const getPlanLabel = (frequency: string) => {
+    return frequency === "weekly" ? "Established (Weekly)" : "Starter (Monthly)";
+  };
+
   if (loadingClient) {
     return (
       <div className="flex h-screen w-full bg-background">
-        <div className="w-80 border-r p-6">
+        <div className="w-72 border-r p-6">
           <Skeleton className="h-8 w-32 mb-6" />
           <Skeleton className="h-4 w-48 mb-3" />
-          <Skeleton className="h-4 w-36 mb-3" />
-          <Skeleton className="h-4 w-40" />
+          <Skeleton className="h-4 w-36" />
         </div>
         <div className="flex-1 flex items-center justify-center">
           <Skeleton className="h-96 w-full max-w-2xl" />
@@ -176,8 +166,8 @@ export default function ClientProfilePage({ clientId }: ClientProfilePageProps) 
 
   return (
     <div className="flex h-screen w-full bg-background">
-      <div className="w-80 flex-shrink-0 border-r flex flex-col">
-        <div className="flex items-center gap-2 px-4 h-14 border-b">
+      <div className="w-72 flex-shrink-0 border-r flex flex-col bg-sidebar/30 glass-surface">
+        <div className="flex items-center gap-2 px-3 h-14 border-b">
           <Button
             variant="ghost"
             size="icon"
@@ -186,117 +176,91 @@ export default function ClientProfilePage({ clientId }: ClientProfilePageProps) 
           >
             <ChevronLeft className="w-5 h-5" />
           </Button>
-          <span className="font-semibold truncate">{client.name}</span>
+          <span className="font-semibold truncate flex-1">{client.name}</span>
         </div>
 
         <ScrollArea className="flex-1">
-          <div className="p-4 space-y-6">
-            <div className="space-y-3">
-              <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                Contact
-              </h3>
-              <div className="space-y-2 text-sm">
-                <div className="flex items-center gap-2">
+          <div className="p-3 space-y-2">
+            <Collapsible open={contactOpen} onOpenChange={setContactOpen}>
+              <CollapsibleTrigger asChild>
+                <button className="w-full flex items-center justify-between p-2 rounded-md text-sm font-medium hover-elevate" data-testid="toggle-contact">
+                  <span className="text-xs uppercase tracking-wider text-muted-foreground">Contact</span>
+                  <ChevronRight className={`w-4 h-4 transition-transform ${contactOpen ? "rotate-90" : ""}`} />
+                </button>
+              </CollapsibleTrigger>
+              <CollapsibleContent className="space-y-2 pt-2 pl-2">
+                <div className="flex items-center gap-2 text-sm">
                   <Mail className="w-4 h-4 text-muted-foreground" />
                   <span className="truncate">{client.primaryEmail}</span>
                 </div>
                 {client.phone && (
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 text-sm">
                     <Phone className="w-4 h-4 text-muted-foreground" />
                     <span>{client.phone}</span>
                   </div>
                 )}
                 {getClientLocation() && (
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 text-sm">
                     <MapPin className="w-4 h-4 text-muted-foreground" />
                     <span>{getClientLocation()}</span>
                   </div>
                 )}
-              </div>
-            </div>
-
-            <Separator />
-
-            <div className="space-y-3">
-              <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                Subscription
-              </h3>
-              <div className="space-y-2 text-sm">
-                <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center justify-between text-sm pt-1">
+                  <span className="text-muted-foreground">Plan</span>
+                  <span>{getPlanLabel(client.newsletterFrequency)}</span>
+                </div>
+                <div className="flex items-center justify-between text-sm">
                   <span className="text-muted-foreground">Status</span>
-                  <Badge variant="secondary" className="capitalize text-xs">
-                    {client.subscriptionStatus}
-                  </Badge>
+                  <Badge variant="secondary" className="text-xs capitalize">{client.subscriptionStatus}</Badge>
                 </div>
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-muted-foreground">Frequency</span>
-                  <span className="capitalize">{client.newsletterFrequency}</span>
-                </div>
-              </div>
-            </div>
+              </CollapsibleContent>
+            </Collapsible>
 
             {brandingKit && (
-              <>
-                <Separator />
-                <div className="space-y-3">
-                  <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                    Brand DNA
-                  </h3>
-                  <div className="space-y-2 text-sm">
-                    {brandingKit.companyName && (
-                      <div className="flex items-center gap-2">
-                        <Building className="w-4 h-4 text-muted-foreground" />
-                        <span className="truncate">{brandingKit.companyName}</span>
-                      </div>
-                    )}
-                    {brandingKit.primaryColor && (
-                      <div className="flex items-center gap-2">
-                        <Palette className="w-4 h-4 text-muted-foreground" />
-                        <div
-                          className="w-4 h-4 rounded border"
-                          style={{ backgroundColor: brandingKit.primaryColor }}
-                        />
-                        <span className="font-mono text-xs">{brandingKit.primaryColor}</span>
-                      </div>
-                    )}
-                    {brandingKit.tone && (
-                      <div className="flex items-start gap-2">
-                        <MessageSquare className="w-4 h-4 text-muted-foreground mt-0.5" />
-                        <span className="capitalize">{brandingKit.tone}</span>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </>
+              <Collapsible open={brandOpen} onOpenChange={setBrandOpen}>
+                <CollapsibleTrigger asChild>
+                  <button className="w-full flex items-center justify-between p-2 rounded-md text-sm font-medium hover-elevate" data-testid="toggle-brand">
+                    <span className="text-xs uppercase tracking-wider text-muted-foreground">Brand DNA</span>
+                    <ChevronRight className={`w-4 h-4 transition-transform ${brandOpen ? "rotate-90" : ""}`} />
+                  </button>
+                </CollapsibleTrigger>
+                <CollapsibleContent className="space-y-2 pt-2 pl-2">
+                  {brandingKit.companyName && (
+                    <div className="flex items-center gap-2 text-sm">
+                      <Building className="w-4 h-4 text-muted-foreground" />
+                      <span className="truncate">{brandingKit.companyName}</span>
+                    </div>
+                  )}
+                  {brandingKit.primaryColor && (
+                    <div className="flex items-center gap-2 text-sm">
+                      <Palette className="w-4 h-4 text-muted-foreground" />
+                      <div className="w-4 h-4 rounded border" style={{ backgroundColor: brandingKit.primaryColor }} />
+                      <span className="font-mono text-xs">{brandingKit.primaryColor}</span>
+                    </div>
+                  )}
+                  {brandingKit.tone && (
+                    <div className="flex items-center gap-2 text-sm">
+                      <MessageSquare className="w-4 h-4 text-muted-foreground" />
+                      <span className="capitalize">{brandingKit.tone}</span>
+                    </div>
+                  )}
+                </CollapsibleContent>
+              </Collapsible>
             )}
 
-            <Separator />
-
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                  Campaigns
-                </h3>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setShowCreateNewsletter(true)}
-                  data-testid="button-new-campaign"
-                >
+            <div className="pt-2">
+              <div className="flex items-center justify-between p-2">
+                <span className="text-xs uppercase tracking-wider text-muted-foreground">Campaigns</span>
+                <Button variant="ghost" size="icon" onClick={() => setShowCreateNewsletter(true)} data-testid="button-new-campaign">
                   <Plus className="w-4 h-4" />
                 </Button>
               </div>
-              <div className="space-y-2">
+              <div className="space-y-1">
                 {newsletters?.length === 0 ? (
                   <div className="text-center py-6">
                     <FileText className="w-8 h-8 mx-auto text-muted-foreground/50 mb-2" />
                     <p className="text-sm text-muted-foreground">No campaigns yet</p>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="mt-3"
-                      onClick={() => setShowCreateNewsletter(true)}
-                    >
+                    <Button variant="outline" size="sm" className="mt-3" onClick={() => setShowCreateNewsletter(true)}>
                       Create First
                     </Button>
                   </div>
@@ -305,24 +269,22 @@ export default function ClientProfilePage({ clientId }: ClientProfilePageProps) 
                     <div
                       key={nl.id}
                       onClick={() => setSelectedNewsletterId(nl.id)}
-                      className={`p-3 rounded-lg cursor-pointer transition-colors ${
-                        nl.id === selectedNewsletterId
-                          ? "bg-primary/10"
-                          : "hover-elevate"
+                      className={`p-2 rounded-md cursor-pointer transition-colors ${
+                        nl.id === selectedNewsletterId ? "bg-primary/10 glow-green" : "hover-elevate"
                       }`}
                       data-testid={`button-campaign-${nl.id}`}
                       role="button"
                       tabIndex={0}
-                      onKeyDown={(e) => e.key === 'Enter' && setSelectedNewsletterId(nl.id)}
+                      onKeyDown={(e) => e.key === "Enter" && setSelectedNewsletterId(nl.id)}
                     >
-                      <div className="flex items-start justify-between gap-2 mb-1">
+                      <div className="flex items-start justify-between gap-2">
                         <span className="font-medium text-sm truncate">{nl.title}</span>
                         <StatusPill status={nl.status} size="sm" />
                       </div>
                       {nl.expectedSendDate && (
-                        <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                        <div className="flex items-center gap-1 text-xs text-muted-foreground mt-1">
                           <Calendar className="w-3 h-3" />
-                          {format(new Date(nl.expectedSendDate), "MMM d, yyyy")}
+                          {format(new Date(nl.expectedSendDate), "MMM d")}
                         </div>
                       )}
                     </div>
@@ -332,10 +294,17 @@ export default function ClientProfilePage({ clientId }: ClientProfilePageProps) 
             </div>
           </div>
         </ScrollArea>
+
+        <div className="p-3 border-t">
+          <Button className="w-full glow-green-hover" onClick={() => setShowCreateNewsletter(true)} data-testid="button-new-campaign-bottom">
+            <Plus className="w-4 h-4 mr-2" />
+            New Campaign
+          </Button>
+        </div>
       </div>
 
       <div className="flex-1 flex flex-col min-w-0">
-        <header className="flex items-center justify-between gap-4 px-4 h-14 border-b bg-background">
+        <header className="flex items-center justify-between gap-4 px-4 h-14 border-b bg-background/50 glass-surface">
           <div className="flex items-center gap-3 min-w-0">
             {selectedNewsletterId && newsletterData?.newsletter ? (
               <>
@@ -349,18 +318,16 @@ export default function ClientProfilePage({ clientId }: ClientProfilePageProps) 
           <div className="flex items-center gap-2">
             {selectedNewsletterId && (
               <>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setShowAICommand(true)}
-                  data-testid="button-ai-command"
-                >
-                  <Sparkles className="w-4 h-4 mr-2" />
-                  AI Command
+                <Button variant="outline" size="sm" data-testid="button-preview">
+                  Preview
+                </Button>
+                <Button variant="default" size="sm" data-testid="button-export-html">
+                  <Download className="w-4 h-4 mr-2" />
+                  Export
                 </Button>
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
-                    <Button variant="outline" size="sm">
+                    <Button variant="ghost" size="icon" data-testid="button-more-actions">
                       <MoreHorizontal className="w-4 h-4" />
                     </Button>
                   </DropdownMenuTrigger>
@@ -368,10 +335,6 @@ export default function ClientProfilePage({ clientId }: ClientProfilePageProps) 
                     <DropdownMenuItem data-testid="menu-send-review">
                       <Send className="w-4 h-4 mr-2" />
                       Send for Review
-                    </DropdownMenuItem>
-                    <DropdownMenuItem data-testid="menu-export-html">
-                      <Download className="w-4 h-4 mr-2" />
-                      Export HTML
                     </DropdownMenuItem>
                     <DropdownMenuItem data-testid="menu-copy-html">
                       <Copy className="w-4 h-4 mr-2" />
@@ -381,7 +344,6 @@ export default function ClientProfilePage({ clientId }: ClientProfilePageProps) 
                 </DropdownMenu>
               </>
             )}
-            <ThemeToggle />
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="ghost" className="gap-2" data-testid="button-user-menu">
@@ -412,7 +374,7 @@ export default function ClientProfilePage({ clientId }: ClientProfilePageProps) 
               <p className="text-sm text-muted-foreground mb-4">
                 Choose a newsletter campaign from the sidebar or create a new one.
               </p>
-              <Button onClick={() => setShowCreateNewsletter(true)} data-testid="button-create-campaign-empty">
+              <Button onClick={() => setShowCreateNewsletter(true)} className="glow-green-hover" data-testid="button-create-campaign-empty">
                 <Plus className="w-4 h-4 mr-2" />
                 New Campaign
               </Button>
@@ -424,41 +386,22 @@ export default function ClientProfilePage({ clientId }: ClientProfilePageProps) 
               html={newsletterData?.html || ""}
               isLoading={loadingNewsletter}
               title={newsletterData?.newsletter?.title}
+              onHtmlChange={(html) => updateHtmlMutation.mutate(html)}
+              onAiCommand={(cmd) => aiCommandMutation.mutate(cmd)}
+              isAiProcessing={aiCommandMutation.isPending}
             />
           </div>
         )}
       </div>
 
       {selectedNewsletterId && newsletterData && (
-        <div className="w-80 flex-shrink-0">
+        <div className="w-64 flex-shrink-0">
           <RightPanel
-            modules={newsletterData.document?.modules || []}
-            sources={sources}
-            flags={newsletterData.flags || []}
             versions={newsletterData.versions || []}
-            aiDrafts={newsletterData.aiDrafts || []}
-            currentVersionId={newsletterData.newsletter?.currentVersionId}
-            selectedModuleId={selectedModuleId}
-            onSelectModule={setSelectedModuleId}
-            onEditModule={(id) => {
-              const mod = newsletterData.document?.modules.find((m) => m.id === id);
-              if (mod) setEditingModule(mod);
-            }}
-            onDeleteModule={(id) => {
-              toast({ title: "Delete module", description: `Would delete ${id}` });
-            }}
-            onReorderModules={() => {}}
-            onAddModule={() => {
-              toast({ title: "Add module", description: "Coming soon" });
-            }}
+            currentVersionId={newsletterData.newsletter?.currentVersionId || null}
+            status={newsletterData.newsletter?.status || "not_started"}
             onRestoreVersion={(versionId) => {
               toast({ title: "Restore version", description: `Would restore ${versionId}` });
-            }}
-            onResolveFlag={(flagId) => {
-              toast({ title: "Resolve flag", description: `Would resolve ${flagId}` });
-            }}
-            onApplyAIDraft={(draftId) => {
-              toast({ title: "Apply draft", description: `Would apply ${draftId}` });
             }}
           />
         </div>
@@ -472,25 +415,6 @@ export default function ClientProfilePage({ clientId }: ClientProfilePageProps) 
         }}
         isSubmitting={createNewsletterMutation.isPending}
         clientName={client.name}
-      />
-
-      <ModuleEditor
-        module={editingModule}
-        open={!!editingModule}
-        onClose={() => setEditingModule(null)}
-        onSave={(mod) => updateModuleMutation.mutate(mod)}
-      />
-
-      <AICommandBox
-        open={showAICommand}
-        onOpenChange={setShowAICommand}
-        onSubmit={async (cmd) => {
-          setAiResponse(null);
-          await aiCommandMutation.mutateAsync(cmd);
-        }}
-        selectedModuleId={selectedModuleId}
-        isProcessing={aiCommandMutation.isPending}
-        response={aiResponse}
       />
     </div>
   );

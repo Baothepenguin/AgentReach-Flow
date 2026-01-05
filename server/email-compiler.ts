@@ -1,6 +1,10 @@
 import type { NewsletterDocument, NewsletterModule, NewsletterTheme } from "@shared/schema";
 
 export function compileNewsletterToHtml(doc: NewsletterDocument): string {
+  if (doc.html) {
+    return doc.html;
+  }
+  
   const { theme, modules } = doc;
   
   const styles = `

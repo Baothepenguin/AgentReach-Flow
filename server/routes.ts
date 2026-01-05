@@ -2,7 +2,7 @@ import type { Express, Request, Response } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { compileNewsletterToHtml } from "./email-compiler";
-import { processAICommand, generateNewsletterContent, applyOperationsToDocument } from "./ai-service";
+import { processAICommand, processHtmlCommand, generateNewsletterContent, applyOperationsToDocument } from "./ai-service";
 import { DEFAULT_NEWSLETTER_DOCUMENT, type NewsletterDocument, type AIIntentResponse, type NewsletterStatus, NEWSLETTER_STATUSES } from "@shared/schema";
 import { randomUUID } from "crypto";
 import session from "express-session";
@@ -381,7 +381,7 @@ export async function registerRoutes(
   app.post("/api/clients/:clientId/newsletters", requireAuth, async (req: Request, res: Response) => {
     try {
       const userId = (req as Request & { userId: string }).userId;
-      const { expectedSendDate } = req.body;
+      const { expectedSendDate, importedHtml } = req.body;
 
       const client = await storage.getClient(req.params.clientId);
       if (!client) {
@@ -392,22 +392,31 @@ export async function registerRoutes(
       const formattedDate = sendDate.toLocaleDateString("en-US", { month: "short", day: "numeric" });
       const title = `${client.name} - ${formattedDate}`;
 
-      const latestNewsletter = await storage.getLatestClientNewsletter(client.id);
       let documentJson: NewsletterDocument;
 
-      if (latestNewsletter?.documentJson) {
-        documentJson = JSON.parse(JSON.stringify(latestNewsletter.documentJson));
+      if (importedHtml && importedHtml.trim()) {
+        documentJson = {
+          templateId: "imported",
+          theme: { bg: "#ffffff", text: "#1a1a1a", accent: "#1a5f4a", muted: "#6b7280", fontHeading: "Georgia", fontBody: "Arial" },
+          modules: [],
+          html: importedHtml.trim(),
+        };
       } else {
-        documentJson = JSON.parse(JSON.stringify(DEFAULT_NEWSLETTER_DOCUMENT));
-        const brandingKit = await storage.getBrandingKit(client.id);
-        if (brandingKit) {
-          documentJson.theme.accent = brandingKit.primaryColor || "#1a5f4a";
-          const bioModule = documentJson.modules.find(m => m.type === "AgentBio");
-          if (bioModule && bioModule.type === "AgentBio") {
-            bioModule.props.name = client.name;
-            bioModule.props.title = brandingKit.title || "Real Estate Agent";
-            bioModule.props.phone = brandingKit.phone || "";
-            bioModule.props.email = brandingKit.email || client.primaryEmail;
+        const latestNewsletter = await storage.getLatestClientNewsletter(client.id);
+        if (latestNewsletter?.documentJson) {
+          documentJson = JSON.parse(JSON.stringify(latestNewsletter.documentJson));
+        } else {
+          documentJson = JSON.parse(JSON.stringify(DEFAULT_NEWSLETTER_DOCUMENT));
+          const brandingKit = await storage.getBrandingKit(client.id);
+          if (brandingKit) {
+            documentJson.theme.accent = brandingKit.primaryColor || "#1a5f4a";
+            const bioModule = documentJson.modules.find(m => m.type === "AgentBio");
+            if (bioModule && bioModule.type === "AgentBio") {
+              bioModule.props.name = client.name;
+              bioModule.props.title = brandingKit.title || "Real Estate Agent";
+              bioModule.props.phone = brandingKit.phone || "";
+              bioModule.props.email = brandingKit.email || client.primaryEmail;
+            }
           }
         }
       }
@@ -481,8 +490,41 @@ export async function registerRoutes(
   app.patch("/api/newsletters/:id", requireAuth, async (req: Request, res: Response) => {
     try {
       const userId = (req as Request & { userId: string }).userId;
+      const { documentJson, ...otherFields } = req.body;
+
+      if (documentJson) {
+        const newsletter = await storage.getNewsletter(req.params.id);
+        if (!newsletter) {
+          return res.status(404).json({ error: "Newsletter not found" });
+        }
+
+        const versions = await storage.getVersionsByNewsletter(newsletter.id);
+        const currentVersion = versions.find((v) => v.id === newsletter.currentVersionId);
+        const existingDoc = (currentVersion?.snapshotJson || newsletter.documentJson || DEFAULT_NEWSLETTER_DOCUMENT) as NewsletterDocument;
+        
+        const newDoc = { ...existingDoc, ...documentJson };
+        const latestNum = await storage.getLatestVersionNumber(newsletter.id);
+
+        const newVersion = await storage.createVersion({
+          newsletterId: newsletter.id,
+          versionNumber: latestNum + 1,
+          snapshotJson: newDoc,
+          createdById: userId,
+          changeSummary: "Manual edit",
+        });
+
+        const updated = await storage.updateNewsletter(req.params.id, {
+          ...otherFields,
+          documentJson: newDoc,
+          currentVersionId: newVersion.id,
+          lastEditedById: userId,
+          lastEditedAt: new Date(),
+        });
+        return res.json(updated);
+      }
+
       const newsletter = await storage.updateNewsletter(req.params.id, {
-        ...req.body,
+        ...otherFields,
         lastEditedById: userId,
         lastEditedAt: new Date(),
       });
@@ -564,6 +606,36 @@ export async function registerRoutes(
       const versions = await storage.getVersionsByNewsletter(newsletter.id);
       const currentVersion = versions.find((v) => v.id === newsletter.currentVersionId);
       const document = (currentVersion?.snapshotJson || newsletter.documentJson || DEFAULT_NEWSLETTER_DOCUMENT) as NewsletterDocument;
+
+      if (document.html) {
+        const htmlResponse = await processHtmlCommand(command, document.html, brandingKit || null);
+        
+        if (htmlResponse.type === "error") {
+          return res.json({ type: "error", message: htmlResponse.message });
+        }
+
+        if (htmlResponse.html) {
+          const newDoc: NewsletterDocument = { ...document, html: htmlResponse.html };
+          const latestNum = await storage.getLatestVersionNumber(newsletter.id);
+
+          const newVersion = await storage.createVersion({
+            newsletterId: newsletter.id,
+            versionNumber: latestNum + 1,
+            snapshotJson: newDoc,
+            createdById: userId,
+            changeSummary: `AI: ${command.slice(0, 50)}...`,
+          });
+
+          await storage.updateNewsletter(newsletter.id, {
+            currentVersionId: newVersion.id,
+            documentJson: newDoc,
+            lastEditedById: userId,
+            lastEditedAt: new Date(),
+          });
+
+          return res.json({ type: "success", message: htmlResponse.message });
+        }
+      }
 
       const aiResponse = await processAICommand(command, selectedModuleId, document, brandingKit || null);
 
