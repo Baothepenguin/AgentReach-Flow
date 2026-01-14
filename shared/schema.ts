@@ -37,6 +37,8 @@ export const clients = pgTable("clients", {
   locationRegion: text("location_region"),
   newsletterFrequency: text("newsletter_frequency", { enum: ["weekly", "biweekly", "monthly"] }).notNull().default("monthly"),
   subscriptionStatus: text("subscription_status", { enum: ["active", "paused", "past_due", "canceled"] }).notNull().default("active"),
+  isVerified: boolean("is_verified").notNull().default(false),
+  postmarkSignatureId: integer("postmark_signature_id"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -265,6 +267,7 @@ export const newsletters = pgTable("newsletters", {
   }).notNull().default("not_started"),
   currentVersionId: varchar("current_version_id"),
   documentJson: jsonb("document_json").$type<NewsletterDocument>(),
+  designJson: jsonb("design_json"),
   assignedToId: varchar("assigned_to_id").references(() => users.id),
   createdById: varchar("created_by_id").references(() => users.id),
   lastEditedById: varchar("last_edited_by_id").references(() => users.id),
