@@ -3,6 +3,7 @@ import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { compileNewsletterToHtml } from "./email-compiler";
 import { processHtmlCommand } from "./ai-service";
+import { createSenderSignature, getSenderSignature } from "./postmark-service";
 import { DEFAULT_NEWSLETTER_DOCUMENT, type NewsletterDocument, type LegacyNewsletterDocument, type NewsletterStatus, NEWSLETTER_STATUSES } from "@shared/schema";
 import { randomUUID } from "crypto";
 import session from "express-session";
@@ -156,6 +157,16 @@ export async function registerRoutes(
     try {
       const client = await storage.createClient(req.body);
       await storage.upsertBrandingKit({ clientId: client.id });
+      
+      if (client.primaryEmail && process.env.POSTMARK_ACCOUNT_API_TOKEN) {
+        const signatureResult = await createSenderSignature(client.primaryEmail, client.name);
+        if (signatureResult.success && signatureResult.signatureId) {
+          await storage.updateClient(client.id, {
+            postmarkSignatureId: signatureResult.signatureId,
+          });
+        }
+      }
+      
       res.status(201).json(client);
     } catch (error) {
       console.error("Create client error:", error);
@@ -444,7 +455,7 @@ export async function registerRoutes(
   app.patch("/api/newsletters/:id", requireAuth, async (req: Request, res: Response) => {
     try {
       const userId = (req as Request & { userId: string }).userId;
-      const { documentJson, ...otherFields } = req.body;
+      const { documentJson, designJson, ...otherFields } = req.body;
 
       if (documentJson) {
         const newsletter = await storage.getNewsletter(req.params.id);
@@ -464,24 +475,36 @@ export async function registerRoutes(
           versionNumber: latestNum + 1,
           snapshotJson: newDoc,
           createdById: userId,
-          changeSummary: "Manual edit",
+          changeSummary: designJson ? "Visual editor save" : "Manual edit",
         });
 
-        const updated = await storage.updateNewsletter(req.params.id, {
+        const updateData: any = {
           ...otherFields,
           documentJson: newDoc,
           currentVersionId: newVersion.id,
           lastEditedById: userId,
           lastEditedAt: new Date(),
-        });
+        };
+        
+        if (designJson) {
+          updateData.designJson = designJson;
+        }
+
+        const updated = await storage.updateNewsletter(req.params.id, updateData);
         return res.json(updated);
       }
 
-      const newsletter = await storage.updateNewsletter(req.params.id, {
+      const updateData: any = {
         ...otherFields,
         lastEditedById: userId,
         lastEditedAt: new Date(),
-      });
+      };
+      
+      if (designJson) {
+        updateData.designJson = designJson;
+      }
+
+      const newsletter = await storage.updateNewsletter(req.params.id, updateData);
       res.json(newsletter);
     } catch (error) {
       res.status(500).json({ error: "Failed to update newsletter" });
@@ -542,6 +565,58 @@ export async function registerRoutes(
     } catch (error) {
       console.error("AI command error:", error);
       res.status(500).json({ error: "AI command failed" });
+    }
+  });
+
+  // ============================================================================
+  // POSTMARK WEBHOOKS
+  // ============================================================================
+  app.post("/api/webhooks/postmark/sender-confirmed", async (req: Request, res: Response) => {
+    try {
+      const { FromEmail, Confirmed } = req.body;
+      
+      if (!FromEmail || !Confirmed) {
+        return res.status(400).json({ error: "Invalid webhook payload" });
+      }
+      
+      const clients = await storage.getClients();
+      const client = clients.find(c => c.primaryEmail === FromEmail);
+      
+      if (client) {
+        await storage.updateClient(client.id, { isVerified: true });
+        console.log(`Client ${client.name} verified via Postmark webhook`);
+      }
+      
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Postmark webhook error:", error);
+      res.status(500).json({ error: "Webhook processing failed" });
+    }
+  });
+
+  app.get("/api/clients/:clientId/verification-status", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const client = await storage.getClient(req.params.clientId);
+      if (!client) {
+        return res.status(404).json({ error: "Client not found" });
+      }
+      
+      if (client.postmarkSignatureId) {
+        const signature = await getSenderSignature(client.postmarkSignatureId);
+        if (signature?.Confirmed && !client.isVerified) {
+          await storage.updateClient(client.id, { isVerified: true });
+          return res.json({ isVerified: true, signatureId: client.postmarkSignatureId });
+        }
+        return res.json({ 
+          isVerified: client.isVerified, 
+          signatureId: client.postmarkSignatureId,
+          pendingVerification: !signature?.Confirmed 
+        });
+      }
+      
+      res.json({ isVerified: client.isVerified });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to check verification status" });
     }
   });
 

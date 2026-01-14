@@ -5,6 +5,7 @@ import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useAuth } from "@/contexts/AuthContext";
 import { RightPanel } from "@/components/RightPanel";
 import { HTMLPreviewFrame } from "@/components/HTMLPreviewFrame";
+import { UnlayerEditor } from "@/components/UnlayerEditor";
 import { CreateNewsletterDialog } from "@/components/CreateNewsletterDialog";
 import { StatusPill } from "@/components/StatusPill";
 import { Button } from "@/components/ui/button";
@@ -59,6 +60,7 @@ export default function ClientProfilePage({ clientId }: ClientProfilePageProps) 
   const [brandOpen, setBrandOpen] = useState(false);
   const [projectsOpen, setProjectsOpen] = useState(true);
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(new Set());
+  const [editorMode, setEditorMode] = useState<"unlayer" | "html">("unlayer");
 
   const { data: clientData, isLoading: loadingClient } = useQuery<{
     client: Client;
@@ -112,6 +114,23 @@ export default function ClientProfilePage({ clientId }: ClientProfilePageProps) 
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/newsletters", selectedNewsletterId] });
+    },
+  });
+
+  const saveDesignMutation = useMutation({
+    mutationFn: async (data: { html: string; designJson: object }) => {
+      const res = await apiRequest("PATCH", `/api/newsletters/${selectedNewsletterId}`, { 
+        documentJson: { html: data.html },
+        designJson: data.designJson
+      });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/newsletters", selectedNewsletterId] });
+      toast({ title: "Newsletter saved" });
+    },
+    onError: (error) => {
+      toast({ title: "Failed to save", description: error.message, variant: "destructive" });
     },
   });
 
@@ -524,15 +543,54 @@ export default function ClientProfilePage({ clientId }: ClientProfilePageProps) 
             </div>
           </div>
         ) : (
-          <div className="flex-1 min-h-0">
-            <HTMLPreviewFrame
-              html={newsletterData?.html || ""}
-              isLoading={loadingNewsletter}
-              title={newsletterData?.newsletter?.title}
-              onHtmlChange={(html) => updateHtmlMutation.mutate(html)}
-              onAiCommand={(cmd) => aiCommandMutation.mutate(cmd)}
-              isAiProcessing={aiCommandMutation.isPending}
-            />
+          <div className="flex-1 min-h-0 flex flex-col">
+            <div className="flex items-center gap-2 p-2 border-b bg-muted/30">
+              <div className="flex items-center bg-muted rounded-lg p-0.5">
+                <Button
+                  variant={editorMode === "unlayer" ? "default" : "ghost"}
+                  size="sm"
+                  onClick={() => setEditorMode("unlayer")}
+                  data-testid="button-mode-unlayer"
+                >
+                  Visual Editor
+                </Button>
+                <Button
+                  variant={editorMode === "html" ? "default" : "ghost"}
+                  size="sm"
+                  onClick={() => setEditorMode("html")}
+                  data-testid="button-mode-html"
+                >
+                  HTML Mode
+                </Button>
+              </div>
+              <span className="text-sm text-muted-foreground ml-2">
+                {newsletterData?.newsletter?.title}
+              </span>
+            </div>
+            <div className="flex-1 min-h-0">
+              {editorMode === "unlayer" ? (
+                <UnlayerEditor
+                  designJson={newsletterData?.newsletter?.designJson as object | undefined}
+                  html={newsletterData?.html || ""}
+                  onSave={(data) => saveDesignMutation.mutate(data)}
+                  isSaving={saveDesignMutation.isPending}
+                  branding={{
+                    primaryColor: brandingKit?.primaryColor || "#1a5f4a",
+                    logoUrl: brandingKit?.logo || undefined,
+                    companyName: brandingKit?.companyName || client?.name,
+                  }}
+                />
+              ) : (
+                <HTMLPreviewFrame
+                  html={newsletterData?.html || ""}
+                  isLoading={loadingNewsletter}
+                  title={newsletterData?.newsletter?.title}
+                  onHtmlChange={(html) => updateHtmlMutation.mutate(html)}
+                  onAiCommand={(cmd) => aiCommandMutation.mutate(cmd)}
+                  isAiProcessing={aiCommandMutation.isPending}
+                />
+              )}
+            </div>
           </div>
         )}
       </div>
