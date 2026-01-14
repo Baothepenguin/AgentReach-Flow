@@ -1,0 +1,47 @@
+1. The "Frictionless Onboarding" Bridge (Postmark API)
+Goal: Automatically trigger a verification email to the client the moment they are added to your Client Master database.
+
+The Logic: Your app watches for a new entry in Client Master. It takes the email and name and pings Postmark.
+
+The Component: A backend function (Node.js) using the postmark npm package.
+
+Requirement: You must use your Postmark Account API Token (not the Server token) to manage Sender Signatures.
+
+2. The "Smart Studio" (Unlayer Integration)
+Goal: A native React component in your dashboard that loads a client’s specific branding into a world-class editor.
+
+The Interface: An embedded EmailEditor using the react-email-editor SDK.
+
+The Logic: 1. Fetch: Load the primary_hex and logo_url from your Branding database. 2. Inject: Use the unlayer.init options to set the editor’s appearance and inject these values into the starting template. 3. Persist: When the "Save" button is clicked, your app must save both the JSON (for future editing) and the HTML (for sending) to your Newsletter Campaigns database.
+
+3. The "Approval to Inbox" Pipeline
+Goal: Convert a database "Status Update" into a live email blast.
+
+Trigger: When a campaign status changes from Pending to Approved.
+
+Execution: Your app fetches the approved HTML and the client's contact list, then hits the Postmark Broadcast API to send the email via that client’s specific Postmark Server.
+
+Replit "Vibe Coding" Prompts
+Give these to the Replit Agent one by one to build the logic.
+
+Prompt 1: The Postmark Identity Bridge
+"I have a PostgreSQL table called 'client_master'. Create a Node.js backend route that triggers whenever a new client is added. Use the Postmark API (using my Account API Token) to 'Create a Sender Signature' for that client's email and name. If the signature already exists, ignore the error. This will send them a verification email from Postmark automatically."
+
+Prompt 2: The Unlayer Editor Component
+"Build a React component using the 'react-email-editor' library.
+
+It should take a 'clientId' as a prop and fetch the branding data (logo_url, primary_hex) from my 'branding' table.
+
+Initialize the Unlayer editor and use the branding data to set the editor's primary color.
+
+Add a 'Save' button that calls 'emailEditorRef.current.editor.exportHtml'.
+
+The output HTML and JSON should be saved to my 'newsletter_campaigns' table linked to that clientId."
+
+Prompt 3: The "Brand Injection" Logic (Developer Note for Replit)
+"When initializing Unlayer, use the 'options' object. Ensure you set 'appearance.theme.colors.accent' to the client's 'primary_hex' from my database. Also, create a default JSON template string that includes an image block at the top with the 'logo_url'. Load this template using 'unlayer.loadDesign' as soon as the editor is ready."
+
+Strategic Implementation Note
+Unlayer Free Tier: You will see the "Powered by Unlayer" watermark. For the MVP, this is fine. It proves the system works.
+
+Verification Status: Ask Replit to add a is_verified boolean to your Client Master. Use a "Webhook" from Postmark so that when the client clicks "Verify," your database updates automatically.
