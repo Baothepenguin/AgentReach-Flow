@@ -23,15 +23,19 @@ export async function createSenderSignature(email: string, name: string): Promis
     };
   } catch (error: any) {
     if (error.code === 400 && error.message?.includes("already exists")) {
+      const existingSignature = await findSignatureByEmail(email);
       return {
         success: true,
+        signatureId: existingSignature?.ID,
         alreadyExists: true,
       };
     }
 
     if (error.code === 505) {
+      const existingSignature = await findSignatureByEmail(email);
       return {
         success: true,
+        signatureId: existingSignature?.ID,
         alreadyExists: true,
       };
     }
@@ -41,6 +45,16 @@ export async function createSenderSignature(email: string, name: string): Promis
       success: false,
       error: error.message || "Failed to create sender signature",
     };
+  }
+}
+
+async function findSignatureByEmail(email: string): Promise<any | null> {
+  try {
+    const signatures = await getSenderSignatures();
+    return signatures.find(s => s.EmailAddress?.toLowerCase() === email.toLowerCase()) || null;
+  } catch (error) {
+    console.error("Failed to find signature by email:", error);
+    return null;
   }
 }
 

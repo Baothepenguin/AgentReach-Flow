@@ -5,8 +5,10 @@ Client portal and CRM for managing real estate email newsletters.
 ## Overview
 
 AgentReach FLOW is a newsletter production system for real estate agents that enables:
-- Simple HTML email management (paste, preview, edit)
+- Visual email editor (Unlayer) with drag-and-drop blocks
+- Simple HTML mode for paste/preview/edit workflows
 - Client review workflow with tokenized links
+- Automatic sender verification via Postmark
 - Version history tracking
 - Status pipeline (7 stages from not_started to sent)
 - Project-based organization (Client -> Project -> Newsletter hierarchy)
@@ -22,7 +24,7 @@ AgentReach FLOW is a newsletter production system for real estate agents that en
     - Calendar: Monthly view showing newsletter due dates
   - Client Profile (`/clients/:id`) - 3-column layout:
     - Left (280px): Client DNA + Projects & Campaigns (collapsible with folder hierarchy)
-    - Center: HTML editor/preview with floating toolbar
+    - Center: Unlayer visual editor OR HTML mode (toggle between modes)
     - Right (256px): Version history + status
 - **Routing**: Wouter for client-side routing
 - **State**: TanStack Query for server state, React context for auth
@@ -33,6 +35,7 @@ AgentReach FLOW is a newsletter production system for real estate agents that en
 - **Database**: PostgreSQL with Drizzle ORM
 - **Auth**: Session-based with express-session
 - **AI**: Optional OpenAI for HTML editing (gpt-4.1)
+- **Email**: Postmark for sender signatures and verification
 
 ## Key Files
 
@@ -47,6 +50,7 @@ AgentReach FLOW is a newsletter production system for real estate agents that en
 - `server/storage.ts` - DatabaseStorage class for data access
 - `server/ai-service.ts` - Optional AI HTML editing
 - `server/email-compiler.ts` - Returns raw HTML from document
+- `server/postmark-service.ts` - Postmark sender signature management
 
 ### Frontend
 - `client/src/App.tsx` - Root component with auth and routing
@@ -55,6 +59,7 @@ AgentReach FLOW is a newsletter production system for real estate agents that en
 - `client/src/pages/login.tsx` - Login/register page
 - `client/src/pages/review.tsx` - Client review page (tokenized)
 - `client/src/components/HTMLPreviewFrame.tsx` - Click-to-edit HTML preview
+- `client/src/components/UnlayerEditor.tsx` - Visual drag-and-drop email editor
 - `client/src/components/RightPanel.tsx` - Version history + status
 - `client/src/components/CreateNewsletterDialog.tsx` - New campaign with HTML import
 

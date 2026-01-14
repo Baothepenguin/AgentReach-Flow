@@ -141,6 +141,43 @@ export function UnlayerEditor({
     
     if (designJson && Object.keys(designJson).length > 0) {
       unlayer.loadDesign(designJson);
+    } else if (html && html.trim().length > 0) {
+      unlayer.loadDesign({
+        counters: { u_column: 1, u_row: 1, u_content_html: 1 },
+        body: {
+          id: "root",
+          rows: [
+            {
+              id: "row-1",
+              cells: [1],
+              columns: [
+                {
+                  id: "col-1",
+                  contents: [
+                    {
+                      id: "html-1",
+                      type: "html",
+                      values: {
+                        containerPadding: "0px",
+                        html: html
+                      }
+                    }
+                  ],
+                  values: {}
+                }
+              ],
+              values: {}
+            }
+          ],
+          values: {
+            textColor: "#000000",
+            backgroundColor: "#F9F9F9",
+            contentWidth: "600px",
+            contentAlign: "center",
+            fontFamily: { label: "Inter", value: "'Inter', sans-serif" }
+          }
+        }
+      });
     } else {
       const design = { ...DEFAULT_DESIGN };
       if (branding?.primaryColor) {
@@ -152,7 +189,7 @@ export function UnlayerEditor({
       }
       unlayer.loadDesign(design);
     }
-  }, [designJson, branding]);
+  }, [designJson, html, branding]);
 
   const editorOptions: EmailEditorProps["options"] = {
     appearance: {

@@ -161,8 +161,10 @@ export async function registerRoutes(
       if (client.primaryEmail && process.env.POSTMARK_ACCOUNT_API_TOKEN) {
         const signatureResult = await createSenderSignature(client.primaryEmail, client.name);
         if (signatureResult.success && signatureResult.signatureId) {
+          const signature = await getSenderSignature(signatureResult.signatureId);
           await storage.updateClient(client.id, {
             postmarkSignatureId: signatureResult.signatureId,
+            isVerified: signature?.Confirmed || false,
           });
         }
       }
@@ -573,6 +575,14 @@ export async function registerRoutes(
   // ============================================================================
   app.post("/api/webhooks/postmark/sender-confirmed", async (req: Request, res: Response) => {
     try {
+      const webhookSecret = req.headers["x-postmark-webhook-secret"] || req.query.secret;
+      const expectedSecret = process.env.POSTMARK_WEBHOOK_SECRET;
+      
+      if (expectedSecret && webhookSecret !== expectedSecret) {
+        console.warn("Postmark webhook: unauthorized request attempt");
+        return res.status(401).json({ error: "Unauthorized" });
+      }
+      
       const { FromEmail, Confirmed } = req.body;
       
       if (!FromEmail || !Confirmed) {
