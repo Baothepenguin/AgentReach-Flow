@@ -48,7 +48,7 @@ export default function ClientProfilePage({ clientId }: ClientProfilePageProps) 
   const client = clientData?.client;
   const newsletters = clientData?.newsletters;
 
-  const { data: newsletterData, isLoading: loadingNewsletter } = useQuery<{
+  const { data: newsletterData, isLoading: loadingNewsletter, refetch: refetchNewsletter } = useQuery<{
     newsletter: Newsletter;
     document: NewsletterDocument;
     versions: NewsletterVersion[];
@@ -81,8 +81,8 @@ export default function ClientProfilePage({ clientId }: ClientProfilePageProps) 
       });
       return res.json();
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/newsletters", selectedNewsletterId] });
+    onSuccess: async () => {
+      await refetchNewsletter();
       toast({ title: "Saved" });
     },
   });
@@ -92,9 +92,9 @@ export default function ClientProfilePage({ clientId }: ClientProfilePageProps) 
       const res = await apiRequest("POST", `/api/newsletters/${selectedNewsletterId}/ai-command`, { command });
       return res.json() as Promise<{ type: string; message: string }>;
     },
-    onSuccess: (response) => {
+    onSuccess: async (response) => {
       if (response.type === "success") {
-        queryClient.invalidateQueries({ queryKey: ["/api/newsletters", selectedNewsletterId] });
+        await refetchNewsletter();
         toast({ title: "AI updated the newsletter" });
       } else {
         toast({ title: response.message, variant: "destructive" });
@@ -110,8 +110,8 @@ export default function ClientProfilePage({ clientId }: ClientProfilePageProps) 
       const res = await apiRequest("POST", `/api/newsletters/${selectedNewsletterId}/restore/${versionId}`);
       return res.json();
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/newsletters", selectedNewsletterId] });
+    onSuccess: async () => {
+      await refetchNewsletter();
       toast({ title: "Version restored" });
     },
   });
