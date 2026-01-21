@@ -1,0 +1,70 @@
+Tech Stack:
+
+Frontend: Next.js with Tailwind CSS.
+
+Backend: Node.js / Express.
+
+Database: PostgreSQL (using Replit's managed DB).
+
+Auth: Replit Auth.
+
+Delivery Engine: Postmark API.
+
+1. CORE DATA ARCHITECTURE (Multi-Tenant Isolation)
+Build a database schema that ensures strict isolation between clients.
+
+Clients Table: Stores company name, contact info, and their unique Postmark Server Token.
+
+Projects Table: Linked to a Client. Fields: subject_line, preview_text, html_body, sender_name, sender_email, status (Draft, Team Review, Client Review, Approved, Scheduled, Sent).
+
+Subscribers Table: Linked to a Client. Stores email addresses parsed from CSV uploads.
+
+Comments Table: Linked to a Project. Stores text and file attachment URLs (use Replit storage). Include a is_resolved boolean for the team to "check off."
+
+2. POSTMARK INFRASTRUCTURE LOGIC
+Integrate Postmark following their professional agency standards:
+
+Programmatic Server Creation: When I add a new client, use the(https://postmarkapp.com/developer/api/servers-api) to create a new server. Store the resulting API token in our database.
+
+Client Email Verification (No DNS): Use the(https://postmarkapp.com/developer/api/sender-signatures-api).
+
+The Flow: Portal asks client for their "From Email." Portal calls POST /senders. Postmark sends a verification email with a button to the client.
+
+Why: This bypasses the need for clients to edit DNS records while keeping deliverability high.
+
+Broadcast Streams: Automatically create a "Broadcast Message Stream" for every new server using the(https://postmarkapp.com/developer/api/message-streams-api).
+
+Sending Engine: Use the(https://postmarkapp.com/developer/api/bulk-email) for blasts. It must package the CSV subscriber list and the approved HTML into a single API request.
+
+Unsubscribe: Force the inclusion of {{{ pm:unsubscribe }}} in the HTML code if not present.
+
+3. FUNCTIONAL MVP MODULES
+Module A: Team Dashboard (The Factory Floor)
+Project Creator: Create projects, set subject lines/preview text, and paste HTML from Postcards.
+
+Status Kanban: A board to move projects from "Design" to "Client Review."
+
+Comment Manager: View client feedback. Ability to check off comments as "Done" once edited.
+
+Module B: Client Portal (The Approval Room)
+Public Preview: A unique, secure link for each project that renders the HTML code in a responsive <iframe>.
+
+Feedback Sidebar: A commenting system where clients type feedback and upload image/file attachments for revisions.
+
+Signature Setup: A simple settings page where they verify their "Sender Email" via the Postmark flow mentioned above.
+
+The "Big Green Button": An "Approve & Send" button that is only active if the sender email is verified.
+
+Module C: The Data Pipeline
+CSV Uploader: A robust tool that parses client CSVs, validates email formats, and stores them in the Subscribers table. It must handle duplicates and "unsubscribed" statuses sent back by Postmark webhooks.
+
+4. SUCCESS CRITERIA FOR MVP
+I can create a client and an automated Postmark server is generated for them.
+
+I can upload a CSV of 1,000 emails and an HTML template.
+
+The client can view the template on a public link and leave a comment with an attachment.
+
+After client approval, I can click "Send" and Postmark executes a bulk blast using the client's verified Sender Signature.
+
+Final Instruction: Start by defining the database schema and the Postmark API utility functions. Show me the plan for the verification flow before you build the UI.
