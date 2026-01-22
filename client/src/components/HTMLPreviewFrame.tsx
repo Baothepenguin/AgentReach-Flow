@@ -1,16 +1,14 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Input } from "@/components/ui/input";
-import { ArrowRight, Sparkles, Bold, Trash2, Undo2, Redo2, Monitor } from "lucide-react";
+import { Bold, Trash2, Undo2, Redo2, Code, Plus } from "lucide-react";
 
 interface HTMLPreviewFrameProps {
   html: string;
   isLoading?: boolean;
   title?: string;
   onHtmlChange?: (html: string) => void;
-  onAiCommand?: (command: string) => void;
-  isAiProcessing?: boolean;
+  onCreateCampaign?: () => void;
 }
 
 const PREVIEW_WIDTH = 680;
@@ -20,22 +18,13 @@ export function HTMLPreviewFrame({
   isLoading, 
   title,
   onHtmlChange,
-  onAiCommand,
-  isAiProcessing 
+  onCreateCampaign
 }: HTMLPreviewFrameProps) {
-  const [aiInput, setAiInput] = useState("");
   const [showToolbar, setShowToolbar] = useState(false);
   const [toolbarPosition, setToolbarPosition] = useState({ x: 0, y: 0 });
   const [undoStack, setUndoStack] = useState<string[]>([]);
   const [redoStack, setRedoStack] = useState<string[]>([]);
   const iframeRef = useRef<HTMLIFrameElement>(null);
-
-  const handleAiSubmit = () => {
-    if (aiInput.trim() && onAiCommand) {
-      onAiCommand(aiInput.trim());
-      setAiInput("");
-    }
-  };
 
   const saveToUndo = useCallback(() => {
     if (html) {
@@ -177,11 +166,19 @@ export function HTMLPreviewFrame({
             className="flex flex-col items-center justify-center text-center p-12 rounded-lg border-2 border-dashed border-muted-foreground/20"
             style={{ width: PREVIEW_WIDTH }}
           >
-            <div className="w-16 h-16 rounded-full bg-muted/50 flex items-center justify-center mb-4">
-              <Monitor className="w-8 h-8 text-muted-foreground/50" />
+            <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center mb-4">
+              <Code className="w-8 h-8 text-primary/60" />
             </div>
-            <p className="text-muted-foreground mb-1">No content yet</p>
-            <p className="text-sm text-muted-foreground/70">Import HTML or use AI to generate content</p>
+            <p className="text-lg font-medium mb-2">Import Your HTML</p>
+            <p className="text-sm text-muted-foreground mb-4">
+              Create a new campaign and paste your newsletter HTML to get started
+            </p>
+            {onCreateCampaign && (
+              <Button onClick={onCreateCampaign} className="glow-green-hover" data-testid="button-import-html-empty">
+                <Plus className="w-4 h-4 mr-2" />
+                New Campaign
+              </Button>
+            )}
           </div>
         )}
       </div>
@@ -217,31 +214,6 @@ export function HTMLPreviewFrame({
         </div>
       )}
 
-      {onAiCommand && (
-        <div className="absolute bottom-6 left-1/2 -translate-x-1/2 w-full max-w-md px-4">
-          <div className="flex items-center gap-2 p-2 rounded-full bg-background/90 border shadow-lg glass-card glow-green">
-            <Sparkles className="w-4 h-4 ml-2 text-primary" />
-            <Input
-              value={aiInput}
-              onChange={(e) => setAiInput(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && handleAiSubmit()}
-              placeholder="Ask AI to edit..."
-              className="border-0 bg-transparent focus-visible:ring-0 text-sm"
-              disabled={isAiProcessing}
-              data-testid="input-ai-command"
-            />
-            <Button
-              size="icon"
-              onClick={handleAiSubmit}
-              disabled={!aiInput.trim() || isAiProcessing}
-              className="rounded-full glow-green-hover"
-              data-testid="button-ai-submit"
-            >
-              <ArrowRight className="w-4 h-4" />
-            </Button>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

@@ -87,24 +87,6 @@ export default function ClientProfilePage({ clientId }: ClientProfilePageProps) 
     },
   });
 
-  const aiCommandMutation = useMutation({
-    mutationFn: async (command: string) => {
-      const res = await apiRequest("POST", `/api/newsletters/${selectedNewsletterId}/ai-command`, { command });
-      return res.json() as Promise<{ type: string; message: string }>;
-    },
-    onSuccess: async (response) => {
-      if (response.type === "success") {
-        await refetchNewsletter();
-        toast({ title: "AI updated the newsletter" });
-      } else {
-        toast({ title: response.message, variant: "destructive" });
-      }
-    },
-    onError: (error) => {
-      toast({ title: "AI command failed", description: error.message, variant: "destructive" });
-    },
-  });
-
   const restoreVersionMutation = useMutation({
     mutationFn: async (versionId: string) => {
       const res = await apiRequest("POST", `/api/newsletters/${selectedNewsletterId}/restore/${versionId}`);
@@ -318,8 +300,7 @@ export default function ClientProfilePage({ clientId }: ClientProfilePageProps) 
               isLoading={loadingNewsletter}
               title={newsletterData?.newsletter?.title}
               onHtmlChange={(html) => updateHtmlMutation.mutate(html)}
-              onAiCommand={(cmd) => aiCommandMutation.mutate(cmd)}
-              isAiProcessing={aiCommandMutation.isPending}
+              onCreateCampaign={() => setShowCreateNewsletter(true)}
             />
           </div>
         )}
