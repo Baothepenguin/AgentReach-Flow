@@ -7,11 +7,11 @@ Client portal and CRM for managing real estate email newsletters.
 AgentReach FLOW is a newsletter production system for real estate agents that enables:
 - Simple HTML paste/preview workflow - import HTML from any email builder
 - Click-to-edit HTML preview with inline editing capability
-- AI-powered HTML editing via natural language commands
 - Client review workflow with tokenized links
 - Automatic sender verification via Postmark
 - Version history tracking with restore capability
-- Status pipeline (7 stages from not_started to sent)
+- Status pipeline (7 stages from not_started to sent) - editable via dropdown
+- Client feedback comments with timestamps
 - Project-based organization (Client -> Project -> Newsletter hierarchy)
 
 ## Architecture
@@ -34,7 +34,6 @@ AgentReach FLOW is a newsletter production system for real estate agents that en
 ### Backend (Express + TypeScript)
 - **Database**: PostgreSQL with Drizzle ORM
 - **Auth**: Session-based with express-session
-- **AI**: Optional OpenAI for HTML editing (gpt-4.1)
 - **Email**: Postmark for sender signatures and verification
 
 ## Key Files

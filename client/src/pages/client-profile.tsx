@@ -24,7 +24,7 @@ import {
   FileText,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import type { Client, Newsletter, NewsletterVersion, NewsletterDocument, BrandingKit, Project } from "@shared/schema";
+import type { Client, Newsletter, NewsletterVersion, NewsletterDocument, BrandingKit, Project, TasksFlags } from "@shared/schema";
 import { format } from "date-fns";
 
 interface ClientProfilePageProps {
@@ -52,6 +52,7 @@ export default function ClientProfilePage({ clientId }: ClientProfilePageProps) 
     newsletter: Newsletter;
     document: NewsletterDocument;
     versions: NewsletterVersion[];
+    flags: TasksFlags[];
     html: string;
   }>({
     queryKey: ["/api/newsletters", selectedNewsletterId],
@@ -95,6 +96,21 @@ export default function ClientProfilePage({ clientId }: ClientProfilePageProps) 
     onSuccess: async () => {
       await refetchNewsletter();
       toast({ title: "Version restored" });
+    },
+  });
+
+  const updateStatusMutation = useMutation({
+    mutationFn: async (status: string) => {
+      const res = await apiRequest("PATCH", `/api/newsletters/${selectedNewsletterId}`, { status });
+      return res.json();
+    },
+    onSuccess: async () => {
+      await refetchNewsletter();
+      queryClient.invalidateQueries({ queryKey: ["/api/clients", clientId] });
+      toast({ title: "Status updated" });
+    },
+    onError: (error) => {
+      toast({ title: "Failed to update status", description: error.message, variant: "destructive" });
     },
   });
 
@@ -312,7 +328,9 @@ export default function ClientProfilePage({ clientId }: ClientProfilePageProps) 
             versions={newsletterData.versions || []}
             currentVersionId={newsletterData.newsletter?.currentVersionId || null}
             status={newsletterData.newsletter?.status || "not_started"}
+            flags={newsletterData.flags || []}
             onRestoreVersion={(versionId) => restoreVersionMutation.mutate(versionId)}
+            onStatusChange={(status) => updateStatusMutation.mutate(status)}
           />
         </div>
       )}
