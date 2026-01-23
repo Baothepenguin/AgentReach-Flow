@@ -12,20 +12,22 @@ AgentReach FLOW is a newsletter production system for real estate agents that en
 - Version history tracking with restore capability
 - Status pipeline (7 stages from not_started to sent) - editable via dropdown
 - Client feedback comments with timestamps
-- Project-based organization (Client -> Project -> Newsletter hierarchy)
+- Subscription auto-queue: Create newsletters automatically based on client subscription frequency
+- Internal notes (team-only, not visible to clients)
+- Invoice tracking linked to subscriptions and newsletters
 
 ## Architecture
 
 ### Frontend (React + TypeScript)
-- **2-Level Navigation**:
-  - Master Dashboard (`/`) - Client view with Grid/List/Calendar toggle
-    - Grid: Card layout for quick browsing
-    - List: Tabular view with sortable columns
-    - Calendar: Monthly view showing newsletter due dates
-  - Client Profile (`/clients/:id`) - 3-column layout:
-    - Left (256px): Client info + campaigns list
-    - Center: HTML preview with click-to-edit capability
-    - Right (224px): Status badge + version history
+- **Top-Level Navigation** via TopNav component:
+  - Dashboard (`/`) - Client overview with Grid/List/Calendar toggle
+  - Newsletters (`/newsletters`) - Kanban board or table view with status columns
+  - Clients (`/clients`) - Client list with Active/Churned/All filters
+  - Invoices (`/invoices`) - Invoice table with side preview
+- **Client Profile** (`/clients/:id`) - 3-column layout:
+  - Left (256px): Client info + campaigns list
+  - Center: HTML preview with click-to-edit capability
+  - Right (224px): Status badge + version history + internal notes
 - **Routing**: Wouter for client-side routing
 - **State**: TanStack Query for server state, React context for auth
 - **Styling**: Tailwind CSS with shadcn/ui components
@@ -57,20 +59,25 @@ AgentReach FLOW is a newsletter production system for real estate agents that en
 - `client/src/pages/client-profile.tsx` - 3-column client workspace
 - `client/src/pages/login.tsx` - Login/register page
 - `client/src/pages/review.tsx` - Client review page (tokenized)
+- `client/src/pages/newsletters.tsx` - Newsletter Kanban board and table view
+- `client/src/pages/clients-list.tsx` - Clients list with filters
+- `client/src/pages/invoices.tsx` - Invoice table with side preview
+- `client/src/components/TopNav.tsx` - Top-level navigation tabs
 - `client/src/components/HTMLPreviewFrame.tsx` - Click-to-edit HTML preview
-- `client/src/components/RightPanel.tsx` - Version history + status
-- `client/src/components/CreateNewsletterDialog.tsx` - New campaign with HTML import
+- `client/src/components/RightPanel.tsx` - Version history + status + internal notes
+- `client/src/components/CreateNewsletterDialog.tsx` - New campaign with HTML import + auto-suggest date
 
 ## Database Schema
 
 ### Core Tables
 - `users` - Producer accounts (email, name, role)
-- `clients` - Client profiles (name, email, location, status)
+- `clients` - Client profiles (name, email, location, status, newsletterFrequency)
 - `branding_kits` - Brand preferences for each client
 - `html_templates` - Base HTML templates for newsletters
-- `projects` - Client projects that group newsletters
-- `newsletters` - Newsletter instances (title, period, status, documentJson)
+- `subscriptions` - Client subscription plans with frequency (weekly, biweekly, monthly)
+- `newsletters` - Newsletter instances (title, period, status, documentJson, internalNotes, subscriptionId)
 - `newsletter_versions` - Version snapshots
+- `invoices` - Payment records linked to clients, subscriptions, and newsletters
 - `review_tokens` - Secure client review links
 
 ## Newsletter Status Pipeline
@@ -113,11 +120,16 @@ AgentReach FLOW is a newsletter production system for real estate agents that en
 - `POST /api/review/:token/approve` - Approve newsletter
 - `POST /api/review/:token/request-changes` - Request revisions
 
-### Projects
-- `GET /api/clients/:clientId/projects` - List client projects
-- `POST /api/clients/:clientId/projects` - Create project
-- `GET /api/projects/:id` - Get project
-- `PATCH /api/projects/:id` - Update project
+### Subscriptions
+- `GET /api/clients/:clientId/subscriptions` - List client subscriptions
+- `POST /api/clients/:clientId/subscriptions` - Create subscription (auto-queues newsletters if active)
+- `PATCH /api/subscriptions/:id` - Update subscription
+
+### Invoices
+- `GET /api/invoices` - List all invoices (enriched with client data)
+- `GET /api/clients/:clientId/invoices` - List client invoices
+- `POST /api/clients/:clientId/invoices` - Create invoice (auto-links to subscription, creates newsletter)
+- `PATCH /api/invoices/:id` - Update invoice
 
 ### Templates
 - `GET /api/templates` - List all HTML templates
