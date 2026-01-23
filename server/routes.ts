@@ -628,6 +628,15 @@ export async function registerRoutes(
     }
   });
 
+  app.delete("/api/newsletters/:id", requireAuth, async (req: Request, res: Response) => {
+    try {
+      await storage.deleteNewsletter(req.params.id);
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to delete newsletter" });
+    }
+  });
+
   app.post("/api/newsletters/:id/ai-command", requireAuth, async (req: Request, res: Response) => {
     try {
       const userId = (req as Request & { userId: string }).userId;

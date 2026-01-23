@@ -9,6 +9,7 @@ interface HTMLPreviewFrameProps {
   title?: string;
   onHtmlChange?: (html: string) => void;
   onCreateCampaign?: () => void;
+  fullWidth?: boolean;
 }
 
 export function HTMLPreviewFrame({ 
@@ -16,7 +17,8 @@ export function HTMLPreviewFrame({
   isLoading, 
   title,
   onHtmlChange,
-  onCreateCampaign
+  onCreateCampaign,
+  fullWidth = false
 }: HTMLPreviewFrameProps) {
   const [showToolbar, setShowToolbar] = useState(false);
   const [toolbarPosition, setToolbarPosition] = useState({ x: 0, y: 0 });
@@ -25,7 +27,7 @@ export function HTMLPreviewFrame({
   const [deviceMode, setDeviceMode] = useState<"desktop" | "mobile">("desktop");
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
-  const previewWidth = deviceMode === "mobile" ? 375 : 680;
+  const previewWidth = fullWidth ? "100%" : (deviceMode === "mobile" ? 375 : 680);
 
   const saveToUndo = useCallback(() => {
     if (html) {
@@ -150,11 +152,11 @@ export function HTMLPreviewFrame({
         ) : html ? (
           <div
             className={`bg-white overflow-hidden transition-all duration-300 ${
-              deviceMode === "mobile" 
-                ? "rounded-[40px] border-8 border-gray-800 shadow-2xl" 
-                : "rounded-lg shadow-lg glow-green-hover"
+              deviceMode === "mobile" && !fullWidth
+                ? "rounded-3xl border-4 border-gray-700 shadow-lg" 
+                : fullWidth ? "" : "rounded-lg shadow-lg glow-green-hover"
             }`}
-            style={{ width: previewWidth }}
+            style={{ width: previewWidth, maxWidth: fullWidth ? undefined : previewWidth }}
           >
             <iframe
               ref={iframeRef}

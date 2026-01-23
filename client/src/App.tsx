@@ -10,6 +10,7 @@ import ClientProfilePage from "@/pages/client-profile";
 import ClientsListPage from "@/pages/clients-list";
 import NewslettersPage from "@/pages/newsletters";
 import InvoicesPage from "@/pages/invoices";
+import NewsletterEditorPage from "@/pages/newsletter-editor";
 import ReviewPage from "@/pages/review";
 import NotFound from "@/pages/not-found";
 import { Loader2 } from "lucide-react";
@@ -55,9 +56,14 @@ function Router() {
           <ClientProfilePage clientId={params.params.clientId} />
         </ProtectedRoute>
       )} />
-      <Route path="/invoices" component={() => (
+      <Route path="/orders" component={() => (
         <ProtectedRoute>
           <InvoicesPage />
+        </ProtectedRoute>
+      )} />
+      <Route path="/newsletters/:id" component={(params) => (
+        <ProtectedRoute>
+          <NewsletterEditorPage newsletterId={params.params.id} />
         </ProtectedRoute>
       )} />
       <Route path="/review/:token" component={ReviewPage} />

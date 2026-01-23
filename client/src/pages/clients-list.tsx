@@ -1,12 +1,12 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { TopNav } from "@/components/TopNav";
+import { ClientSidePanel } from "@/components/ClientSidePanel";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Plus, Search, Mail, MapPin, Users } from "lucide-react";
-import { Link, useLocation } from "wouter";
 import { CreateClientDialog } from "@/components/CreateClientDialog";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -44,7 +44,7 @@ export default function ClientsListPage() {
   const [filter, setFilter] = useState<"active" | "churned" | "all">("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [showCreateClient, setShowCreateClient] = useState(false);
-  const [, setLocation] = useLocation();
+  const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
   const { toast } = useToast();
 
   const { data: clients = [], isLoading } = useQuery<Client[]>({
@@ -142,11 +142,11 @@ export default function ClientsListPage() {
                 <div
                   key={client.id}
                   className="grid grid-cols-[1fr_200px_120px_100px] gap-4 px-4 py-3 hover-elevate cursor-pointer items-center"
-                  onClick={() => setLocation(`/clients/${client.id}`)}
+                  onClick={() => setSelectedClientId(client.id)}
                   data-testid={`client-row-${client.id}`}
                   role="button"
                   tabIndex={0}
-                  onKeyDown={(e) => e.key === "Enter" && setLocation(`/clients/${client.id}`)}
+                  onKeyDown={(e) => e.key === "Enter" && setSelectedClientId(client.id)}
                 >
                   <div className="min-w-0">
                     <div className="font-medium truncate">{client.name}</div>
@@ -177,6 +177,14 @@ export default function ClientsListPage() {
           </div>
         )}
       </div>
+
+      {selectedClientId && (
+        <ClientSidePanel
+          clientId={selectedClientId}
+          open={!!selectedClientId}
+          onClose={() => setSelectedClientId(null)}
+        />
+      )}
 
       <CreateClientDialog
         open={showCreateClient}

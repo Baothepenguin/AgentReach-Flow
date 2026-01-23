@@ -1,5 +1,5 @@
 import { Link, useLocation } from "wouter";
-import { Users, Mail, Receipt, LayoutGrid } from "lucide-react";
+import { Users, Mail, Receipt, LayoutGrid, ShoppingCart } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ThemeToggle } from "./ThemeToggle";
 import { useAuth } from "@/contexts/AuthContext";
@@ -7,9 +7,9 @@ import { Button } from "@/components/ui/button";
 
 const navItems = [
   { path: "/", label: "Dashboard", icon: LayoutGrid },
-  { path: "/newsletters", label: "Newsletters", icon: Mail },
   { path: "/clients", label: "Clients", icon: Users },
-  { path: "/invoices", label: "Invoices", icon: Receipt },
+  { path: "/orders", label: "Orders", icon: ShoppingCart },
+  { path: "/newsletters", label: "Newsletters", icon: Mail },
 ];
 
 export function TopNav() {
@@ -21,10 +21,10 @@ export function TopNav() {
       <div className="flex h-full items-center justify-between px-4">
         <div className="flex items-center gap-6">
           <Link href="/" className="flex items-center gap-2 font-semibold text-lg" data-testid="link-home">
-            <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center">
-              <Mail className="w-4 h-4 text-primary-foreground" />
+            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-primary/80 to-primary flex items-center justify-center shadow-[0_0_12px_rgba(26,95,74,0.4)]">
+              <span className="text-primary-foreground font-bold text-sm tracking-tight">AF</span>
             </div>
-            <span className="hidden sm:inline">AgentReach FLOW</span>
+            <span className="hidden sm:inline bg-gradient-to-r from-primary to-emerald-600 bg-clip-text text-transparent">AgentReach FLOW</span>
           </Link>
           
           <nav className="flex items-center gap-1">

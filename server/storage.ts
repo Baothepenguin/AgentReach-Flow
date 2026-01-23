@@ -335,6 +335,10 @@ export class DatabaseStorage implements IStorage {
     return newsletter;
   }
 
+  async deleteNewsletter(id: string): Promise<void> {
+    await db.delete(newsletters).where(eq(newsletters.id, id));
+  }
+
   async getLatestClientNewsletter(clientId: string): Promise<Newsletter | undefined> {
     const [newsletter] = await db
       .select()
