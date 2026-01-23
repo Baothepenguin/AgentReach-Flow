@@ -191,7 +191,7 @@ export default function MasterDashboard() {
                     <div
                       key={nl.id}
                       className="flex items-center justify-between gap-3 p-3 rounded-md hover-elevate cursor-pointer"
-                      onClick={() => setLocation(`/clients/${nl.clientId}`)}
+                      onClick={() => setLocation(`/newsletters/${nl.id}`)}
                       data-testid={`newsletter-row-${nl.id}`}
                     >
                       <div className="flex-1 min-w-0">
@@ -225,14 +225,14 @@ export default function MasterDashboard() {
               <CardHeader className="flex flex-row items-center justify-between gap-2 pb-3">
                 <CardTitle className="text-base font-medium flex items-center gap-2">
                   <Receipt className="w-4 h-4 text-primary" />
-                  Recent Invoices
+                  Recent Orders
                 </CardTitle>
                 <Button
                   variant="ghost"
                   size="sm"
-                  onClick={() => setLocation("/invoices")}
+                  onClick={() => setLocation("/orders")}
                   className="text-xs"
-                  data-testid="button-view-all-invoices"
+                  data-testid="button-view-all-orders"
                 >
                   View All
                   <ArrowRight className="w-3 h-3 ml-1" />
@@ -255,8 +255,8 @@ export default function MasterDashboard() {
                       <div
                         key={inv.id}
                         className="flex items-center justify-between gap-2 p-2 rounded-md hover-elevate cursor-pointer"
-                        onClick={() => setLocation("/invoices")}
-                        data-testid={`invoice-row-${inv.id}`}
+                        onClick={() => setLocation(`/orders?id=${inv.id}`)}
+                        data-testid={`order-row-${inv.id}`}
                       >
                         <div className="min-w-0 flex-1">
                           <div className="text-sm font-medium truncate">

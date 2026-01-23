@@ -3,9 +3,10 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import { MessageSquare, StickyNote, Save, CheckSquare, Paperclip } from "lucide-react";
+import { StickyNote, Save, CheckSquare, Paperclip, Link2, ExternalLink } from "lucide-react";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import type { ReviewComment } from "@shared/schema";
 import { format } from "date-fns";
@@ -24,19 +25,31 @@ interface RightPanelProps {
   newsletterId: string;
   status: string;
   internalNotes?: string | null;
+  editorFileUrl?: string | null;
+  contentChatUrl?: string | null;
   onStatusChange?: (status: string) => void;
   onInternalNotesChange?: (notes: string) => void;
+  onEditorFileUrlChange?: (url: string) => void;
+  onContentChatUrlChange?: (url: string) => void;
 }
 
 export function RightPanel({
   newsletterId,
   status,
   internalNotes,
+  editorFileUrl,
+  contentChatUrl,
   onStatusChange,
   onInternalNotesChange,
+  onEditorFileUrlChange,
+  onContentChatUrlChange,
 }: RightPanelProps) {
   const [localNotes, setLocalNotes] = useState(internalNotes || "");
   const [notesDirty, setNotesDirty] = useState(false);
+  const [localEditorUrl, setLocalEditorUrl] = useState(editorFileUrl || "");
+  const [localChatUrl, setLocalChatUrl] = useState(contentChatUrl || "");
+  const [editorUrlDirty, setEditorUrlDirty] = useState(false);
+  const [chatUrlDirty, setChatUrlDirty] = useState(false);
   const currentStatus = NEWSLETTER_STATUSES.find(s => s.value === status) || NEWSLETTER_STATUSES[0];
 
   const { data: reviewComments = [] } = useQuery<ReviewComment[]>({
@@ -107,6 +120,82 @@ export function RightPanel({
           </div>
         )}
       </div>
+
+      {onEditorFileUrlChange && (
+        <div className="p-3 border-b space-y-3">
+          <div>
+            <div className="flex items-center justify-between mb-1.5">
+              <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                <Link2 className="w-3 h-3" />
+                Editor File
+              </div>
+              {localEditorUrl && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-5 px-1.5 text-xs"
+                  onClick={() => window.open(localEditorUrl, "_blank")}
+                  data-testid="button-open-editor-file"
+                >
+                  <ExternalLink className="w-3 h-3" />
+                </Button>
+              )}
+            </div>
+            <Input
+              placeholder="Paste URL..."
+              value={localEditorUrl}
+              onChange={(e) => {
+                setLocalEditorUrl(e.target.value);
+                setEditorUrlDirty(e.target.value !== (editorFileUrl || ""));
+              }}
+              onBlur={() => {
+                if (editorUrlDirty && onEditorFileUrlChange) {
+                  onEditorFileUrlChange(localEditorUrl);
+                  setEditorUrlDirty(false);
+                }
+              }}
+              className="h-8 text-xs"
+              data-testid="input-editor-file-url"
+            />
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between mb-1.5">
+              <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                <Link2 className="w-3 h-3" />
+                Content Chat
+              </div>
+              {localChatUrl && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-5 px-1.5 text-xs"
+                  onClick={() => window.open(localChatUrl, "_blank")}
+                  data-testid="button-open-content-chat"
+                >
+                  <ExternalLink className="w-3 h-3" />
+                </Button>
+              )}
+            </div>
+            <Input
+              placeholder="Paste URL..."
+              value={localChatUrl}
+              onChange={(e) => {
+                setLocalChatUrl(e.target.value);
+                setChatUrlDirty(e.target.value !== (contentChatUrl || ""));
+              }}
+              onBlur={() => {
+                if (chatUrlDirty && onContentChatUrlChange) {
+                  onContentChatUrlChange(localChatUrl);
+                  setChatUrlDirty(false);
+                }
+              }}
+              className="h-8 text-xs"
+              data-testid="input-content-chat-url"
+            />
+          </div>
+        </div>
+      )}
 
       {onInternalNotesChange && (
         <div className="p-3 border-b">

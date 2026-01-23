@@ -1,5 +1,5 @@
 import { Link, useLocation } from "wouter";
-import { Users, Mail, Receipt, LayoutGrid, ShoppingCart } from "lucide-react";
+import { Users, Mail, Receipt, LayoutGrid } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ThemeToggle } from "./ThemeToggle";
 import { useAuth } from "@/contexts/AuthContext";
@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 const navItems = [
   { path: "/", label: "Dashboard", icon: LayoutGrid },
   { path: "/clients", label: "Clients", icon: Users },
-  { path: "/orders", label: "Orders", icon: ShoppingCart },
+  { path: "/orders", label: "Orders", icon: Receipt },
   { path: "/newsletters", label: "Newsletters", icon: Mail },
 ];
 
@@ -20,11 +20,8 @@ export function TopNav() {
     <header className="h-14 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 sticky top-0 z-50">
       <div className="flex h-full items-center justify-between px-4">
         <div className="flex items-center gap-6">
-          <Link href="/" className="flex items-center gap-2 font-semibold text-lg" data-testid="link-home">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-primary/80 to-primary flex items-center justify-center shadow-[0_0_12px_rgba(26,95,74,0.4)]">
-              <span className="text-primary-foreground font-bold text-sm tracking-tight">AF</span>
-            </div>
-            <span className="hidden sm:inline bg-gradient-to-r from-primary to-emerald-600 bg-clip-text text-transparent">AgentReach FLOW</span>
+          <Link href="/" className="flex items-center gap-2" data-testid="link-home">
+            <span className="hidden sm:inline font-serif font-bold text-xl bg-gradient-to-r from-primary to-emerald-600 bg-clip-text text-transparent drop-shadow-[0_0_8px_rgba(26,95,74,0.3)]">AgentReach Flow</span>
           </Link>
           
           <nav className="flex items-center gap-1">

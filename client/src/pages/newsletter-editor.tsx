@@ -5,7 +5,6 @@ import { queryClient, apiRequest } from "@/lib/queryClient";
 import { TopNav } from "@/components/TopNav";
 import { RightPanel } from "@/components/RightPanel";
 import { HTMLPreviewFrame } from "@/components/HTMLPreviewFrame";
-import { CreateNewsletterDialog } from "@/components/CreateNewsletterDialog";
 import { ClientSidePanel } from "@/components/ClientSidePanel";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,14 +13,13 @@ import { Calendar } from "@/components/ui/calendar";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   ArrowLeft,
-  Plus,
   User,
-  Send,
   Download,
   Copy,
   Trash2,
   Calendar as CalendarIcon,
   ExternalLink,
+  Link2,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import type { Newsletter, NewsletterVersion, NewsletterDocument, Client, TasksFlags } from "@shared/schema";
@@ -34,7 +32,6 @@ interface NewsletterEditorPageProps {
 export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorPageProps) {
   const { toast } = useToast();
   const [, setLocation] = useLocation();
-  const [showCreateNewsletter, setShowCreateNewsletter] = useState(false);
   const [showClientPanel, setShowClientPanel] = useState(false);
   const [showDatePicker, setShowDatePicker] = useState(false);
 
@@ -90,6 +87,20 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
     },
     onError: (error) => {
       toast({ title: "Failed to save notes", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const updateUrlMutation = useMutation({
+    mutationFn: async (data: { editorFileUrl?: string; contentChatUrl?: string }) => {
+      const res = await apiRequest("PATCH", `/api/newsletters/${newsletterId}`, data);
+      return res.json();
+    },
+    onSuccess: async () => {
+      await refetchNewsletter();
+      toast({ title: "URL saved" });
+    },
+    onError: (error) => {
+      toast({ title: "Failed to save URL", description: error.message, variant: "destructive" });
     },
   });
 
@@ -221,9 +232,6 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
               </div>
             </div>
             <div className="flex items-center gap-2">
-              <Button variant="ghost" size="icon" onClick={() => setShowCreateNewsletter(true)} data-testid="button-new">
-                <Plus className="w-4 h-4" />
-              </Button>
               {client && (
                 <Button variant="ghost" size="icon" onClick={() => setShowClientPanel(true)} data-testid="button-client">
                   <User className="w-4 h-4" />
@@ -254,7 +262,6 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
               isLoading={loadingNewsletter}
               title={newsletter.title}
               onHtmlChange={(html) => updateHtmlMutation.mutate(html)}
-              onCreateCampaign={() => setShowCreateNewsletter(true)}
               fullWidth
             />
           </div>
@@ -265,8 +272,12 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
             newsletterId={newsletterId}
             status={newsletter.status}
             internalNotes={newsletter.internalNotes}
+            editorFileUrl={newsletter.editorFileUrl}
+            contentChatUrl={newsletter.contentChatUrl}
             onStatusChange={(status) => updateStatusMutation.mutate(status)}
             onInternalNotesChange={(notes) => updateNotesMutation.mutate(notes)}
+            onEditorFileUrlChange={(url) => updateUrlMutation.mutate({ editorFileUrl: url })}
+            onContentChatUrlChange={(url) => updateUrlMutation.mutate({ contentChatUrl: url })}
           />
         </div>
       </div>
@@ -278,21 +289,6 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
           onClose={() => setShowClientPanel(false)}
         />
       )}
-
-      <CreateNewsletterDialog
-        open={showCreateNewsletter}
-        onClose={() => setShowCreateNewsletter(false)}
-        onSubmit={async (data) => {
-          const res = await apiRequest("POST", `/api/clients/${client?.id}/newsletters`, data);
-          const newNewsletter = await res.json();
-          queryClient.invalidateQueries({ queryKey: ["/api/newsletters"] });
-          setLocation(`/newsletters/${newNewsletter.id}`);
-          setShowCreateNewsletter(false);
-        }}
-        isSubmitting={false}
-        clientName={client?.name}
-        clientFrequency={client?.newsletterFrequency as "weekly" | "biweekly" | "monthly" | undefined}
-      />
     </div>
   );
 }
