@@ -427,6 +427,53 @@ export type InsertTasksFlags = z.infer<typeof insertTasksFlagsSchema>;
 export type TasksFlags = typeof tasksFlags.$inferSelect;
 
 // ============================================================================
+// PRODUCTION TASKS - General team tasks
+// ============================================================================
+export const productionTasks = pgTable("production_tasks", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  title: text("title").notNull(),
+  description: text("description"),
+  completed: boolean("completed").notNull().default(false),
+  createdById: varchar("created_by_id").references(() => users.id, { onDelete: "set null" }),
+  assignedToId: varchar("assigned_to_id").references(() => users.id, { onDelete: "set null" }),
+  newsletterId: varchar("newsletter_id").references(() => newsletters.id, { onDelete: "cascade" }),
+  clientId: varchar("client_id").references(() => clients.id, { onDelete: "cascade" }),
+  dueDate: timestamp("due_date"),
+  priority: text("priority", { enum: ["low", "medium", "high"] }).default("medium"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const productionTasksRelations = relations(productionTasks, ({ one }) => ({
+  createdBy: one(users, {
+    fields: [productionTasks.createdById],
+    references: [users.id],
+    relationName: "taskCreator",
+  }),
+  assignedTo: one(users, {
+    fields: [productionTasks.assignedToId],
+    references: [users.id],
+    relationName: "taskAssignee",
+  }),
+  newsletter: one(newsletters, {
+    fields: [productionTasks.newsletterId],
+    references: [newsletters.id],
+  }),
+  client: one(clients, {
+    fields: [productionTasks.clientId],
+    references: [clients.id],
+  }),
+}));
+
+export const insertProductionTaskSchema = createInsertSchema(productionTasks).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type InsertProductionTask = z.infer<typeof insertProductionTaskSchema>;
+export type ProductionTask = typeof productionTasks.$inferSelect;
+
+// ============================================================================
 // REVIEW TOKENS - Secure client review links with expiration
 // ============================================================================
 export const reviewTokens = pgTable("review_tokens", {

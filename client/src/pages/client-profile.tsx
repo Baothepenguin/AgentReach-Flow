@@ -11,6 +11,11 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Input } from "@/components/ui/input";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Label } from "@/components/ui/label";
 import {
   Plus,
   ChevronLeft,
@@ -23,9 +28,16 @@ import {
   MapPin,
   Calendar,
   FileText,
+  Edit2,
+  Check,
+  X,
+  Receipt,
+  CreditCard,
+  Palette,
+  Users,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import type { Client, Newsletter, NewsletterVersion, NewsletterDocument, BrandingKit, Project, TasksFlags } from "@shared/schema";
+import type { Client, Newsletter, NewsletterVersion, NewsletterDocument, BrandingKit, Project, TasksFlags, Subscription, Invoice } from "@shared/schema";
 import { format } from "date-fns";
 
 interface ClientProfilePageProps {
@@ -37,17 +49,65 @@ export default function ClientProfilePage({ clientId }: ClientProfilePageProps) 
   const [, setLocation] = useLocation();
   const [selectedNewsletterId, setSelectedNewsletterId] = useState<string | null>(null);
   const [showCreateNewsletter, setShowCreateNewsletter] = useState(false);
+  const [sidebarTab, setSidebarTab] = useState<"campaigns" | "orders" | "info">("campaigns");
+  const [isEditingInfo, setIsEditingInfo] = useState(false);
+  const [editedClient, setEditedClient] = useState<Partial<Client>>({});
+  const [showAddSubscription, setShowAddSubscription] = useState(false);
+  const [newSubscription, setNewSubscription] = useState<{ frequency: "weekly" | "biweekly" | "monthly"; pricePerPeriod: string }>({ frequency: "monthly", pricePerPeriod: "" });
 
   const { data: clientData, isLoading: loadingClient } = useQuery<{
     client: Client;
     brandingKit: BrandingKit | null;
     newsletters: Newsletter[];
+    subscriptions?: Subscription[];
+    invoices?: Invoice[];
   }>({
     queryKey: ["/api/clients", clientId],
   });
 
   const client = clientData?.client;
   const newsletters = clientData?.newsletters;
+  const subscriptions = clientData?.subscriptions || [];
+  const clientInvoices = clientData?.invoices || [];
+
+  const { data: allInvoices = [] } = useQuery<(Invoice & { client?: Client })[]>({
+    queryKey: ["/api/invoices"],
+  });
+
+  const clientOrders = allInvoices.filter(inv => inv.clientId === clientId);
+
+  const updateClientMutation = useMutation({
+    mutationFn: async (data: Partial<Client>) => {
+      return apiRequest("PATCH", `/api/clients/${clientId}`, data);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/clients", clientId] });
+      setIsEditingInfo(false);
+      toast({ title: "Client updated" });
+    },
+    onError: () => {
+      toast({ title: "Failed to update client", variant: "destructive" });
+    },
+  });
+
+  const createSubscriptionMutation = useMutation({
+    mutationFn: async (data: { frequency: string; amount: string }) => {
+      return apiRequest("POST", `/api/clients/${clientId}/subscriptions`, {
+        frequency: data.frequency,
+        amount: data.amount,
+        status: "active",
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/clients", clientId] });
+      setShowAddSubscription(false);
+      setNewSubscription({ frequency: "monthly", pricePerPeriod: "" });
+      toast({ title: "Subscription created" });
+    },
+    onError: () => {
+      toast({ title: "Failed to create subscription", variant: "destructive" });
+    },
+  });
 
   const { data: newsletterData, isLoading: loadingNewsletter, refetch: refetchNewsletter } = useQuery<{
     newsletter: Newsletter;
@@ -212,72 +272,274 @@ export default function ClientProfilePage({ clientId }: ClientProfilePageProps) 
             <span className="font-semibold truncate flex-1">{client.name}</span>
           </div>
 
-        <div className="p-3 border-b text-sm space-y-1">
-          <div className="flex items-center gap-2 text-muted-foreground">
-            <Mail className="w-3.5 h-3.5" />
-            <span className="truncate">{client.primaryEmail}</span>
-          </div>
-          {client.phone && (
-            <div className="flex items-center gap-2 text-muted-foreground">
-              <Phone className="w-3.5 h-3.5" />
-              <span>{client.phone}</span>
-            </div>
-          )}
-          {(client.locationCity || client.locationRegion) && (
-            <div className="flex items-center gap-2 text-muted-foreground">
-              <MapPin className="w-3.5 h-3.5" />
-              <span>{[client.locationCity, client.locationRegion].filter(Boolean).join(", ")}</span>
-            </div>
-          )}
-        </div>
+        <Tabs value={sidebarTab} onValueChange={(v) => setSidebarTab(v as typeof sidebarTab)} className="flex flex-col flex-1 overflow-hidden">
+          <TabsList className="mx-2 mt-2 grid grid-cols-3">
+            <TabsTrigger value="campaigns" className="text-xs" data-testid="tab-campaigns">
+              Campaigns
+            </TabsTrigger>
+            <TabsTrigger value="orders" className="text-xs" data-testid="tab-orders">
+              Orders
+            </TabsTrigger>
+            <TabsTrigger value="info" className="text-xs" data-testid="tab-info">
+              Info
+            </TabsTrigger>
+          </TabsList>
 
-        <ScrollArea className="flex-1">
-          <div className="p-2">
-            <div className="flex items-center justify-between px-2 py-1 mb-1">
-              <span className="text-xs uppercase tracking-wider text-muted-foreground font-medium">Campaigns</span>
-              <Button variant="ghost" size="sm" onClick={() => setShowCreateNewsletter(true)} data-testid="button-new-campaign">
-                <Plus className="w-3.5 h-3.5" />
-              </Button>
-            </div>
+          <TabsContent value="campaigns" className="flex-1 overflow-hidden m-0">
+            <ScrollArea className="h-full">
+              <div className="p-2">
+                <div className="flex items-center justify-between px-2 py-1 mb-1">
+                  <span className="text-xs uppercase tracking-wider text-muted-foreground font-medium">Newsletters</span>
+                  <Button variant="ghost" size="sm" onClick={() => setShowCreateNewsletter(true)} data-testid="button-new-campaign">
+                    <Plus className="w-3.5 h-3.5" />
+                  </Button>
+                </div>
 
-            {(!newsletters || newsletters.length === 0) ? (
-              <div className="text-center py-8">
-                <FileText className="w-8 h-8 mx-auto text-muted-foreground/40 mb-2" />
-                <p className="text-sm text-muted-foreground mb-3">No campaigns yet</p>
-                <Button variant="outline" size="sm" onClick={() => setShowCreateNewsletter(true)}>
-                  Create First
-                </Button>
+                {(!newsletters || newsletters.length === 0) ? (
+                  <div className="text-center py-8">
+                    <FileText className="w-8 h-8 mx-auto text-muted-foreground/40 mb-2" />
+                    <p className="text-sm text-muted-foreground mb-3">No campaigns yet</p>
+                    <Button variant="outline" size="sm" onClick={() => setShowCreateNewsletter(true)}>
+                      Create First
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="space-y-0.5">
+                    {newsletters.map((nl) => (
+                      <div
+                        key={nl.id}
+                        onClick={() => setSelectedNewsletterId(nl.id)}
+                        className={`p-2 rounded-md cursor-pointer transition-colors ${
+                          nl.id === selectedNewsletterId ? "bg-primary/10" : "hover:bg-muted/50"
+                        }`}
+                        data-testid={`campaign-${nl.id}`}
+                        role="button"
+                        tabIndex={0}
+                        onKeyDown={(e) => e.key === "Enter" && setSelectedNewsletterId(nl.id)}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <span className="font-medium text-sm truncate">{nl.title}</span>
+                          <StatusPill status={nl.status} size="sm" />
+                        </div>
+                        {nl.expectedSendDate && (
+                          <div className="flex items-center gap-1 text-xs text-muted-foreground mt-1">
+                            <Calendar className="w-3 h-3" />
+                            {format(new Date(nl.expectedSendDate), "MMM d")}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
-            ) : (
-              <div className="space-y-0.5">
-                {newsletters.map((nl) => (
-                  <div
-                    key={nl.id}
-                    onClick={() => setSelectedNewsletterId(nl.id)}
-                    className={`p-2 rounded-md cursor-pointer transition-colors ${
-                      nl.id === selectedNewsletterId ? "bg-primary/10" : "hover:bg-muted/50"
-                    }`}
-                    data-testid={`campaign-${nl.id}`}
-                    role="button"
-                    tabIndex={0}
-                    onKeyDown={(e) => e.key === "Enter" && setSelectedNewsletterId(nl.id)}
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <span className="font-medium text-sm truncate">{nl.title}</span>
-                      <StatusPill status={nl.status} size="sm" />
+            </ScrollArea>
+          </TabsContent>
+
+          <TabsContent value="orders" className="flex-1 overflow-hidden m-0">
+            <ScrollArea className="h-full">
+              <div className="p-2">
+                <div className="flex items-center justify-between px-2 py-1 mb-1">
+                  <span className="text-xs uppercase tracking-wider text-muted-foreground font-medium">Orders</span>
+                  <Button variant="ghost" size="sm" onClick={() => setLocation("/invoices")} data-testid="button-view-orders">
+                    <ExternalLink className="w-3.5 h-3.5" />
+                  </Button>
+                </div>
+
+                {clientOrders.length === 0 ? (
+                  <div className="text-center py-8">
+                    <Receipt className="w-8 h-8 mx-auto text-muted-foreground/40 mb-2" />
+                    <p className="text-sm text-muted-foreground">No orders yet</p>
+                  </div>
+                ) : (
+                  <div className="space-y-1">
+                    {clientOrders.map((order) => (
+                      <div
+                        key={order.id}
+                        onClick={() => setLocation("/invoices")}
+                        className="p-2 rounded-md hover:bg-muted/50 cursor-pointer"
+                        data-testid={`order-${order.id}`}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-sm font-medium">${Number(order.amount).toFixed(0)}</span>
+                          <Badge variant={order.status === "paid" ? "default" : "outline"} className="text-xs">
+                            {order.status}
+                          </Badge>
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          {format(new Date(order.createdAt), "MMM d, yyyy")}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <div className="mt-4 px-2">
+                  <div className="flex items-center justify-between py-1 mb-1">
+                    <span className="text-xs uppercase tracking-wider text-muted-foreground font-medium">Subscriptions</span>
+                    <Button variant="ghost" size="sm" onClick={() => setShowAddSubscription(true)} data-testid="button-add-subscription">
+                      <Plus className="w-3.5 h-3.5" />
+                    </Button>
+                  </div>
+                  {subscriptions.length === 0 ? (
+                    <p className="text-xs text-muted-foreground text-center py-2">No active subscriptions</p>
+                  ) : (
+                    <div className="space-y-1">
+                      {subscriptions.map((sub) => (
+                        <div key={sub.id} className="p-2 rounded-md bg-muted/30 text-sm">
+                          <div className="flex items-center justify-between">
+                            <span className="capitalize">{sub.frequency}</span>
+                            <span className="text-muted-foreground">${Number(sub.amount).toFixed(0)}</span>
+                          </div>
+                        </div>
+                      ))}
                     </div>
-                    {nl.expectedSendDate && (
-                      <div className="flex items-center gap-1 text-xs text-muted-foreground mt-1">
-                        <Calendar className="w-3 h-3" />
-                        {format(new Date(nl.expectedSendDate), "MMM d")}
+                  )}
+                </div>
+              </div>
+            </ScrollArea>
+          </TabsContent>
+
+          <TabsContent value="info" className="flex-1 overflow-hidden m-0">
+            <ScrollArea className="h-full">
+              <div className="p-3 space-y-4">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs uppercase tracking-wider text-muted-foreground font-medium">Client Info</span>
+                  {!isEditingInfo ? (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        setEditedClient({
+                          name: client.name,
+                          primaryEmail: client.primaryEmail,
+                          phone: client.phone || "",
+                          locationCity: client.locationCity || "",
+                          locationRegion: client.locationRegion || "",
+                          newsletterFrequency: client.newsletterFrequency || "monthly",
+                        });
+                        setIsEditingInfo(true);
+                      }}
+                      data-testid="button-edit-info"
+                    >
+                      <Edit2 className="w-3.5 h-3.5" />
+                    </Button>
+                  ) : (
+                    <div className="flex items-center gap-1">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => updateClientMutation.mutate(editedClient)}
+                        disabled={updateClientMutation.isPending}
+                        data-testid="button-save-info"
+                      >
+                        <Check className="w-4 h-4 text-green-600" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => setIsEditingInfo(false)}
+                        data-testid="button-cancel-edit"
+                      >
+                        <X className="w-4 h-4" />
+                      </Button>
+                    </div>
+                  )}
+                </div>
+
+                {isEditingInfo ? (
+                  <div className="space-y-3">
+                    <div>
+                      <Label className="text-xs">Name</Label>
+                      <Input
+                        value={editedClient.name || ""}
+                        onChange={(e) => setEditedClient({ ...editedClient, name: e.target.value })}
+                        className="h-8 text-sm"
+                        data-testid="input-client-name"
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-xs">Email</Label>
+                      <Input
+                        value={editedClient.primaryEmail || ""}
+                        onChange={(e) => setEditedClient({ ...editedClient, primaryEmail: e.target.value })}
+                        className="h-8 text-sm"
+                        data-testid="input-client-email"
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-xs">Phone</Label>
+                      <Input
+                        value={editedClient.phone || ""}
+                        onChange={(e) => setEditedClient({ ...editedClient, phone: e.target.value })}
+                        className="h-8 text-sm"
+                        data-testid="input-client-phone"
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <Label className="text-xs">City</Label>
+                        <Input
+                          value={editedClient.locationCity || ""}
+                          onChange={(e) => setEditedClient({ ...editedClient, locationCity: e.target.value })}
+                          className="h-8 text-sm"
+                          data-testid="input-client-city"
+                        />
+                      </div>
+                      <div>
+                        <Label className="text-xs">Region</Label>
+                        <Input
+                          value={editedClient.locationRegion || ""}
+                          onChange={(e) => setEditedClient({ ...editedClient, locationRegion: e.target.value })}
+                          className="h-8 text-sm"
+                          data-testid="input-client-region"
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <Label className="text-xs">Newsletter Frequency</Label>
+                      <Select
+                        value={editedClient.newsletterFrequency || "monthly"}
+                        onValueChange={(v) => setEditedClient({ ...editedClient, newsletterFrequency: v as "weekly" | "biweekly" | "monthly" })}
+                      >
+                        <SelectTrigger className="h-8 text-sm" data-testid="select-frequency">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="weekly">Weekly</SelectItem>
+                          <SelectItem value="biweekly">Bi-Weekly</SelectItem>
+                          <SelectItem value="monthly">Monthly</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-2 text-sm">
+                    <div className="flex items-center gap-2 text-muted-foreground">
+                      <Mail className="w-3.5 h-3.5" />
+                      <span className="truncate">{client.primaryEmail}</span>
+                    </div>
+                    {client.phone && (
+                      <div className="flex items-center gap-2 text-muted-foreground">
+                        <Phone className="w-3.5 h-3.5" />
+                        <span>{client.phone}</span>
                       </div>
                     )}
+                    {(client.locationCity || client.locationRegion) && (
+                      <div className="flex items-center gap-2 text-muted-foreground">
+                        <MapPin className="w-3.5 h-3.5" />
+                        <span>{[client.locationCity, client.locationRegion].filter(Boolean).join(", ")}</span>
+                      </div>
+                    )}
+                    <div className="flex items-center gap-2 text-muted-foreground">
+                      <Calendar className="w-3.5 h-3.5" />
+                      <span className="capitalize">{client.newsletterFrequency || "Monthly"} newsletters</span>
+                    </div>
                   </div>
-                ))}
+                )}
               </div>
-            )}
-          </div>
-        </ScrollArea>
+            </ScrollArea>
+          </TabsContent>
+        </Tabs>
 
         <div className="p-3 border-t">
           <Button className="w-full" onClick={() => setShowCreateNewsletter(true)} data-testid="button-new-campaign-bottom">
@@ -366,6 +628,57 @@ export default function ClientProfilePage({ clientId }: ClientProfilePageProps) 
             )[0]?.expectedSendDate 
           : null}
       />
+
+      <Dialog open={showAddSubscription} onOpenChange={setShowAddSubscription}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Add Subscription</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <Label>Frequency</Label>
+              <Select
+                value={newSubscription.frequency}
+                onValueChange={(v) => setNewSubscription({ ...newSubscription, frequency: v as "weekly" | "biweekly" | "monthly" })}
+              >
+                <SelectTrigger data-testid="select-new-sub-frequency">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="weekly">Weekly</SelectItem>
+                  <SelectItem value="biweekly">Bi-Weekly</SelectItem>
+                  <SelectItem value="monthly">Monthly</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Amount per Period ($)</Label>
+              <Input
+                type="number"
+                placeholder="99.00"
+                value={newSubscription.pricePerPeriod}
+                onChange={(e) => setNewSubscription({ ...newSubscription, pricePerPeriod: e.target.value })}
+                data-testid="input-new-sub-amount"
+              />
+            </div>
+          </div>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setShowAddSubscription(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() => createSubscriptionMutation.mutate({ 
+                frequency: newSubscription.frequency, 
+                amount: newSubscription.pricePerPeriod 
+              })}
+              disabled={!newSubscription.pricePerPeriod || createSubscriptionMutation.isPending}
+              data-testid="button-save-subscription"
+            >
+              Add Subscription
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       </div>
     </div>
   );

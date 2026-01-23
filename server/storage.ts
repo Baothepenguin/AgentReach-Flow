@@ -13,6 +13,7 @@ import {
   reviewTokens,
   reviewComments,
   integrationSettings,
+  productionTasks,
   type User,
   type InsertUser,
   type Client,
@@ -39,6 +40,8 @@ import {
   type InsertReviewToken,
   type ReviewComment,
   type InsertReviewComment,
+  type ProductionTask,
+  type InsertProductionTask,
   type NewsletterDocument,
   type NewsletterStatus,
   NEWSLETTER_STATUSES,
@@ -132,6 +135,13 @@ export interface IStorage {
   getDefaultTemplate(): Promise<HtmlTemplate | undefined>;
   createTemplate(template: InsertHtmlTemplate): Promise<HtmlTemplate>;
   updateTemplate(id: string, data: Partial<InsertHtmlTemplate>): Promise<HtmlTemplate | undefined>;
+
+  // Production Tasks
+  getProductionTasks(): Promise<ProductionTask[]>;
+  getProductionTask(id: string): Promise<ProductionTask | undefined>;
+  createProductionTask(task: InsertProductionTask): Promise<ProductionTask>;
+  updateProductionTask(id: string, data: Partial<InsertProductionTask>): Promise<ProductionTask | undefined>;
+  deleteProductionTask(id: string): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -547,6 +557,34 @@ export class DatabaseStorage implements IStorage {
       .where(eq(reviewComments.id, id))
       .returning();
     return updated;
+  }
+
+  // Production Tasks
+  async getProductionTasks(): Promise<ProductionTask[]> {
+    return db.select().from(productionTasks).orderBy(desc(productionTasks.createdAt));
+  }
+
+  async getProductionTask(id: string): Promise<ProductionTask | undefined> {
+    const [task] = await db.select().from(productionTasks).where(eq(productionTasks.id, id));
+    return task;
+  }
+
+  async createProductionTask(task: InsertProductionTask): Promise<ProductionTask> {
+    const [newTask] = await db.insert(productionTasks).values(task).returning();
+    return newTask;
+  }
+
+  async updateProductionTask(id: string, data: Partial<InsertProductionTask>): Promise<ProductionTask | undefined> {
+    const [updated] = await db
+      .update(productionTasks)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(productionTasks.id, id))
+      .returning();
+    return updated;
+  }
+
+  async deleteProductionTask(id: string): Promise<void> {
+    await db.delete(productionTasks).where(eq(productionTasks.id, id));
   }
 }
 

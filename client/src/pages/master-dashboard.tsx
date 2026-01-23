@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { TopNav } from "@/components/TopNav";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
 import {
   Mail,
   Receipt,
@@ -14,9 +15,13 @@ import {
   Clock,
   AlertCircle,
   CheckCircle2,
+  Plus,
+  User,
 } from "lucide-react";
-import type { Client, Newsletter, Invoice } from "@shared/schema";
+import { queryClient, apiRequest } from "@/lib/queryClient";
+import type { Client, Newsletter, Invoice, ProductionTask, User as UserType } from "@shared/schema";
 import { format, parseISO, differenceInDays, isPast, isToday } from "date-fns";
+import { useState } from "react";
 
 interface EnrichedNewsletter extends Newsletter {
   clientName?: string;
@@ -28,6 +33,8 @@ interface EnrichedInvoice extends Invoice {
 
 export default function MasterDashboard() {
   const [, setLocation] = useLocation();
+  const [newTaskTitle, setNewTaskTitle] = useState("");
+  const [showAddTask, setShowAddTask] = useState(false);
 
   const { data: clients } = useQuery<Client[]>({
     queryKey: ["/api/clients"],
@@ -39,6 +46,47 @@ export default function MasterDashboard() {
 
   const { data: invoices, isLoading: loadingInvoices } = useQuery<EnrichedInvoice[]>({
     queryKey: ["/api/invoices"],
+  });
+
+  const { data: tasks = [], isLoading: loadingTasks } = useQuery<ProductionTask[]>({
+    queryKey: ["/api/tasks"],
+  });
+
+  const { data: currentUser } = useQuery<UserType>({
+    queryKey: ["/api/auth/me"],
+  });
+
+  const toggleTaskMutation = useMutation({
+    mutationFn: async ({ id, completed }: { id: string; completed: boolean }) => {
+      return apiRequest("PATCH", `/api/tasks/${id}`, { completed });
+    },
+    onMutate: async ({ id, completed }) => {
+      await queryClient.cancelQueries({ queryKey: ["/api/tasks"] });
+      const previousTasks = queryClient.getQueryData<ProductionTask[]>(["/api/tasks"]);
+      queryClient.setQueryData<ProductionTask[]>(["/api/tasks"], (old) =>
+        old?.map((t) => (t.id === id ? { ...t, completed } : t))
+      );
+      return { previousTasks };
+    },
+    onError: (err, variables, context) => {
+      if (context?.previousTasks) {
+        queryClient.setQueryData(["/api/tasks"], context.previousTasks);
+      }
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/tasks"] });
+    },
+  });
+
+  const createTaskMutation = useMutation({
+    mutationFn: async (title: string) => {
+      return apiRequest("POST", "/api/tasks", { title });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/tasks"] });
+      setNewTaskTitle("");
+      setShowAddTask(false);
+    },
   });
 
   const getClientName = (clientId: string) => {
@@ -139,12 +187,8 @@ export default function MasterDashboard() {
   const upcomingNewsletters = getUpcomingNewsletters();
   const recentInvoices = getRecentInvoices();
 
-  const generalTasks = [
-    { id: "1", text: "Review pending client feedback", completed: false },
-    { id: "2", text: "Send weekly status updates", completed: false },
-    { id: "3", text: "Update branding kit for new clients", completed: true },
-    { id: "4", text: "Schedule content planning meeting", completed: false },
-  ];
+  const incompleteTasks = tasks.filter(t => !t.completed).slice(0, 6);
+  const completedTasks = tasks.filter(t => t.completed).slice(0, 3);
 
   return (
     <div className="min-h-screen bg-background">
@@ -275,37 +319,111 @@ export default function MasterDashboard() {
             </Card>
 
             <Card>
-              <CardHeader className="pb-3">
+              <CardHeader className="flex flex-row items-center justify-between gap-2 pb-3">
                 <CardTitle className="text-base font-medium flex items-center gap-2">
                   <CheckSquare className="w-4 h-4 text-primary" />
                   Tasks
                 </CardTitle>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => setShowAddTask(!showAddTask)}
+                  data-testid="button-add-task"
+                >
+                  <Plus className="w-4 h-4" />
+                </Button>
               </CardHeader>
               <CardContent className="pt-0">
-                <div className="space-y-2">
-                  {generalTasks.map((task) => (
-                    <div
-                      key={task.id}
-                      className="flex items-center gap-3 p-2 rounded-md hover-elevate cursor-pointer"
-                      data-testid={`task-row-${task.id}`}
+                {showAddTask && (
+                  <div className="flex gap-2 mb-3">
+                    <Input
+                      placeholder="New task..."
+                      value={newTaskTitle}
+                      onChange={(e) => setNewTaskTitle(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && newTaskTitle.trim()) {
+                          createTaskMutation.mutate(newTaskTitle.trim());
+                        }
+                      }}
+                      className="flex-1"
+                      data-testid="input-new-task"
+                      autoFocus
+                    />
+                    <Button
+                      size="sm"
+                      onClick={() => newTaskTitle.trim() && createTaskMutation.mutate(newTaskTitle.trim())}
+                      disabled={!newTaskTitle.trim() || createTaskMutation.isPending}
+                      data-testid="button-save-task"
                     >
-                      <Checkbox
-                        id={`task-${task.id}`}
-                        checked={task.completed}
-                        onCheckedChange={() => {}}
-                        className="flex-shrink-0"
-                        data-testid={`task-checkbox-${task.id}`}
-                      />
-                      <span
-                        className={`text-sm ${
-                          task.completed ? "line-through text-muted-foreground" : ""
-                        }`}
+                      Add
+                    </Button>
+                  </div>
+                )}
+                {loadingTasks ? (
+                  <div className="space-y-2">
+                    {Array.from({ length: 3 }).map((_, i) => (
+                      <Skeleton key={i} className="h-10 w-full" />
+                    ))}
+                  </div>
+                ) : tasks.length === 0 ? (
+                  <div className="text-center py-6 text-muted-foreground text-sm">
+                    No tasks yet. Click + to add one.
+                  </div>
+                ) : (
+                  <div className="space-y-1">
+                    {incompleteTasks.map((task) => (
+                      <div
+                        key={task.id}
+                        className="flex items-center gap-3 p-2 rounded-md hover-elevate"
+                        data-testid={`task-row-${task.id}`}
                       >
-                        {task.text}
-                      </span>
-                    </div>
-                  ))}
-                </div>
+                        <Checkbox
+                          id={`task-${task.id}`}
+                          checked={task.completed}
+                          onCheckedChange={(checked) => {
+                            toggleTaskMutation.mutate({ id: task.id, completed: !!checked });
+                          }}
+                          className="flex-shrink-0"
+                          data-testid={`task-checkbox-${task.id}`}
+                        />
+                        <div className="flex-1 min-w-0">
+                          <span className="text-sm block truncate">{task.title}</span>
+                          {task.createdById && (
+                            <span className="text-xs text-muted-foreground flex items-center gap-1">
+                              <User className="w-3 h-3" />
+                              {task.createdById === currentUser?.id ? "You" : "Team"}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                    {completedTasks.length > 0 && (
+                      <>
+                        <div className="text-xs text-muted-foreground pt-2 pb-1">Completed</div>
+                        {completedTasks.map((task) => (
+                          <div
+                            key={task.id}
+                            className="flex items-center gap-3 p-2 rounded-md hover-elevate"
+                            data-testid={`task-row-${task.id}`}
+                          >
+                            <Checkbox
+                              id={`task-${task.id}`}
+                              checked={task.completed}
+                              onCheckedChange={(checked) => {
+                                toggleTaskMutation.mutate({ id: task.id, completed: !!checked });
+                              }}
+                              className="flex-shrink-0"
+                              data-testid={`task-checkbox-${task.id}`}
+                            />
+                            <span className="text-sm line-through text-muted-foreground truncate">
+                              {task.title}
+                            </span>
+                          </div>
+                        ))}
+                      </>
+                    )}
+                  </div>
+                )}
               </CardContent>
             </Card>
           </div>

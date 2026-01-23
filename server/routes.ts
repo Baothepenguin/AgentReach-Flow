@@ -1103,5 +1103,51 @@ export async function registerRoutes(
     }
   });
 
+  // ============================================================================
+  // PRODUCTION TASKS
+  // ============================================================================
+  app.get("/api/tasks", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const tasks = await storage.getProductionTasks();
+      res.json(tasks);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to get tasks" });
+    }
+  });
+
+  app.post("/api/tasks", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = (req as Request & { userId: string }).userId;
+      const task = await storage.createProductionTask({
+        ...req.body,
+        createdById: userId,
+      });
+      res.status(201).json(task);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to create task" });
+    }
+  });
+
+  app.patch("/api/tasks/:id", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const task = await storage.updateProductionTask(req.params.id, req.body);
+      if (!task) {
+        return res.status(404).json({ error: "Task not found" });
+      }
+      res.json(task);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to update task" });
+    }
+  });
+
+  app.delete("/api/tasks/:id", requireAuth, async (req: Request, res: Response) => {
+    try {
+      await storage.deleteProductionTask(req.params.id);
+      res.status(204).send();
+    } catch (error) {
+      res.status(500).json({ error: "Failed to delete task" });
+    }
+  });
+
   return httpServer;
 }
