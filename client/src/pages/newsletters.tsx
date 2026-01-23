@@ -10,6 +10,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { LayoutGrid, List, Calendar, ChevronRight, Plus, Search, Loader2 } from "lucide-react";
 import { format } from "date-fns";
 import { Link } from "wouter";
@@ -218,6 +219,7 @@ export default function NewslettersPage() {
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
   const [isCreating, setIsCreating] = useState(false);
+  const [importedHtml, setImportedHtml] = useState("");
 
   const { data: newsletters = [], isLoading } = useQuery<NewsletterWithClient[]>({
     queryKey: ["/api/newsletters"],
@@ -258,6 +260,7 @@ export default function NewslettersPage() {
         isUnpaid: !selectedInvoice,
         expectedSendDate: new Date().toISOString().split("T")[0],
         status: "not_started",
+        importedHtml: importedHtml.trim() || undefined,
       });
       
       if (!res.ok) throw new Error("Failed to create newsletter");
@@ -379,6 +382,7 @@ export default function NewslettersPage() {
           setSelectedClient(null);
           setSelectedInvoice(null);
           setClientSearch("");
+          setImportedHtml("");
         }
       }}>
         <DialogContent className="sm:max-w-md">
@@ -485,6 +489,17 @@ export default function NewslettersPage() {
                   </p>
                 </div>
               )}
+
+              <div className="space-y-2 pt-2 border-t">
+                <label className="text-sm font-medium">Import HTML (optional)</label>
+                <Textarea
+                  placeholder="Paste your email HTML here..."
+                  value={importedHtml}
+                  onChange={(e) => setImportedHtml(e.target.value)}
+                  className="min-h-[100px] font-mono text-xs"
+                  data-testid="textarea-import-html"
+                />
+              </div>
             </div>
           )}
 

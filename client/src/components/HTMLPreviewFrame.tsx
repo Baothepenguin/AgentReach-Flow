@@ -136,7 +136,7 @@ export function HTMLPreviewFrame({
 
   return (
     <div className="flex flex-col h-full relative">
-      <div className="flex-1 flex items-start justify-center p-4 bg-muted/20 overflow-auto">
+      <div className={`flex-1 flex items-start justify-center overflow-auto ${fullWidth ? '' : 'p-4 bg-muted/20'}`}>
         {isLoading ? (
           <div
             className="bg-white rounded-lg shadow-lg overflow-hidden"

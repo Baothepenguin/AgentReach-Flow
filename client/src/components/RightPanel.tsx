@@ -2,11 +2,10 @@ import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import { StickyNote, Save, CheckSquare, Paperclip, Link2, ExternalLink } from "lucide-react";
+import { StickyNote, CheckSquare, Paperclip, Link2, ExternalLink, Plus, Trash2 } from "lucide-react";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import type { ReviewComment } from "@shared/schema";
 import { format } from "date-fns";
@@ -24,11 +23,9 @@ const NEWSLETTER_STATUSES = [
 interface RightPanelProps {
   newsletterId: string;
   status: string;
-  internalNotes?: string | null;
   editorFileUrl?: string | null;
   contentChatUrl?: string | null;
   onStatusChange?: (status: string) => void;
-  onInternalNotesChange?: (notes: string) => void;
   onEditorFileUrlChange?: (url: string) => void;
   onContentChatUrlChange?: (url: string) => void;
 }
@@ -36,20 +33,17 @@ interface RightPanelProps {
 export function RightPanel({
   newsletterId,
   status,
-  internalNotes,
   editorFileUrl,
   contentChatUrl,
   onStatusChange,
-  onInternalNotesChange,
   onEditorFileUrlChange,
   onContentChatUrlChange,
 }: RightPanelProps) {
-  const [localNotes, setLocalNotes] = useState(internalNotes || "");
-  const [notesDirty, setNotesDirty] = useState(false);
   const [localEditorUrl, setLocalEditorUrl] = useState(editorFileUrl || "");
   const [localChatUrl, setLocalChatUrl] = useState(contentChatUrl || "");
   const [editorUrlDirty, setEditorUrlDirty] = useState(false);
   const [chatUrlDirty, setChatUrlDirty] = useState(false);
+  const [newNoteContent, setNewNoteContent] = useState("");
   const currentStatus = NEWSLETTER_STATUSES.find(s => s.value === status) || NEWSLETTER_STATUSES[0];
 
   const { data: reviewComments = [] } = useQuery<ReviewComment[]>({
@@ -70,20 +64,35 @@ export function RightPanel({
     },
   });
 
-  const handleNotesChange = (value: string) => {
-    setLocalNotes(value);
-    setNotesDirty(value !== (internalNotes || ""));
-  };
+  const createNoteMutation = useMutation({
+    mutationFn: (content: string) =>
+      apiRequest("POST", `/api/newsletters/${newsletterId}/internal-notes`, { content }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/newsletters", newsletterId, "review-comments"] });
+      setNewNoteContent("");
+    },
+  });
 
-  const handleSaveNotes = () => {
-    if (onInternalNotesChange) {
-      onInternalNotesChange(localNotes);
-      setNotesDirty(false);
+  const deleteNoteMutation = useMutation({
+    mutationFn: (commentId: string) =>
+      apiRequest("DELETE", `/api/review-comments/${commentId}`, {}),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/newsletters", newsletterId, "review-comments"] });
+    },
+  });
+
+  const handleAddNote = () => {
+    if (newNoteContent.trim()) {
+      createNoteMutation.mutate(newNoteContent.trim());
     }
   };
 
-  const pendingComments = reviewComments.filter(c => !c.isCompleted);
-  const completedComments = reviewComments.filter(c => c.isCompleted);
+  const internalNotes = reviewComments.filter(c => c.isInternal);
+  const clientFeedback = reviewComments.filter(c => !c.isInternal);
+  const pendingInternalNotes = internalNotes.filter(c => !c.isCompleted);
+  const completedInternalNotes = internalNotes.filter(c => c.isCompleted);
+  const pendingFeedback = clientFeedback.filter(c => !c.isCompleted);
+  const completedFeedback = clientFeedback.filter(c => c.isCompleted);
 
   const getCommentTypeLabel = (type: string) => {
     switch (type) {
@@ -197,60 +206,127 @@ export function RightPanel({
         </div>
       )}
 
-      {onInternalNotesChange && (
-        <div className="p-3 border-b">
-          <div className="flex items-center justify-between mb-2">
-            <div className="flex items-center gap-2 text-sm font-medium" data-testid="label-internal-notes">
-              <StickyNote className="w-4 h-4" />
-              Internal Notes
-            </div>
-            {notesDirty && (
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-6 px-2 text-xs"
-                onClick={handleSaveNotes}
-                data-testid="button-save-notes"
-              >
-                <Save className="w-3 h-3 mr-1" />
-                Save
-              </Button>
+      <div className="p-3 border-b">
+        <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center gap-2 text-sm font-medium" data-testid="label-internal-notes">
+            <StickyNote className="w-4 h-4" />
+            Internal Notes
+            {pendingInternalNotes.length > 0 && (
+              <span className="text-xs text-muted-foreground">({pendingInternalNotes.length})</span>
             )}
           </div>
-          <Textarea
-            placeholder="Add private notes for the team..."
-            value={localNotes}
-            onChange={(e) => handleNotesChange(e.target.value)}
-            className="min-h-[80px] text-sm resize-none"
-            data-testid="textarea-internal-notes"
-          />
-          <p className="text-xs text-muted-foreground mt-1">
-            Only visible to team members
-          </p>
         </div>
-      )}
+        <div className="flex gap-1 mb-2">
+          <Input
+            placeholder="Add a note..."
+            value={newNoteContent}
+            onChange={(e) => setNewNoteContent(e.target.value)}
+            className="h-8 text-sm"
+            onKeyDown={(e) => e.key === "Enter" && handleAddNote()}
+            data-testid="input-add-note"
+          />
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 flex-shrink-0"
+            onClick={handleAddNote}
+            disabled={!newNoteContent.trim() || createNoteMutation.isPending}
+            data-testid="button-add-note"
+          >
+            <Plus className="w-4 h-4" />
+          </Button>
+        </div>
+        <div className="space-y-1">
+          {pendingInternalNotes.map((note) => (
+            <div
+              key={note.id}
+              className="flex items-start gap-2 p-1.5 rounded bg-background group"
+              data-testid={`internal-note-${note.id}`}
+            >
+              <Checkbox
+                checked={false}
+                onCheckedChange={() => toggleCompleteMutation.mutate(note.id)}
+                className="mt-0.5"
+                data-testid={`checkbox-note-${note.id}`}
+              />
+              <div className="flex-1 min-w-0">
+                <p className="text-sm">{note.content}</p>
+                <span className="text-xs text-muted-foreground">
+                  {format(new Date(note.createdAt), "MMM d, h:mm a")}
+                </span>
+              </div>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-5 w-5 opacity-0 group-hover:opacity-100 transition-opacity"
+                onClick={() => deleteNoteMutation.mutate(note.id)}
+                data-testid={`button-delete-note-${note.id}`}
+              >
+                <Trash2 className="w-3 h-3 text-muted-foreground" />
+              </Button>
+            </div>
+          ))}
+          {completedInternalNotes.length > 0 && (
+            <div className="pt-1">
+              <div className="text-xs text-muted-foreground mb-1">Completed</div>
+              {completedInternalNotes.map((note) => (
+                <div
+                  key={note.id}
+                  className="flex items-start gap-2 p-1.5 rounded group"
+                  data-testid={`internal-note-${note.id}`}
+                >
+                  <Checkbox
+                    checked={true}
+                    onCheckedChange={() => toggleCompleteMutation.mutate(note.id)}
+                    className="mt-0.5"
+                    data-testid={`checkbox-note-${note.id}`}
+                  />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm line-through text-muted-foreground">{note.content}</p>
+                    <span className="text-xs text-muted-foreground">
+                      {format(new Date(note.createdAt), "MMM d, h:mm a")}
+                    </span>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-5 w-5 opacity-0 group-hover:opacity-100 transition-opacity"
+                    onClick={() => deleteNoteMutation.mutate(note.id)}
+                    data-testid={`button-delete-note-${note.id}`}
+                  >
+                    <Trash2 className="w-3 h-3 text-muted-foreground" />
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+        <p className="text-xs text-muted-foreground mt-2">
+          Only visible to team members
+        </p>
+      </div>
 
       <div className="p-3 border-b">
         <div className="flex items-center gap-2 text-sm font-medium" data-testid="label-client-feedback">
           <CheckSquare className="w-4 h-4" />
           Client Feedback
-          {pendingComments.length > 0 && (
-            <span className="text-xs text-muted-foreground">({pendingComments.length} pending)</span>
+          {pendingFeedback.length > 0 && (
+            <span className="text-xs text-muted-foreground">({pendingFeedback.length} pending)</span>
           )}
         </div>
       </div>
       
       <ScrollArea className="flex-1">
         <div className="p-2 space-y-1">
-          {reviewComments.length === 0 ? (
+          {clientFeedback.length === 0 ? (
             <div className="text-center py-6 text-sm text-muted-foreground" data-testid="text-no-feedback">
               No client feedback yet
             </div>
           ) : (
             <>
-              {pendingComments.length > 0 && (
+              {pendingFeedback.length > 0 && (
                 <div className="space-y-1 mb-3">
-                  {pendingComments.map((comment) => (
+                  {pendingFeedback.map((comment) => (
                     <div
                       key={comment.id}
                       className="p-2 rounded-md bg-background border border-amber-500/30"
@@ -286,12 +362,12 @@ export function RightPanel({
                 </div>
               )}
 
-              {completedComments.length > 0 && (
+              {completedFeedback.length > 0 && (
                 <div className="space-y-1">
                   <div className="text-xs font-medium text-muted-foreground px-2 py-1">
-                    Completed ({completedComments.length})
+                    Completed ({completedFeedback.length})
                   </div>
-                  {completedComments.map((comment) => (
+                  {completedFeedback.map((comment) => (
                     <div
                       key={comment.id}
                       className="p-2 rounded-md bg-muted/30"

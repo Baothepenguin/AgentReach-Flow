@@ -8,7 +8,6 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Receipt, X, Mail, Plus, ExternalLink } from "lucide-react";
 import { format } from "date-fns";
-import { Link } from "wouter";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { Invoice, Client, Newsletter, Subscription } from "@shared/schema";
@@ -99,12 +98,10 @@ function OrderPreview({
         
         <div className="pt-4 border-t">
           <h4 className="text-sm font-medium mb-2">Client</h4>
-          <Link href={`/clients/${order.clientId}`}>
-            <Card className="p-3 hover-elevate cursor-pointer">
-              <p className="font-medium">{order.client.name}</p>
-              <p className="text-sm text-muted-foreground">{order.client.primaryEmail}</p>
-            </Card>
-          </Link>
+          <Card className="p-3">
+            <p className="font-medium">{order.client.name}</p>
+            <p className="text-sm text-muted-foreground">{order.client.primaryEmail}</p>
+          </Card>
         </div>
         
         <div className="pt-4 border-t">

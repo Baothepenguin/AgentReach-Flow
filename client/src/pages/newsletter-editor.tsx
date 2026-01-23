@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef, useCallback } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { queryClient, apiRequest } from "@/lib/queryClient";
@@ -19,7 +19,9 @@ import {
   Trash2,
   Calendar as CalendarIcon,
   ExternalLink,
-  Link2,
+  Pencil,
+  Check,
+  X,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import type { Newsletter, NewsletterVersion, NewsletterDocument, Client, TasksFlags } from "@shared/schema";
@@ -34,6 +36,10 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
   const [, setLocation] = useLocation();
   const [showClientPanel, setShowClientPanel] = useState(false);
   const [showDatePicker, setShowDatePicker] = useState(false);
+  const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved">("idle");
+  const [isEditingTitle, setIsEditingTitle] = useState(false);
+  const [editedTitle, setEditedTitle] = useState("");
+  const saveTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const { data: newsletterData, isLoading: loadingNewsletter, refetch: refetchNewsletter } = useQuery<{
     newsletter: Newsletter & { client?: Client };
@@ -55,11 +61,48 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
       });
       return res.json();
     },
-    onSuccess: async () => {
-      await refetchNewsletter();
-      toast({ title: "Saved" });
+    onMutate: async (html: string) => {
+      setSaveStatus("saving");
+      await queryClient.cancelQueries({ queryKey: ["/api/newsletters", newsletterId] });
+      const previousData = queryClient.getQueryData(["/api/newsletters", newsletterId]);
+      queryClient.setQueryData(["/api/newsletters", newsletterId], (old: typeof newsletterData) => 
+        old ? { ...old, html, document: { html } } : old
+      );
+      return { previousData };
+    },
+    onSuccess: () => {
+      setSaveStatus("saved");
+      setTimeout(() => setSaveStatus("idle"), 2000);
+    },
+    onError: (_err, _html, context) => {
+      if (context?.previousData) {
+        queryClient.setQueryData(["/api/newsletters", newsletterId], context.previousData);
+      }
+      setSaveStatus("idle");
+      toast({ title: "Failed to save", variant: "destructive" });
     },
   });
+
+  const updateTitleMutation = useMutation({
+    mutationFn: async (title: string) => {
+      const res = await apiRequest("PATCH", `/api/newsletters/${newsletterId}`, { title });
+      return res.json();
+    },
+    onSuccess: async () => {
+      await refetchNewsletter();
+      setIsEditingTitle(false);
+    },
+  });
+
+  const debouncedSaveHtml = useCallback((html: string) => {
+    setSaveStatus("saving");
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current);
+    }
+    saveTimerRef.current = setTimeout(() => {
+      updateHtmlMutation.mutate(html);
+    }, 1500);
+  }, [updateHtmlMutation]);
 
   const updateStatusMutation = useMutation({
     mutationFn: async (status: string) => {
@@ -73,20 +116,6 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
     },
     onError: (error) => {
       toast({ title: "Failed to update status", description: error.message, variant: "destructive" });
-    },
-  });
-
-  const updateNotesMutation = useMutation({
-    mutationFn: async (internalNotes: string) => {
-      const res = await apiRequest("PATCH", `/api/newsletters/${newsletterId}`, { internalNotes });
-      return res.json();
-    },
-    onSuccess: async () => {
-      await refetchNewsletter();
-      toast({ title: "Notes saved" });
-    },
-    onError: (error) => {
-      toast({ title: "Failed to save notes", description: error.message, variant: "destructive" });
     },
   });
 
@@ -209,7 +238,62 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
                 <ArrowLeft className="w-5 h-5" />
               </Button>
               <div className="flex items-center gap-2">
-                <span className="font-medium truncate">{newsletter.title}</span>
+                {isEditingTitle ? (
+                  <div className="flex items-center gap-1">
+                    <Input
+                      value={editedTitle}
+                      onChange={(e) => setEditedTitle(e.target.value)}
+                      className="h-7 w-48"
+                      autoFocus
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && editedTitle.trim()) {
+                          updateTitleMutation.mutate(editedTitle.trim());
+                        } else if (e.key === "Escape") {
+                          setIsEditingTitle(false);
+                        }
+                      }}
+                      data-testid="input-edit-title"
+                    />
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7"
+                      onClick={() => editedTitle.trim() && updateTitleMutation.mutate(editedTitle.trim())}
+                      data-testid="button-save-title"
+                    >
+                      <Check className="w-4 h-4" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7"
+                      onClick={() => setIsEditingTitle(false)}
+                      data-testid="button-cancel-title"
+                    >
+                      <X className="w-4 h-4" />
+                    </Button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => {
+                      setEditedTitle(newsletter.title);
+                      setIsEditingTitle(true);
+                    }}
+                    className="font-medium truncate hover:underline cursor-pointer flex items-center gap-1.5 group"
+                    data-testid="button-edit-title"
+                  >
+                    {newsletter.title}
+                    <Pencil className="w-3 h-3 opacity-0 group-hover:opacity-50 transition-opacity" />
+                  </button>
+                )}
+                <div className="flex items-center gap-2">
+                  {saveStatus === "saving" && (
+                    <div className="w-2 h-2 rounded-full bg-yellow-500 animate-pulse" title="Saving..." data-testid="save-indicator-saving" />
+                  )}
+                  {saveStatus === "saved" && (
+                    <div className="w-2 h-2 rounded-full bg-green-500" title="Saved" data-testid="save-indicator-saved" />
+                  )}
+                </div>
                 <Popover open={showDatePicker} onOpenChange={setShowDatePicker}>
                   <PopoverTrigger asChild>
                     <Button variant="ghost" size="sm" className="text-muted-foreground" data-testid="button-edit-date">
@@ -261,7 +345,7 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
               html={newsletterData?.html || ""}
               isLoading={loadingNewsletter}
               title={newsletter.title}
-              onHtmlChange={(html) => updateHtmlMutation.mutate(html)}
+              onHtmlChange={debouncedSaveHtml}
               fullWidth
             />
           </div>
@@ -271,11 +355,9 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
           <RightPanel
             newsletterId={newsletterId}
             status={newsletter.status}
-            internalNotes={newsletter.internalNotes}
             editorFileUrl={newsletter.editorFileUrl}
             contentChatUrl={newsletter.contentChatUrl}
             onStatusChange={(status) => updateStatusMutation.mutate(status)}
-            onInternalNotesChange={(notes) => updateNotesMutation.mutate(notes)}
             onEditorFileUrlChange={(url) => updateUrlMutation.mutate({ editorFileUrl: url })}
             onContentChatUrlChange={(url) => updateUrlMutation.mutate({ contentChatUrl: url })}
           />

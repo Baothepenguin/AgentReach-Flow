@@ -6,7 +6,6 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import LoginPage from "@/pages/login";
 import MasterDashboard from "@/pages/master-dashboard";
-import ClientProfilePage from "@/pages/client-profile";
 import ClientsListPage from "@/pages/clients-list";
 import NewslettersPage from "@/pages/newsletters";
 import InvoicesPage from "@/pages/invoices";
@@ -49,11 +48,6 @@ function Router() {
       <Route path="/clients" component={() => (
         <ProtectedRoute>
           <ClientsListPage />
-        </ProtectedRoute>
-      )} />
-      <Route path="/clients/:clientId" component={(params) => (
-        <ProtectedRoute>
-          <ClientProfilePage clientId={params.params.clientId} />
         </ProtectedRoute>
       )} />
       <Route path="/orders" component={() => (

@@ -122,6 +122,7 @@ export interface IStorage {
   createReviewComment(comment: InsertReviewComment): Promise<ReviewComment>;
   updateReviewComment(id: string, data: Partial<InsertReviewComment>): Promise<ReviewComment | undefined>;
   toggleReviewCommentComplete(id: string, userId: string): Promise<ReviewComment | undefined>;
+  deleteReviewComment(id: string): Promise<void>;
 
   // Projects
   getProjectsByClient(clientId: string): Promise<Project[]>;
@@ -557,6 +558,10 @@ export class DatabaseStorage implements IStorage {
       .where(eq(reviewComments.id, id))
       .returning();
     return updated;
+  }
+
+  async deleteReviewComment(id: string): Promise<void> {
+    await db.delete(reviewComments).where(eq(reviewComments.id, id));
   }
 
   // Production Tasks

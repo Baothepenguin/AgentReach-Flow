@@ -902,6 +902,31 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/newsletters/:id/internal-notes", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = (req as Request & { userId: string }).userId;
+      const comment = await storage.createReviewComment({
+        newsletterId: req.params.id,
+        content: req.body.content,
+        commentType: "general",
+        isInternal: true,
+        createdById: userId,
+      });
+      res.status(201).json(comment);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to create internal note" });
+    }
+  });
+
+  app.delete("/api/review-comments/:id", requireAuth, async (req: Request, res: Response) => {
+    try {
+      await storage.deleteReviewComment(req.params.id);
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to delete comment" });
+    }
+  });
+
   app.post("/api/newsletters/:id/send-for-review", requireAuth, async (req: Request, res: Response) => {
     try {
       const newsletter = await storage.getNewsletter(req.params.id);
