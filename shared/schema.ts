@@ -193,11 +193,12 @@ export const subscriptions = pgTable("subscriptions", {
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
-export const subscriptionsRelations = relations(subscriptions, ({ one }) => ({
+export const subscriptionsRelations = relations(subscriptions, ({ one, many }) => ({
   client: one(clients, {
     fields: [subscriptions.clientId],
     references: [clients.id],
   }),
+  newsletters: many(newsletters),
 }));
 
 export const insertSubscriptionSchema = createInsertSchema(subscriptions).omit({
@@ -260,6 +261,7 @@ export const newsletters = pgTable("newsletters", {
   clientId: varchar("client_id").notNull().references(() => clients.id, { onDelete: "cascade" }),
   projectId: varchar("project_id").references(() => projects.id, { onDelete: "set null" }),
   invoiceId: varchar("invoice_id").references(() => invoices.id, { onDelete: "set null" }),
+  subscriptionId: varchar("subscription_id").references(() => subscriptions.id, { onDelete: "set null" }),
   title: text("title").notNull(),
   expectedSendDate: date("expected_send_date").notNull(),
   status: text("status", { 
@@ -268,6 +270,7 @@ export const newsletters = pgTable("newsletters", {
   currentVersionId: varchar("current_version_id"),
   documentJson: jsonb("document_json").$type<NewsletterDocument>(),
   designJson: jsonb("design_json"),
+  internalNotes: text("internal_notes"),
   assignedToId: varchar("assigned_to_id").references(() => users.id),
   createdById: varchar("created_by_id").references(() => users.id),
   lastEditedById: varchar("last_edited_by_id").references(() => users.id),
@@ -288,6 +291,10 @@ export const newslettersRelations = relations(newsletters, ({ one, many }) => ({
   invoice: one(invoices, {
     fields: [newsletters.invoiceId],
     references: [invoices.id],
+  }),
+  subscription: one(subscriptions, {
+    fields: [newsletters.subscriptionId],
+    references: [subscriptions.id],
   }),
   assignedTo: one(users, {
     fields: [newsletters.assignedToId],
