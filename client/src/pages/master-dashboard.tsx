@@ -1,433 +1,314 @@
-import { useState } from "react";
-import { useQuery, useMutation } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
-import { queryClient, apiRequest } from "@/lib/queryClient";
-import { useAuth } from "@/contexts/AuthContext";
 import { TopNav } from "@/components/TopNav";
-import { CreateClientDialog } from "@/components/CreateClientDialog";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
-  Plus,
-  User,
-  Search,
-  MapPin,
-  Calendar,
-  LayoutGrid,
-  List,
-  ChevronLeft,
-  ChevronRight,
-  Circle,
   Mail,
   Receipt,
+  CheckSquare,
+  ArrowRight,
   Clock,
+  AlertCircle,
+  CheckCircle2,
 } from "lucide-react";
-import { useToast } from "@/hooks/use-toast";
-import type { Client, Newsletter } from "@shared/schema";
-import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameMonth, isSameDay, addMonths, subMonths, getDay, parseISO } from "date-fns";
+import type { Client, Newsletter, Invoice } from "@shared/schema";
+import { format, parseISO, differenceInDays, isPast, isToday } from "date-fns";
 
-type ViewMode = "grid" | "list" | "calendar";
+interface EnrichedNewsletter extends Newsletter {
+  clientName?: string;
+}
+
+interface EnrichedInvoice extends Invoice {
+  clientName?: string;
+}
 
 export default function MasterDashboard() {
-  const { user, logout } = useAuth();
-  const { toast } = useToast();
   const [, setLocation] = useLocation();
-  const [showCreateClient, setShowCreateClient] = useState(false);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [viewMode, setViewMode] = useState<ViewMode>("grid");
-  const [calendarDate, setCalendarDate] = useState(new Date());
 
-  const { data: clients, isLoading } = useQuery<Client[]>({
+  const { data: clients } = useQuery<Client[]>({
     queryKey: ["/api/clients"],
   });
 
-  const { data: newsletters } = useQuery<Newsletter[]>({
+  const { data: newsletters, isLoading: loadingNewsletters } = useQuery<Newsletter[]>({
     queryKey: ["/api/newsletters"],
   });
 
-  const createClientMutation = useMutation({
-    mutationFn: (data: Partial<Client>) => apiRequest("POST", "/api/clients", data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/clients"] });
-      setShowCreateClient(false);
-      toast({ title: "Client created" });
-    },
-    onError: (error) => {
-      toast({ title: "Failed to create client", description: error.message, variant: "destructive" });
-    },
+  const { data: invoices, isLoading: loadingInvoices } = useQuery<EnrichedInvoice[]>({
+    queryKey: ["/api/invoices"],
   });
 
-  const getClientLocation = (client: Client) => {
-    if (client.locationCity && client.locationRegion) {
-      return `${client.locationCity}, ${client.locationRegion}`;
-    }
-    return client.locationCity || client.locationRegion || null;
+  const getClientName = (clientId: string) => {
+    return clients?.find((c) => c.id === clientId)?.name || "Client";
   };
 
-  const getPlanLabel = (frequency: string) => {
-    return frequency === "weekly" ? "Established" : "Starter";
-  };
-
-  const filteredClients = clients?.filter((client) => {
-    const location = getClientLocation(client);
-    return (
-      client.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      client.primaryEmail.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (location && location.toLowerCase().includes(searchQuery.toLowerCase()))
-    );
-  });
-
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case "active":
-        return "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400";
-      case "paused":
-        return "bg-amber-500/10 text-amber-600 dark:text-amber-400";
-      case "cancelled":
-        return "bg-red-500/10 text-red-600 dark:text-red-400";
-      default:
-        return "bg-muted text-muted-foreground";
-    }
-  };
-
-  const getNewsletterStatusColor = (status: string) => {
-    switch (status) {
-      case "not_started":
-        return "text-muted-foreground";
-      case "in_progress":
-        return "text-blue-500";
-      case "internal_review":
-        return "text-purple-500";
-      case "client_review":
-        return "text-amber-500";
-      case "revisions":
-        return "text-orange-500";
-      case "approved":
-        return "text-emerald-500";
-      case "sent":
-        return "text-emerald-600";
-      default:
-        return "text-muted-foreground";
-    }
-  };
-
-  const monthStart = startOfMonth(calendarDate);
-  const monthEnd = endOfMonth(calendarDate);
-  const calendarDays = eachDayOfInterval({ start: monthStart, end: monthEnd });
-  const startingDayOfWeek = getDay(monthStart);
-
-  const getNewslettersForDay = (day: Date) => {
+  const getUpcomingNewsletters = (): EnrichedNewsletter[] => {
     if (!newsletters) return [];
-    return newsletters.filter((nl) => {
-      if (nl.expectedSendDate) {
-        return isSameDay(parseISO(nl.expectedSendDate as unknown as string), day);
-      }
-      return false;
-    });
+    return newsletters
+      .filter((nl) => nl.status !== "sent" && nl.expectedSendDate)
+      .map((nl) => ({ ...nl, clientName: getClientName(nl.clientId) }))
+      .sort((a, b) => {
+        const dateA = a.expectedSendDate ? new Date(a.expectedSendDate).getTime() : Infinity;
+        const dateB = b.expectedSendDate ? new Date(b.expectedSendDate).getTime() : Infinity;
+        return dateA - dateB;
+      })
+      .slice(0, 10);
   };
 
-  const getClientById = (clientId: string) => {
-    return clients?.find((c) => c.id === clientId);
+  const getRecentInvoices = (): EnrichedInvoice[] => {
+    if (!invoices) return [];
+    return invoices.slice(0, 8);
   };
 
-  const renderGridView = () => (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-      {filteredClients?.map((client) => (
-        <Card
-          key={client.id}
-          className="cursor-pointer hover-elevate glow-green-hover transition-all overflow-visible"
-          onClick={() => setLocation(`/clients/${client.id}`)}
-          data-testid={`card-client-${client.id}`}
-          role="button"
-          tabIndex={0}
-          onKeyDown={(e) => e.key === "Enter" && setLocation(`/clients/${client.id}`)}
-        >
-          <CardContent className="p-5">
-            <div className="flex items-start justify-between gap-3 mb-3">
-              <div className="min-w-0 flex-1">
-                <h3 className="font-semibold text-base truncate">{client.name}</h3>
-                {getClientLocation(client) && (
-                  <div className="flex items-center gap-1 text-sm text-muted-foreground mt-0.5">
-                    <MapPin className="w-3 h-3 flex-shrink-0" />
-                    <span className="truncate">{getClientLocation(client)}</span>
-                  </div>
-                )}
-              </div>
-              <Badge 
-                variant="secondary" 
-                className={`flex-shrink-0 text-xs capitalize ${getStatusColor(client.subscriptionStatus)}`}
-              >
-                {client.subscriptionStatus}
-              </Badge>
-            </div>
-            
-            <div className="flex items-center justify-between text-sm">
-              <span className="text-muted-foreground">{getPlanLabel(client.newsletterFrequency)}</span>
-              {client.createdAt && (
-                <span className="text-xs text-muted-foreground/70">
-                  Since {format(new Date(client.createdAt), "MMM yyyy")}
-                </span>
-              )}
-            </div>
-          </CardContent>
-        </Card>
-      ))}
-    </div>
-  );
+  const getUrgencyColor = (sendDate: string | Date | null) => {
+    if (!sendDate) return "text-muted-foreground";
+    const date = typeof sendDate === "string" ? parseISO(sendDate) : sendDate;
+    if (isPast(date) && !isToday(date)) return "text-red-500";
+    const daysUntil = differenceInDays(date, new Date());
+    if (daysUntil <= 5) return "text-amber-500";
+    return "text-emerald-500";
+  };
 
-  const renderListView = () => (
-    <div className="space-y-2">
-      <div className="grid grid-cols-[1fr_150px_150px_100px] gap-4 px-4 py-2 text-sm font-medium text-muted-foreground border-b">
-        <span>Client</span>
-        <span>Location</span>
-        <span>Plan</span>
-        <span>Status</span>
-      </div>
-      {filteredClients?.map((client) => (
-        <div
-          key={client.id}
-          className="grid grid-cols-[1fr_150px_150px_100px] gap-4 px-4 py-3 hover-elevate cursor-pointer rounded-md items-center"
-          onClick={() => setLocation(`/clients/${client.id}`)}
-          data-testid={`row-client-${client.id}`}
-          role="button"
-          tabIndex={0}
-          onKeyDown={(e) => e.key === "Enter" && setLocation(`/clients/${client.id}`)}
-        >
-          <div className="min-w-0">
-            <span className="font-medium truncate block">{client.name}</span>
-            <span className="text-xs text-muted-foreground truncate block">{client.primaryEmail}</span>
-          </div>
-          <span className="text-sm text-muted-foreground truncate">
-            {getClientLocation(client) || "-"}
-          </span>
-          <span className="text-sm text-muted-foreground">
-            {getPlanLabel(client.newsletterFrequency)}
-          </span>
-          <Badge 
-            variant="secondary" 
-            className={`text-xs capitalize ${getStatusColor(client.subscriptionStatus)}`}
-          >
-            {client.subscriptionStatus}
-          </Badge>
-        </div>
-      ))}
-    </div>
-  );
+  const getUrgencyBadge = (sendDate: string | Date | null) => {
+    if (!sendDate) return null;
+    const date = typeof sendDate === "string" ? parseISO(sendDate) : sendDate;
+    if (isPast(date) && !isToday(date)) {
+      return (
+        <Badge variant="destructive" className="text-xs">
+          <AlertCircle className="w-3 h-3 mr-1" />
+          Past Due
+        </Badge>
+      );
+    }
+    const daysUntil = differenceInDays(date, new Date());
+    if (daysUntil === 0) {
+      return (
+        <Badge className="bg-amber-500/10 text-amber-600 dark:text-amber-400 text-xs">
+          <Clock className="w-3 h-3 mr-1" />
+          Due Today
+        </Badge>
+      );
+    }
+    if (daysUntil <= 5) {
+      return (
+        <Badge className="bg-amber-500/10 text-amber-600 dark:text-amber-400 text-xs">
+          <Clock className="w-3 h-3 mr-1" />
+          {daysUntil}d
+        </Badge>
+      );
+    }
+    return (
+      <Badge className="bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-xs">
+        <CheckCircle2 className="w-3 h-3 mr-1" />
+        {daysUntil}d
+      </Badge>
+    );
+  };
 
-  const renderCalendarView = () => (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold">
-          {format(calendarDate, "MMMM yyyy")}
-        </h2>
-        <div className="flex items-center gap-1">
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => setCalendarDate(subMonths(calendarDate, 1))}
-            data-testid="button-calendar-prev"
-          >
-            <ChevronLeft className="w-4 h-4" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => setCalendarDate(new Date())}
-            data-testid="button-calendar-today"
-          >
-            Today
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => setCalendarDate(addMonths(calendarDate, 1))}
-            data-testid="button-calendar-next"
-          >
-            <ChevronRight className="w-4 h-4" />
-          </Button>
-        </div>
-      </div>
+  const getStatusLabel = (status: string) => {
+    const labels: Record<string, string> = {
+      not_started: "Not Started",
+      in_progress: "In Progress",
+      internal_review: "Internal Review",
+      client_review: "Client Review",
+      revisions: "Revisions",
+      approved: "Approved",
+      sent: "Sent",
+    };
+    return labels[status] || status;
+  };
 
-      <div className="border rounded-md overflow-hidden">
-        <div className="grid grid-cols-7 text-center text-sm font-medium text-muted-foreground border-b">
-          {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((day) => (
-            <div key={day} className="py-2">{day}</div>
-          ))}
-        </div>
-        <div className="grid grid-cols-7">
-          {Array.from({ length: startingDayOfWeek }).map((_, i) => (
-            <div key={`empty-${i}`} className="h-28 border-b border-r bg-muted/30" />
-          ))}
-          {calendarDays.map((day, i) => {
-            const dayNewsletters = getNewslettersForDay(day);
-            const isToday = isSameDay(day, new Date());
-            
-            return (
-              <div
-                key={day.toISOString()}
-                className={`h-28 border-b border-r p-1 ${
-                  !isSameMonth(day, calendarDate) ? "bg-muted/30" : ""
-                } ${isToday ? "bg-primary/5" : ""}`}
-              >
-                <div className={`text-sm font-medium mb-1 ${isToday ? "text-primary" : "text-muted-foreground"}`}>
-                  {format(day, "d")}
-                </div>
-                <div className="space-y-1 overflow-y-auto max-h-20">
-                  {dayNewsletters.slice(0, 3).map((nl) => {
-                    const client = getClientById(nl.clientId);
-                    return (
-                      <div
-                        key={nl.id}
-                        className="text-xs px-1.5 py-0.5 rounded bg-muted/50 truncate cursor-pointer hover-elevate"
-                        onClick={() => setLocation(`/clients/${nl.clientId}`)}
-                        data-testid={`calendar-item-${nl.id}`}
-                      >
-                        <Circle className={`w-2 h-2 inline-block mr-1 fill-current ${getNewsletterStatusColor(nl.status)}`} />
-                        <span className="text-muted-foreground">{client?.name || "Client"}</span>
-                      </div>
-                    );
-                  })}
-                  {dayNewsletters.length > 3 && (
-                    <div className="text-xs text-muted-foreground px-1.5">
-                      +{dayNewsletters.length - 3} more
-                    </div>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
+  const getInvoiceStatusBadge = (status: string) => {
+    switch (status) {
+      case "paid":
+        return <Badge className="bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-xs">Paid</Badge>;
+      case "pending":
+        return <Badge className="bg-amber-500/10 text-amber-600 dark:text-amber-400 text-xs">Pending</Badge>;
+      case "overdue":
+        return <Badge variant="destructive" className="text-xs">Overdue</Badge>;
+      case "draft":
+        return <Badge variant="secondary" className="text-xs">Draft</Badge>;
+      default:
+        return <Badge variant="outline" className="text-xs">{status}</Badge>;
+    }
+  };
 
-      <div className="flex items-center gap-4 text-xs text-muted-foreground">
-        <div className="flex items-center gap-1">
-          <Circle className="w-2 h-2 fill-current text-blue-500" />
-          <span>In Progress</span>
-        </div>
-        <div className="flex items-center gap-1">
-          <Circle className="w-2 h-2 fill-current text-amber-500" />
-          <span>Client Review</span>
-        </div>
-        <div className="flex items-center gap-1">
-          <Circle className="w-2 h-2 fill-current text-emerald-500" />
-          <span>Approved</span>
-        </div>
-      </div>
-    </div>
-  );
+  const upcomingNewsletters = getUpcomingNewsletters();
+  const recentInvoices = getRecentInvoices();
 
-  const renderEmptyState = () => (
-    <div className="text-center py-16">
-      <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-muted flex items-center justify-center">
-        <User className="w-8 h-8 text-muted-foreground" />
-      </div>
-      <h3 className="text-lg font-medium mb-2">
-        {searchQuery ? "No clients found" : "No clients yet"}
-      </h3>
-      <p className="text-muted-foreground mb-6 max-w-sm mx-auto">
-        {searchQuery
-          ? "Try adjusting your search terms"
-          : "Add your first client to start creating newsletters"}
-      </p>
-      {!searchQuery && (
-        <Button onClick={() => setShowCreateClient(true)} className="glow-green-hover" data-testid="button-add-first-client">
-          <Plus className="w-4 h-4 mr-2" />
-          Add Your First Client
-        </Button>
-      )}
-    </div>
-  );
+  const generalTasks = [
+    { id: "1", text: "Review pending client feedback", completed: false },
+    { id: "2", text: "Send weekly status updates", completed: false },
+    { id: "3", text: "Update branding kit for new clients", completed: true },
+    { id: "4", text: "Schedule content planning meeting", completed: false },
+  ];
 
   return (
     <div className="min-h-screen bg-background">
       <TopNav />
 
       <main className="p-6">
-        <div className="flex items-center justify-between gap-4 mb-8 flex-wrap">
-          <div className="relative flex-1 max-w-md min-w-[200px]">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-            <Input
-              placeholder="Search clients..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-10"
-              data-testid="input-search-clients"
-            />
-          </div>
-          
-          <div className="flex items-center gap-2">
-            <div className="flex items-center border rounded-md p-0.5">
-              <Button
-                variant={viewMode === "grid" ? "secondary" : "ghost"}
-                size="sm"
-                onClick={() => setViewMode("grid")}
-                data-testid="button-view-grid"
-                className="gap-1.5"
-              >
-                <LayoutGrid className="w-4 h-4" />
-                <span className="hidden sm:inline">Grid</span>
-              </Button>
-              <Button
-                variant={viewMode === "list" ? "secondary" : "ghost"}
-                size="sm"
-                onClick={() => setViewMode("list")}
-                data-testid="button-view-list"
-                className="gap-1.5"
-              >
-                <List className="w-4 h-4" />
-                <span className="hidden sm:inline">List</span>
-              </Button>
-              <Button
-                variant={viewMode === "calendar" ? "secondary" : "ghost"}
-                size="sm"
-                onClick={() => setViewMode("calendar")}
-                data-testid="button-view-calendar"
-                className="gap-1.5"
-              >
-                <Calendar className="w-4 h-4" />
-                <span className="hidden sm:inline">Calendar</span>
-              </Button>
-            </div>
-
-            <Button onClick={() => setShowCreateClient(true)} className="glow-green-hover" data-testid="button-add-client">
-              <Plus className="w-4 h-4 mr-2" />
-              Add Client
-            </Button>
-          </div>
+        <div className="mb-6">
+          <h1 className="text-2xl font-semibold">Dashboard</h1>
+          <p className="text-muted-foreground text-sm">Production overview</p>
         </div>
 
-        {isLoading ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {Array.from({ length: 6 }).map((_, i) => (
-              <Card key={i}>
-                <CardContent className="p-6">
-                  <Skeleton className="h-6 w-32 mb-4" />
-                  <Skeleton className="h-4 w-48 mb-2" />
-                  <Skeleton className="h-4 w-24" />
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        ) : filteredClients && filteredClients.length > 0 ? (
-          viewMode === "grid" ? renderGridView() :
-          viewMode === "list" ? renderListView() :
-          renderCalendarView()
-        ) : (
-          renderEmptyState()
-        )}
-      </main>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <Card className="lg:col-span-2">
+            <CardHeader className="flex flex-row items-center justify-between gap-2 pb-3">
+              <CardTitle className="text-base font-medium flex items-center gap-2">
+                <Mail className="w-4 h-4 text-primary" />
+                Upcoming Newsletters
+              </CardTitle>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setLocation("/newsletters")}
+                className="text-xs"
+                data-testid="button-view-all-newsletters"
+              >
+                View All
+                <ArrowRight className="w-3 h-3 ml-1" />
+              </Button>
+            </CardHeader>
+            <CardContent className="pt-0">
+              {loadingNewsletters ? (
+                <div className="space-y-3">
+                  {Array.from({ length: 5 }).map((_, i) => (
+                    <Skeleton key={i} className="h-12 w-full" />
+                  ))}
+                </div>
+              ) : upcomingNewsletters.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground text-sm">
+                  No upcoming newsletters scheduled
+                </div>
+              ) : (
+                <div className="space-y-1">
+                  {upcomingNewsletters.map((nl) => (
+                    <div
+                      key={nl.id}
+                      className="flex items-center justify-between gap-3 p-3 rounded-md hover-elevate cursor-pointer"
+                      onClick={() => setLocation(`/clients/${nl.clientId}`)}
+                      data-testid={`newsletter-row-${nl.id}`}
+                    >
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium text-sm truncate">{nl.clientName}</span>
+                          <Badge variant="outline" className="text-xs flex-shrink-0">
+                            {getStatusLabel(nl.status)}
+                          </Badge>
+                        </div>
+                        <div className="text-xs text-muted-foreground mt-0.5">
+                          {nl.title}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        {nl.expectedSendDate && (
+                          <span className={`text-xs ${getUrgencyColor(nl.expectedSendDate)}`}>
+                            {format(parseISO(nl.expectedSendDate as string), "MMM d")}
+                          </span>
+                        )}
+                        {getUrgencyBadge(nl.expectedSendDate)}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
 
-      <CreateClientDialog
-        open={showCreateClient}
-        onClose={() => setShowCreateClient(false)}
-        onSubmit={async (data) => {
-          await createClientMutation.mutateAsync(data);
-        }}
-        isSubmitting={createClientMutation.isPending}
-      />
+          <div className="space-y-6">
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between gap-2 pb-3">
+                <CardTitle className="text-base font-medium flex items-center gap-2">
+                  <Receipt className="w-4 h-4 text-primary" />
+                  Recent Invoices
+                </CardTitle>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setLocation("/invoices")}
+                  className="text-xs"
+                  data-testid="button-view-all-invoices"
+                >
+                  View All
+                  <ArrowRight className="w-3 h-3 ml-1" />
+                </Button>
+              </CardHeader>
+              <CardContent className="pt-0">
+                {loadingInvoices ? (
+                  <div className="space-y-2">
+                    {Array.from({ length: 4 }).map((_, i) => (
+                      <Skeleton key={i} className="h-10 w-full" />
+                    ))}
+                  </div>
+                ) : recentInvoices.length === 0 ? (
+                  <div className="text-center py-6 text-muted-foreground text-sm">
+                    No invoices yet
+                  </div>
+                ) : (
+                  <div className="space-y-1">
+                    {recentInvoices.slice(0, 5).map((inv) => (
+                      <div
+                        key={inv.id}
+                        className="flex items-center justify-between gap-2 p-2 rounded-md hover-elevate cursor-pointer"
+                        onClick={() => setLocation("/invoices")}
+                        data-testid={`invoice-row-${inv.id}`}
+                      >
+                        <div className="min-w-0 flex-1">
+                          <div className="text-sm font-medium truncate">
+                            {inv.clientName || "Client"}
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            ${parseFloat(inv.amount || "0").toFixed(2)}
+                          </div>
+                        </div>
+                        {getInvoiceStatusBadge(inv.status)}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base font-medium flex items-center gap-2">
+                  <CheckSquare className="w-4 h-4 text-primary" />
+                  Tasks
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="pt-0">
+                <div className="space-y-2">
+                  {generalTasks.map((task) => (
+                    <div
+                      key={task.id}
+                      className="flex items-center gap-3 p-2 rounded-md hover-elevate cursor-pointer"
+                      data-testid={`task-row-${task.id}`}
+                    >
+                      <Checkbox
+                        checked={task.completed}
+                        className="flex-shrink-0"
+                        data-testid={`task-checkbox-${task.id}`}
+                      />
+                      <span
+                        className={`text-sm ${
+                          task.completed ? "line-through text-muted-foreground" : ""
+                        }`}
+                      >
+                        {task.text}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        </div>
+      </main>
     </div>
   );
 }
