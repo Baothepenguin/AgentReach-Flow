@@ -290,7 +290,9 @@ export default function MasterDashboard() {
                       data-testid={`task-row-${task.id}`}
                     >
                       <Checkbox
+                        id={`task-${task.id}`}
                         checked={task.completed}
+                        onCheckedChange={() => {}}
                         className="flex-shrink-0"
                         data-testid={`task-checkbox-${task.id}`}
                       />

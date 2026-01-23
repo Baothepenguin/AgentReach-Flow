@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Bold, Trash2, Undo2, Redo2, Code, Plus } from "lucide-react";
+import { Bold, Trash2, Undo2, Redo2, Code, Plus, Monitor, Smartphone } from "lucide-react";
 
 interface HTMLPreviewFrameProps {
   html: string;
@@ -10,8 +10,6 @@ interface HTMLPreviewFrameProps {
   onHtmlChange?: (html: string) => void;
   onCreateCampaign?: () => void;
 }
-
-const PREVIEW_WIDTH = 680;
 
 export function HTMLPreviewFrame({ 
   html, 
@@ -24,7 +22,10 @@ export function HTMLPreviewFrame({
   const [toolbarPosition, setToolbarPosition] = useState({ x: 0, y: 0 });
   const [undoStack, setUndoStack] = useState<string[]>([]);
   const [redoStack, setRedoStack] = useState<string[]>([]);
+  const [deviceMode, setDeviceMode] = useState<"desktop" | "mobile">("desktop");
   const iframeRef = useRef<HTMLIFrameElement>(null);
+
+  const previewWidth = deviceMode === "mobile" ? 375 : 680;
 
   const saveToUndo = useCallback(() => {
     if (html) {
@@ -133,11 +134,11 @@ export function HTMLPreviewFrame({
 
   return (
     <div className="flex flex-col h-full relative">
-      <div className="flex-1 flex items-start justify-center p-6 bg-muted/20 overflow-auto">
+      <div className="flex-1 flex items-start justify-center p-4 bg-muted/20 overflow-auto">
         {isLoading ? (
           <div
             className="bg-white rounded-lg shadow-lg overflow-hidden"
-            style={{ width: PREVIEW_WIDTH }}
+            style={{ width: previewWidth }}
           >
             <Skeleton className="h-48 w-full" />
             <div className="p-4 space-y-3">
@@ -148,15 +149,22 @@ export function HTMLPreviewFrame({
           </div>
         ) : html ? (
           <div
-            className="bg-white rounded-lg shadow-lg overflow-hidden transition-all duration-300 glow-green-hover"
-            style={{ width: PREVIEW_WIDTH }}
+            className={`bg-white overflow-hidden transition-all duration-300 ${
+              deviceMode === "mobile" 
+                ? "rounded-[40px] border-8 border-gray-800 shadow-2xl" 
+                : "rounded-lg shadow-lg glow-green-hover"
+            }`}
+            style={{ width: previewWidth }}
           >
             <iframe
               ref={iframeRef}
               srcDoc={html}
               title="Newsletter Preview"
               className="w-full border-0"
-              style={{ minHeight: "600px", height: "auto" }}
+              style={{ 
+                minHeight: deviceMode === "mobile" ? "667px" : "600px", 
+                height: "auto" 
+              }}
               sandbox="allow-same-origin allow-scripts"
               data-testid="iframe-preview"
             />
@@ -164,7 +172,7 @@ export function HTMLPreviewFrame({
         ) : (
           <div 
             className="flex flex-col items-center justify-center text-center p-12 rounded-lg border-2 border-dashed border-muted-foreground/20"
-            style={{ width: PREVIEW_WIDTH }}
+            style={{ width: previewWidth }}
           >
             <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center mb-4">
               <Code className="w-8 h-8 text-primary/60" />
@@ -182,6 +190,29 @@ export function HTMLPreviewFrame({
           </div>
         )}
       </div>
+
+      {html && (
+        <div className="absolute bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-1 bg-background/95 backdrop-blur-sm rounded-full p-1 shadow-lg border z-10">
+          <Button
+            size="icon"
+            variant={deviceMode === "desktop" ? "secondary" : "ghost"}
+            onClick={() => setDeviceMode("desktop")}
+            className="rounded-full"
+            data-testid="button-device-desktop"
+          >
+            <Monitor className="w-4 h-4" />
+          </Button>
+          <Button
+            size="icon"
+            variant={deviceMode === "mobile" ? "secondary" : "ghost"}
+            onClick={() => setDeviceMode("mobile")}
+            className="rounded-full"
+            data-testid="button-device-mobile"
+          >
+            <Smartphone className="w-4 h-4" />
+          </Button>
+        </div>
+      )}
 
       {showToolbar && (
         <div 
@@ -213,7 +244,6 @@ export function HTMLPreviewFrame({
           </Button>
         </div>
       )}
-
     </div>
   );
 }
