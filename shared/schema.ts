@@ -215,6 +215,7 @@ export type Subscription = typeof subscriptions.$inferSelect;
 export const invoices = pgTable("invoices", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   clientId: varchar("client_id").notNull().references(() => clients.id, { onDelete: "cascade" }),
+  subscriptionId: varchar("subscription_id").references(() => subscriptions.id, { onDelete: "set null" }),
   amount: decimal("amount", { precision: 10, scale: 2 }).notNull(),
   currency: text("currency").notNull().default("USD"),
   transactionFee: decimal("transaction_fee", { precision: 10, scale: 2 }),
@@ -229,6 +230,10 @@ export const invoicesRelations = relations(invoices, ({ one, many }) => ({
   client: one(clients, {
     fields: [invoices.clientId],
     references: [clients.id],
+  }),
+  subscription: one(subscriptions, {
+    fields: [invoices.subscriptionId],
+    references: [subscriptions.id],
   }),
   newsletters: many(newsletters),
 }));

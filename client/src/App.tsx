@@ -7,6 +7,9 @@ import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import LoginPage from "@/pages/login";
 import MasterDashboard from "@/pages/master-dashboard";
 import ClientProfilePage from "@/pages/client-profile";
+import ClientsListPage from "@/pages/clients-list";
+import NewslettersPage from "@/pages/newsletters";
+import InvoicesPage from "@/pages/invoices";
 import ReviewPage from "@/pages/review";
 import NotFound from "@/pages/not-found";
 import { Loader2 } from "lucide-react";
@@ -37,9 +40,24 @@ function Router() {
           <MasterDashboard />
         </ProtectedRoute>
       )} />
+      <Route path="/newsletters" component={() => (
+        <ProtectedRoute>
+          <NewslettersPage />
+        </ProtectedRoute>
+      )} />
+      <Route path="/clients" component={() => (
+        <ProtectedRoute>
+          <ClientsListPage />
+        </ProtectedRoute>
+      )} />
       <Route path="/clients/:clientId" component={(params) => (
         <ProtectedRoute>
           <ClientProfilePage clientId={params.params.clientId} />
+        </ProtectedRoute>
+      )} />
+      <Route path="/invoices" component={() => (
+        <ProtectedRoute>
+          <InvoicesPage />
         </ProtectedRoute>
       )} />
       <Route path="/review/:token" component={ReviewPage} />

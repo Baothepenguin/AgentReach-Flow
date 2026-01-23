@@ -13,6 +13,24 @@ interface CreateNewsletterDialogProps {
   onSubmit: (data: { expectedSendDate: string; importedHtml?: string }) => Promise<void>;
   isSubmitting?: boolean;
   clientName?: string;
+  clientFrequency?: "weekly" | "biweekly" | "monthly";
+  lastSendDate?: string | null;
+}
+
+function getSuggestedDate(frequency?: string, lastSendDate?: string | null): Date {
+  const baseDate = lastSendDate ? new Date(lastSendDate) : new Date();
+  
+  switch (frequency) {
+    case "weekly":
+      return addDays(baseDate, 7);
+    case "biweekly":
+      return addDays(baseDate, 14);
+    case "monthly":
+    default:
+      const nextMonth = new Date(baseDate);
+      nextMonth.setMonth(nextMonth.getMonth() + 1);
+      return nextMonth;
+  }
 }
 
 export function CreateNewsletterDialog({
@@ -21,7 +39,10 @@ export function CreateNewsletterDialog({
   onSubmit,
   isSubmitting,
   clientName,
+  clientFrequency,
+  lastSendDate,
 }: CreateNewsletterDialogProps) {
+  const suggestedDate = getSuggestedDate(clientFrequency, lastSendDate);
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
   const [importedHtml, setImportedHtml] = useState("");
   const [activeTab, setActiveTab] = useState<"blank" | "import">("blank");
@@ -131,6 +152,7 @@ export function CreateNewsletterDialog({
           <div className="grid grid-cols-7 gap-1">
             {weeks.flat().map((date) => {
               const isSelected = selectedDate && isSameDay(selectedDate, date);
+              const isSuggested = isSameDay(suggestedDate, date);
               const isPast = date < today;
               const isCurrentMonth = isSameMonth(date, currentWeekStart);
               
@@ -142,10 +164,11 @@ export function CreateNewsletterDialog({
                   disabled={isPast}
                   data-testid={`date-option-${format(date, "yyyy-MM-dd")}`}
                   className={cn(
-                    "aspect-square rounded-md text-sm flex items-center justify-center transition-all",
+                    "aspect-square rounded-md text-sm flex items-center justify-center transition-all relative",
                     isPast && "opacity-30 cursor-not-allowed",
                     !isPast && !isSelected && "hover-elevate cursor-pointer",
                     isSelected && "bg-primary text-primary-foreground glow-green",
+                    !isSelected && !isPast && isSuggested && "ring-2 ring-primary/50 ring-offset-1",
                     !isSelected && !isPast && !isCurrentMonth && "text-muted-foreground/50"
                   )}
                 >
@@ -158,6 +181,22 @@ export function CreateNewsletterDialog({
           {selectedDate && (
             <div className="mt-3 text-center text-sm text-primary font-medium">
               {format(selectedDate, "EEEE, MMMM d, yyyy")}
+              {isSameDay(selectedDate, suggestedDate) && (
+                <span className="ml-2 text-xs text-muted-foreground">(Suggested)</span>
+              )}
+            </div>
+          )}
+          
+          {!selectedDate && clientFrequency && (
+            <div className="mt-3 text-center">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setSelectedDate(suggestedDate)}
+                data-testid="button-use-suggested-date"
+              >
+                Use suggested: {format(suggestedDate, "MMM d")}
+              </Button>
             </div>
           )}
         </div>

@@ -1,7 +1,9 @@
+import { useState } from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { History, Clock, RotateCcw, MessageSquare } from "lucide-react";
+import { History, Clock, RotateCcw, MessageSquare, StickyNote, Save } from "lucide-react";
 import type { NewsletterVersion, TasksFlags } from "@shared/schema";
 import { format } from "date-fns";
 
@@ -19,22 +21,40 @@ interface RightPanelProps {
   versions: NewsletterVersion[];
   currentVersionId: string | null;
   status: string;
+  internalNotes?: string | null;
   flags?: TasksFlags[];
   onRestoreVersion: (versionId: string) => void;
   onStatusChange?: (status: string) => void;
+  onInternalNotesChange?: (notes: string) => void;
 }
 
 export function RightPanel({
   versions,
   currentVersionId,
   status,
+  internalNotes,
   flags = [],
   onRestoreVersion,
   onStatusChange,
+  onInternalNotesChange,
 }: RightPanelProps) {
+  const [localNotes, setLocalNotes] = useState(internalNotes || "");
+  const [notesDirty, setNotesDirty] = useState(false);
   const currentStatus = NEWSLETTER_STATUSES.find(s => s.value === status) || NEWSLETTER_STATUSES[0];
   
   const clientComments = flags.filter(f => f.code === "CLIENT_CHANGES_REQUESTED");
+
+  const handleNotesChange = (value: string) => {
+    setLocalNotes(value);
+    setNotesDirty(value !== (internalNotes || ""));
+  };
+
+  const handleSaveNotes = () => {
+    if (onInternalNotesChange) {
+      onInternalNotesChange(localNotes);
+      setNotesDirty(false);
+    }
+  };
 
   return (
     <div className="flex flex-col h-full bg-muted/30">
@@ -61,6 +81,39 @@ export function RightPanel({
           </div>
         )}
       </div>
+
+      {onInternalNotesChange && (
+        <div className="p-3 border-b">
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-2 text-sm font-medium" data-testid="label-internal-notes">
+              <StickyNote className="w-4 h-4" />
+              Internal Notes
+            </div>
+            {notesDirty && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6 px-2 text-xs"
+                onClick={handleSaveNotes}
+                data-testid="button-save-notes"
+              >
+                <Save className="w-3 h-3 mr-1" />
+                Save
+              </Button>
+            )}
+          </div>
+          <Textarea
+            placeholder="Add private notes for the team..."
+            value={localNotes}
+            onChange={(e) => handleNotesChange(e.target.value)}
+            className="min-h-[80px] text-sm resize-none"
+            data-testid="textarea-internal-notes"
+          />
+          <p className="text-xs text-muted-foreground mt-1">
+            Only visible to team members
+          </p>
+        </div>
+      )}
 
       {clientComments.length > 0 && (
         <div className="p-3 border-b">

@@ -9,6 +9,44 @@ import { randomUUID } from "crypto";
 import session from "express-session";
 import MemoryStore from "memorystore";
 import bcrypt from "bcrypt";
+import { addDays, addWeeks, addMonths, format } from "date-fns";
+
+function getNextSendDates(frequency: string, lastSendDate: Date | null, count: number = 1): Date[] {
+  const dates: Date[] = [];
+  let baseDate = lastSendDate || new Date();
+  
+  for (let i = 0; i < count; i++) {
+    let nextDate: Date;
+    switch (frequency) {
+      case "weekly":
+        nextDate = addWeeks(baseDate, 1);
+        break;
+      case "biweekly":
+        nextDate = addWeeks(baseDate, 2);
+        break;
+      case "monthly":
+      default:
+        nextDate = addMonths(baseDate, 1);
+        break;
+    }
+    dates.push(nextDate);
+    baseDate = nextDate;
+  }
+  
+  return dates;
+}
+
+function getNewsletterCountByFrequency(frequency: string): number {
+  switch (frequency) {
+    case "weekly":
+      return 4;
+    case "biweekly":
+      return 2;
+    case "monthly":
+    default:
+      return 1;
+  }
+}
 
 const SessionStore = MemoryStore(session);
 
@@ -224,11 +262,58 @@ export async function registerRoutes(
 
   app.post("/api/clients/:clientId/subscriptions", requireAuth, async (req: Request, res: Response) => {
     try {
+      const userId = (req as Request & { userId: string }).userId;
+      const clientId = req.params.clientId;
+      
       const subscription = await storage.createSubscription({
-        clientId: req.params.clientId,
+        clientId,
         ...req.body,
       });
-      res.status(201).json(subscription);
+
+      if (subscription.status === "active" && subscription.frequency) {
+        const client = await storage.getClient(clientId);
+        if (client) {
+          const latestNewsletter = await storage.getLatestClientNewsletter(clientId);
+          const lastSendDate = latestNewsletter?.expectedSendDate 
+            ? new Date(latestNewsletter.expectedSendDate) 
+            : null;
+          
+          const count = getNewsletterCountByFrequency(subscription.frequency);
+          const sendDates = getNextSendDates(subscription.frequency, lastSendDate, count);
+          
+          const newsletters = [];
+          for (const sendDate of sendDates) {
+            const formattedDate = format(sendDate, "MMM d");
+            const title = `${client.name} - ${formattedDate}`;
+            
+            const newsletter = await storage.createNewsletter({
+              clientId,
+              subscriptionId: subscription.id,
+              title,
+              expectedSendDate: format(sendDate, "yyyy-MM-dd"),
+              status: "not_started",
+              documentJson: { html: "" },
+              createdById: userId,
+            });
+            
+            const version = await storage.createVersion({
+              newsletterId: newsletter.id,
+              versionNumber: 1,
+              snapshotJson: { html: "" },
+              createdById: userId,
+              changeSummary: "Initial version",
+            });
+            
+            await storage.updateNewsletter(newsletter.id, { currentVersionId: version.id });
+            newsletters.push({ ...newsletter, currentVersionId: version.id });
+          }
+          
+          res.status(201).json({ subscription, newsletters });
+          return;
+        }
+      }
+      
+      res.status(201).json({ subscription, newsletters: [] });
     } catch (error) {
       console.error("Create subscription error:", error);
       res.status(500).json({ error: "Failed to create subscription" });
@@ -247,6 +332,24 @@ export async function registerRoutes(
   // ============================================================================
   // INVOICES
   // ============================================================================
+  app.get("/api/invoices", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const invoices = await storage.getAllInvoices();
+      const clients = await storage.getClients();
+      const clientMap = new Map(clients.map(c => [c.id, c]));
+
+      const enrichedInvoices = invoices.map(inv => ({
+        ...inv,
+        client: clientMap.get(inv.clientId),
+      }));
+
+      res.json(enrichedInvoices);
+    } catch (error) {
+      console.error("Get all invoices error:", error);
+      res.status(500).json({ error: "Failed to fetch invoices" });
+    }
+  });
+
   app.get("/api/clients/:clientId/invoices", requireAuth, async (req: Request, res: Response) => {
     try {
       const invoices = await storage.getInvoicesByClient(req.params.clientId);
@@ -259,21 +362,32 @@ export async function registerRoutes(
   app.post("/api/clients/:clientId/invoices", requireAuth, async (req: Request, res: Response) => {
     try {
       const userId = (req as Request & { userId: string }).userId;
-      const { amount, currency, expectedSendDate, stripePaymentId } = req.body;
+      const clientId = req.params.clientId;
+      const { amount, currency, expectedSendDate, stripePaymentId, subscriptionId } = req.body;
+
+      const client = await storage.getClient(clientId);
+      if (!client) {
+        return res.status(404).json({ error: "Client not found" });
+      }
+
+      let linkedSubscriptionId = subscriptionId;
+      if (!linkedSubscriptionId) {
+        const subscriptions = await storage.getSubscriptionsByClient(clientId);
+        const activeSubscription = subscriptions.find(s => s.status === "active");
+        if (activeSubscription) {
+          linkedSubscriptionId = activeSubscription.id;
+        }
+      }
 
       const invoice = await storage.createInvoice({
-        clientId: req.params.clientId,
+        clientId,
+        subscriptionId: linkedSubscriptionId || null,
         amount,
         currency: currency || "USD",
         stripePaymentId,
         status: stripePaymentId ? "paid" : "pending",
         paidAt: stripePaymentId ? new Date() : null,
       });
-
-      const client = await storage.getClient(req.params.clientId);
-      if (!client) {
-        return res.status(404).json({ error: "Client not found" });
-      }
 
       const sendDate = new Date(expectedSendDate);
       const formattedDate = sendDate.toLocaleDateString("en-US", { month: "short", day: "numeric" });
@@ -291,6 +405,7 @@ export async function registerRoutes(
       const newsletter = await storage.createNewsletter({
         clientId: client.id,
         invoiceId: invoice.id,
+        subscriptionId: linkedSubscriptionId || null,
         title,
         expectedSendDate: expectedSendDate,
         status: "not_started",

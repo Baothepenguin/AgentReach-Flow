@@ -3,6 +3,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useAuth } from "@/contexts/AuthContext";
+import { TopNav } from "@/components/TopNav";
 import { CreateClientDialog } from "@/components/CreateClientDialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -10,17 +11,8 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import {
   Plus,
-  LogOut,
   User,
-  ChevronDown,
   Search,
   MapPin,
   Calendar,
@@ -29,6 +21,9 @@ import {
   ChevronLeft,
   ChevronRight,
   Circle,
+  Mail,
+  Receipt,
+  Clock,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import type { Client, Newsletter } from "@shared/schema";
@@ -348,37 +343,9 @@ export default function MasterDashboard() {
 
   return (
     <div className="min-h-screen bg-background">
-      <header className="sticky top-0 z-50 flex items-center justify-between gap-4 px-6 h-14 border-b bg-background/80 glass-surface">
-        <div className="flex items-center gap-3">
-          <span className="text-lg font-semibold">Clients</span>
-          <Badge variant="secondary" className="text-xs">
-            {clients?.length || 0}
-          </Badge>
-        </div>
-        <div className="flex items-center gap-2">
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" className="gap-2" data-testid="button-user-menu">
-                <User className="w-4 h-4" />
-                <span className="hidden sm:inline">{user?.name}</span>
-                <ChevronDown className="w-3 h-3" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem disabled>
-                <span className="text-xs text-muted-foreground">{user?.email}</span>
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={logout} data-testid="button-logout">
-                <LogOut className="w-4 h-4 mr-2" />
-                Sign out
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
-      </header>
+      <TopNav />
 
-      <main className="max-w-7xl mx-auto px-6 py-8">
+      <main className="p-6">
         <div className="flex items-center justify-between gap-4 mb-8 flex-wrap">
           <div className="relative flex-1 max-w-md min-w-[200px]">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />

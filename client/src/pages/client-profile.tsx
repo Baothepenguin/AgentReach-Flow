@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { queryClient, apiRequest } from "@/lib/queryClient";
+import { TopNav } from "@/components/TopNav";
 import { RightPanel } from "@/components/RightPanel";
 import { HTMLPreviewFrame } from "@/components/HTMLPreviewFrame";
 import { CreateNewsletterDialog } from "@/components/CreateNewsletterDialog";
@@ -114,6 +115,20 @@ export default function ClientProfilePage({ clientId }: ClientProfilePageProps) 
     },
   });
 
+  const updateNotesMutation = useMutation({
+    mutationFn: async (internalNotes: string) => {
+      const res = await apiRequest("PATCH", `/api/newsletters/${selectedNewsletterId}`, { internalNotes });
+      return res.json();
+    },
+    onSuccess: async () => {
+      await refetchNewsletter();
+      toast({ title: "Notes saved" });
+    },
+    onError: (error) => {
+      toast({ title: "Failed to save notes", description: error.message, variant: "destructive" });
+    },
+  });
+
   const handleExportHtml = async () => {
     if (!selectedNewsletterId) return;
     try {
@@ -186,14 +201,16 @@ export default function ClientProfilePage({ clientId }: ClientProfilePageProps) 
   }
 
   return (
-    <div className="flex h-screen w-full bg-background">
-      <div className="w-64 flex-shrink-0 border-r flex flex-col">
-        <div className="flex items-center gap-2 px-3 h-12 border-b">
-          <Button variant="ghost" size="icon" onClick={() => setLocation("/")} data-testid="button-back">
-            <ChevronLeft className="w-5 h-5" />
-          </Button>
-          <span className="font-semibold truncate flex-1">{client.name}</span>
-        </div>
+    <div className="flex flex-col h-screen w-full bg-background">
+      <TopNav />
+      <div className="flex flex-1 overflow-hidden">
+        <div className="w-64 flex-shrink-0 border-r flex flex-col">
+          <div className="flex items-center gap-2 px-3 h-12 border-b">
+            <Button variant="ghost" size="icon" onClick={() => setLocation("/clients")} data-testid="button-back">
+              <ChevronLeft className="w-5 h-5" />
+            </Button>
+            <span className="font-semibold truncate flex-1">{client.name}</span>
+          </div>
 
         <div className="p-3 border-b text-sm space-y-1">
           <div className="flex items-center gap-2 text-muted-foreground">
@@ -328,9 +345,11 @@ export default function ClientProfilePage({ clientId }: ClientProfilePageProps) 
             versions={newsletterData.versions || []}
             currentVersionId={newsletterData.newsletter?.currentVersionId || null}
             status={newsletterData.newsletter?.status || "not_started"}
+            internalNotes={newsletterData.newsletter?.internalNotes}
             flags={newsletterData.flags || []}
             onRestoreVersion={(versionId) => restoreVersionMutation.mutate(versionId)}
             onStatusChange={(status) => updateStatusMutation.mutate(status)}
+            onInternalNotesChange={(notes) => updateNotesMutation.mutate(notes)}
           />
         </div>
       )}
@@ -343,7 +362,14 @@ export default function ClientProfilePage({ clientId }: ClientProfilePageProps) 
         }}
         isSubmitting={createNewsletterMutation.isPending}
         clientName={client.name}
+        clientFrequency={client.newsletterFrequency as "weekly" | "biweekly" | "monthly"}
+        lastSendDate={newsletters?.length 
+          ? [...newsletters].sort((a, b) => 
+              new Date(b.expectedSendDate || 0).getTime() - new Date(a.expectedSendDate || 0).getTime()
+            )[0]?.expectedSendDate 
+          : null}
       />
+      </div>
     </div>
   );
 }
