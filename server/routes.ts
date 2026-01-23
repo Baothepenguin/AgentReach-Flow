@@ -4,6 +4,7 @@ import { storage } from "./storage";
 import { compileNewsletterToHtml } from "./email-compiler";
 import { processHtmlCommand } from "./ai-service";
 import { createSenderSignature, getSenderSignature } from "./postmark-service";
+import { registerObjectStorageRoutes } from "./replit_integrations/object_storage";
 import { DEFAULT_NEWSLETTER_DOCUMENT, type NewsletterDocument, type LegacyNewsletterDocument, type NewsletterStatus, NEWSLETTER_STATUSES } from "@shared/schema";
 import { randomUUID } from "crypto";
 import session from "express-session";
@@ -67,6 +68,8 @@ export async function registerRoutes(
       },
     })
   );
+
+  registerObjectStorageRoutes(app);
 
   app.post("/api/auth/register", async (req: Request, res: Response) => {
     try {

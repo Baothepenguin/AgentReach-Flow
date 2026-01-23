@@ -54,7 +54,10 @@ function DraggableNewsletterCard({ newsletter }: { newsletter: NewsletterWithCli
           <div className="flex flex-col gap-1">
             <p className="font-medium text-sm line-clamp-1">{newsletter.client.name}</p>
             <p className="text-xs text-muted-foreground">
-              {format(new Date(newsletter.expectedSendDate), "MMM d")}
+              {newsletter.expectedSendDate 
+                ? format(new Date(newsletter.expectedSendDate), "MMM d")
+                : "No date set"
+              }
             </p>
           </div>
         </Card>
@@ -136,7 +139,10 @@ function BoardView({ newsletters, onStatusChange }: { newsletters: NewsletterWit
             <div className="flex flex-col gap-1">
               <p className="font-medium text-sm line-clamp-1">{activeNewsletter.client.name}</p>
               <p className="text-xs text-muted-foreground">
-                {format(new Date(activeNewsletter.expectedSendDate), "MMM d")}
+                {activeNewsletter.expectedSendDate 
+                  ? format(new Date(activeNewsletter.expectedSendDate), "MMM d")
+                  : "No date set"
+                }
               </p>
             </div>
           </Card>

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useParams } from "wouter";
 import { Button } from "@/components/ui/button";
@@ -16,9 +16,12 @@ import {
   Smartphone, 
   Plus,
   CheckSquare,
+  Paperclip,
+  X,
+  Image as ImageIcon,
+  FileText,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { queryClient } from "@/lib/queryClient";
 import { format } from "date-fns";
 import type { ReviewComment } from "@shared/schema";
 
@@ -32,6 +35,12 @@ interface ReviewData {
   expired: boolean;
 }
 
+interface UploadedFile {
+  name: string;
+  objectPath: string;
+  type: string;
+}
+
 export default function ReviewPage() {
   const { token } = useParams<{ token: string }>();
   const { toast } = useToast();
@@ -39,6 +48,9 @@ export default function ReviewPage() {
   const [comment, setComment] = useState("");
   const [approved, setApproved] = useState(false);
   const [deviceMode, setDeviceMode] = useState<"desktop" | "mobile">("desktop");
+  const [attachments, setAttachments] = useState<UploadedFile[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { data, isLoading, error } = useQuery<ReviewData>({
     queryKey: ["/api/review", token],
@@ -76,6 +88,7 @@ export default function ReviewPage() {
         body: JSON.stringify({ 
           content: comment,
           commentType: "general",
+          attachments: attachments.map(a => a.objectPath),
         }),
       });
       if (!res.ok) throw new Error("Failed to submit");
@@ -83,11 +96,68 @@ export default function ReviewPage() {
     },
     onSuccess: () => {
       setComment("");
+      setAttachments([]);
       setShowCommentBox(false);
       refetchComments();
       toast({ title: "Comment added" });
     },
   });
+
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    setUploading(true);
+    try {
+      for (const file of Array.from(files)) {
+        const urlRes = await fetch("/api/uploads/request-url", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: file.name,
+            size: file.size,
+            contentType: file.type || "application/octet-stream",
+          }),
+        });
+
+        if (!urlRes.ok) {
+          toast({ title: "Failed to prepare upload", variant: "destructive" });
+          continue;
+        }
+
+        const { uploadURL, objectPath } = await urlRes.json();
+
+        const uploadRes = await fetch(uploadURL, {
+          method: "PUT",
+          body: file,
+          headers: { "Content-Type": file.type || "application/octet-stream" },
+        });
+
+        if (!uploadRes.ok) {
+          toast({ title: "Failed to upload file", variant: "destructive" });
+          continue;
+        }
+
+        setAttachments(prev => [...prev, { name: file.name, objectPath, type: file.type }]);
+      }
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
+    }
+  };
+
+  const removeAttachment = (index: number) => {
+    setAttachments(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const getFileIcon = (type: string) => {
+    if (type.startsWith("image/")) {
+      return <ImageIcon className="w-3 h-3" />;
+    }
+    return <FileText className="w-3 h-3" />;
+  };
 
   const pendingComments = existingComments.filter(c => !c.isCompleted);
   const completedComments = existingComments.filter(c => c.isCompleted);
@@ -128,15 +198,12 @@ export default function ReviewPage() {
     );
   }
 
-  const iframeWidth = deviceMode === "mobile" ? "375px" : "100%";
-  const iframeHeight = deviceMode === "mobile" ? "667px" : "100%";
-
   return (
     <div className="h-screen bg-muted/30 flex overflow-hidden">
       <div className="flex-1 flex items-center justify-center p-4 relative">
         <div 
           className={`bg-white shadow-2xl overflow-hidden ${
-            deviceMode === "mobile" ? "rounded-[40px] border-8 border-gray-800" : "w-full h-full"
+            deviceMode === "mobile" ? "rounded-[40px] border-4 border-gray-700" : "w-full h-full"
           }`}
           style={{ 
             width: deviceMode === "mobile" ? "375px" : "100%",
@@ -211,28 +278,79 @@ export default function ReviewPage() {
                     className="min-h-[80px] text-sm"
                     data-testid="input-review-comment"
                   />
-                  <div className="flex items-center justify-end gap-2">
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => {
-                        setShowCommentBox(false);
-                        setComment("");
-                      }}
-                    >
-                      Cancel
-                    </Button>
-                    <Button
-                      size="sm"
-                      onClick={() => addCommentMutation.mutate()}
-                      disabled={!comment.trim() || addCommentMutation.isPending}
-                      data-testid="button-submit-comment"
-                    >
-                      {addCommentMutation.isPending && (
-                        <Loader2 className="w-3 h-3 mr-1 animate-spin" />
-                      )}
-                      Add Comment
-                    </Button>
+                  
+                  {attachments.length > 0 && (
+                    <div className="flex flex-wrap gap-1">
+                      {attachments.map((file, index) => (
+                        <div
+                          key={index}
+                          className="flex items-center gap-1 px-2 py-1 text-xs bg-background rounded border"
+                        >
+                          {getFileIcon(file.type)}
+                          <span className="max-w-[100px] truncate">{file.name}</span>
+                          <button
+                            type="button"
+                            onClick={() => removeAttachment(index)}
+                            className="text-muted-foreground hover:text-foreground"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1">
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        multiple
+                        accept="image/*,.pdf,.doc,.docx"
+                        onChange={handleFileSelect}
+                        className="hidden"
+                        data-testid="input-file-attachment"
+                      />
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 px-2"
+                        onClick={() => fileInputRef.current?.click()}
+                        disabled={uploading}
+                        data-testid="button-attach-file"
+                      >
+                        {uploading ? (
+                          <Loader2 className="w-3 h-3 animate-spin" />
+                        ) : (
+                          <Paperclip className="w-3 h-3" />
+                        )}
+                      </Button>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => {
+                          setShowCommentBox(false);
+                          setComment("");
+                          setAttachments([]);
+                        }}
+                      >
+                        Cancel
+                      </Button>
+                      <Button
+                        size="sm"
+                        onClick={() => addCommentMutation.mutate()}
+                        disabled={!comment.trim() || addCommentMutation.isPending || uploading}
+                        data-testid="button-submit-comment"
+                      >
+                        {addCommentMutation.isPending && (
+                          <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                        )}
+                        Add Comment
+                      </Button>
+                    </div>
                   </div>
                 </div>
               )}
@@ -250,6 +368,22 @@ export default function ReviewPage() {
                       data-testid={`comment-${c.id}`}
                     >
                       <p className="text-sm">{c.content}</p>
+                      {c.attachments && c.attachments.length > 0 && (
+                        <div className="flex flex-wrap gap-1 mt-2">
+                          {c.attachments.map((path, i) => (
+                            <a
+                              key={i}
+                              href={path}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="flex items-center gap-1 px-2 py-0.5 text-xs bg-background rounded border hover:bg-muted"
+                            >
+                              <Paperclip className="w-3 h-3" />
+                              Attachment {i + 1}
+                            </a>
+                          ))}
+                        </div>
+                      )}
                       <p className="text-xs text-muted-foreground mt-1">
                         {format(new Date(c.createdAt), "MMM d, h:mm a")}
                       </p>
