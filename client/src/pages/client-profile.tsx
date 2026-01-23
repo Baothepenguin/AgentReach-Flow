@@ -342,12 +342,9 @@ export default function ClientProfilePage({ clientId }: ClientProfilePageProps) 
       {selectedNewsletterId && newsletterData && (
         <div className="w-56 flex-shrink-0 border-l">
           <RightPanel
-            versions={newsletterData.versions || []}
-            currentVersionId={newsletterData.newsletter?.currentVersionId || null}
+            newsletterId={selectedNewsletterId}
             status={newsletterData.newsletter?.status || "not_started"}
             internalNotes={newsletterData.newsletter?.internalNotes}
-            flags={newsletterData.flags || []}
-            onRestoreVersion={(versionId) => restoreVersionMutation.mutate(versionId)}
             onStatusChange={(status) => updateStatusMutation.mutate(status)}
             onInternalNotesChange={(notes) => updateNotesMutation.mutate(notes)}
           />

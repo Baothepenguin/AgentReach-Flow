@@ -1,10 +1,13 @@
 import { useState } from "react";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { History, Clock, RotateCcw, MessageSquare, StickyNote, Save } from "lucide-react";
-import type { NewsletterVersion, TasksFlags } from "@shared/schema";
+import { Checkbox } from "@/components/ui/checkbox";
+import { MessageSquare, StickyNote, Save, CheckSquare, Paperclip } from "lucide-react";
+import { queryClient, apiRequest } from "@/lib/queryClient";
+import type { ReviewComment } from "@shared/schema";
 import { format } from "date-fns";
 
 const NEWSLETTER_STATUSES = [
@@ -18,31 +21,41 @@ const NEWSLETTER_STATUSES = [
 ];
 
 interface RightPanelProps {
-  versions: NewsletterVersion[];
-  currentVersionId: string | null;
+  newsletterId: string;
   status: string;
   internalNotes?: string | null;
-  flags?: TasksFlags[];
-  onRestoreVersion: (versionId: string) => void;
   onStatusChange?: (status: string) => void;
   onInternalNotesChange?: (notes: string) => void;
 }
 
 export function RightPanel({
-  versions,
-  currentVersionId,
+  newsletterId,
   status,
   internalNotes,
-  flags = [],
-  onRestoreVersion,
   onStatusChange,
   onInternalNotesChange,
 }: RightPanelProps) {
   const [localNotes, setLocalNotes] = useState(internalNotes || "");
   const [notesDirty, setNotesDirty] = useState(false);
   const currentStatus = NEWSLETTER_STATUSES.find(s => s.value === status) || NEWSLETTER_STATUSES[0];
-  
-  const clientComments = flags.filter(f => f.code === "CLIENT_CHANGES_REQUESTED");
+
+  const { data: reviewComments = [] } = useQuery<ReviewComment[]>({
+    queryKey: ["/api/newsletters", newsletterId, "review-comments"],
+    queryFn: async () => {
+      const response = await fetch(`/api/newsletters/${newsletterId}/review-comments`);
+      if (!response.ok) return [];
+      return response.json();
+    },
+    enabled: !!newsletterId,
+  });
+
+  const toggleCompleteMutation = useMutation({
+    mutationFn: (commentId: string) => 
+      apiRequest("POST", `/api/review-comments/${commentId}/toggle-complete`, {}),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/newsletters", newsletterId, "review-comments"] });
+    },
+  });
 
   const handleNotesChange = (value: string) => {
     setLocalNotes(value);
@@ -53,6 +66,19 @@ export function RightPanel({
     if (onInternalNotesChange) {
       onInternalNotesChange(localNotes);
       setNotesDirty(false);
+    }
+  };
+
+  const pendingComments = reviewComments.filter(c => !c.isCompleted);
+  const completedComments = reviewComments.filter(c => c.isCompleted);
+
+  const getCommentTypeLabel = (type: string) => {
+    switch (type) {
+      case "general": return "General";
+      case "content": return "Content";
+      case "design": return "Design";
+      case "links": return "Links";
+      default: return type;
     }
   };
 
@@ -115,78 +141,94 @@ export function RightPanel({
         </div>
       )}
 
-      {clientComments.length > 0 && (
-        <div className="p-3 border-b">
-          <div className="flex items-center gap-2 text-sm font-medium mb-2" data-testid="label-client-feedback">
-            <MessageSquare className="w-4 h-4" />
-            Client Feedback
-          </div>
-          <div className="space-y-2 max-h-48 overflow-y-auto">
-            {clientComments.map((comment) => (
-              <div 
-                key={comment.id} 
-                className="p-2 rounded-md bg-background text-sm"
-                data-testid={`comment-${comment.id}`}
-              >
-                <p className="text-foreground" data-testid={`comment-message-${comment.id}`}>{comment.message}</p>
-                <p className="text-xs text-muted-foreground mt-1" data-testid={`comment-timestamp-${comment.id}`}>
-                  {format(new Date(comment.createdAt), "MMM d, yyyy 'at' h:mm a")}
-                </p>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-      
       <div className="p-3 border-b">
-        <div className="flex items-center gap-2 text-sm font-medium" data-testid="label-version-history">
-          <History className="w-4 h-4" />
-          Version History
+        <div className="flex items-center gap-2 text-sm font-medium" data-testid="label-client-feedback">
+          <CheckSquare className="w-4 h-4" />
+          Client Feedback
+          {pendingComments.length > 0 && (
+            <span className="text-xs text-muted-foreground">({pendingComments.length} pending)</span>
+          )}
         </div>
       </div>
       
       <ScrollArea className="flex-1">
         <div className="p-2 space-y-1">
-          {versions.length === 0 ? (
-            <div className="text-center py-6 text-sm text-muted-foreground" data-testid="text-no-versions">
-              No versions yet
+          {reviewComments.length === 0 ? (
+            <div className="text-center py-6 text-sm text-muted-foreground" data-testid="text-no-feedback">
+              No client feedback yet
             </div>
           ) : (
-            versions.map((v) => (
-              <div
-                key={v.id}
-                className={`p-2 rounded-md text-sm ${
-                  v.id === currentVersionId ? "bg-primary/10" : "hover:bg-muted/50"
-                }`}
-                data-testid={`version-${v.id}`}
-              >
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                    <Clock className="w-3 h-3" />
-                    <span data-testid={`version-timestamp-${v.id}`}>
-                      {format(new Date(v.createdAt), "MMM d, h:mm a")}
-                    </span>
-                  </div>
-                  {v.id !== currentVersionId && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-6 px-2 text-xs"
-                      onClick={() => onRestoreVersion(v.id)}
-                      data-testid={`button-restore-${v.id}`}
+            <>
+              {pendingComments.length > 0 && (
+                <div className="space-y-1 mb-3">
+                  {pendingComments.map((comment) => (
+                    <div
+                      key={comment.id}
+                      className="p-2 rounded-md bg-background border border-amber-500/30"
+                      data-testid={`review-comment-${comment.id}`}
                     >
-                      <RotateCcw className="w-3 h-3 mr-1" />
-                      Restore
-                    </Button>
-                  )}
+                      <div className="flex items-start gap-2">
+                        <Checkbox
+                          checked={false}
+                          onCheckedChange={() => toggleCompleteMutation.mutate(comment.id)}
+                          className="mt-0.5"
+                          data-testid={`checkbox-comment-${comment.id}`}
+                        />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm">{comment.content}</p>
+                          <div className="flex items-center gap-2 mt-1 text-xs text-muted-foreground">
+                            <span>{getCommentTypeLabel(comment.commentType)}</span>
+                            <span>·</span>
+                            <span>{format(new Date(comment.createdAt), "MMM d, h:mm a")}</span>
+                            {comment.attachments && comment.attachments.length > 0 && (
+                              <>
+                                <span>·</span>
+                                <span className="flex items-center gap-0.5">
+                                  <Paperclip className="w-3 h-3" />
+                                  {comment.attachments.length}
+                                </span>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
                 </div>
-                {v.changeSummary && (
-                  <p className="text-xs text-muted-foreground mt-1 truncate" data-testid={`version-summary-${v.id}`}>
-                    {v.changeSummary}
-                  </p>
-                )}
-              </div>
-            ))
+              )}
+
+              {completedComments.length > 0 && (
+                <div className="space-y-1">
+                  <div className="text-xs font-medium text-muted-foreground px-2 py-1">
+                    Completed ({completedComments.length})
+                  </div>
+                  {completedComments.map((comment) => (
+                    <div
+                      key={comment.id}
+                      className="p-2 rounded-md bg-muted/30"
+                      data-testid={`review-comment-${comment.id}`}
+                    >
+                      <div className="flex items-start gap-2">
+                        <Checkbox
+                          checked={true}
+                          onCheckedChange={() => toggleCompleteMutation.mutate(comment.id)}
+                          className="mt-0.5"
+                          data-testid={`checkbox-comment-${comment.id}`}
+                        />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm line-through text-muted-foreground">{comment.content}</p>
+                          <div className="flex items-center gap-2 mt-1 text-xs text-muted-foreground">
+                            <span>{getCommentTypeLabel(comment.commentType)}</span>
+                            <span>·</span>
+                            <span>Completed {comment.completedAt && format(new Date(comment.completedAt), "MMM d")}</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
           )}
         </div>
       </ScrollArea>
