@@ -6,7 +6,9 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
-import { Plus, Search, Mail, MapPin, Users } from "lucide-react";
+import { Card } from "@/components/ui/card";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Plus, Search, Mail, MapPin, Users, LayoutGrid, List } from "lucide-react";
 import { CreateClientDialog } from "@/components/CreateClientDialog";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -42,6 +44,7 @@ function getFrequencyLabel(frequency: string) {
 
 export default function ClientsListPage() {
   const [filter, setFilter] = useState<"active" | "churned" | "all">("all");
+  const [viewMode, setViewMode] = useState<"list" | "gallery">("list");
   const [searchQuery, setSearchQuery] = useState("");
   const [showCreateClient, setShowCreateClient] = useState(false);
   const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
@@ -101,6 +104,26 @@ export default function ClientsListPage() {
           </div>
           
           <div className="flex items-center gap-3">
+            <div className="flex items-center gap-1 bg-muted rounded-md p-0.5">
+              <Button
+                variant={viewMode === "list" ? "secondary" : "ghost"}
+                size="sm"
+                className="h-7 px-2"
+                onClick={() => setViewMode("list")}
+                data-testid="button-view-list"
+              >
+                <List className="w-4 h-4" />
+              </Button>
+              <Button
+                variant={viewMode === "gallery" ? "secondary" : "ghost"}
+                size="sm"
+                className="h-7 px-2"
+                onClick={() => setViewMode("gallery")}
+                data-testid="button-view-gallery"
+              >
+                <LayoutGrid className="w-4 h-4" />
+              </Button>
+            </div>
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
               <Input
@@ -128,6 +151,41 @@ export default function ClientsListPage() {
             <p className="text-muted-foreground">
               {searchQuery ? "No clients match your search" : "No clients found"}
             </p>
+          </div>
+        ) : viewMode === "gallery" ? (
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+            {filteredClients.map((client) => (
+              <Card
+                key={client.id}
+                className="p-4 hover-elevate cursor-pointer"
+                onClick={() => setSelectedClientId(client.id)}
+                data-testid={`client-card-${client.id}`}
+              >
+                <div className="flex flex-col items-center text-center gap-3">
+                  <Avatar className="w-16 h-16">
+                    <AvatarFallback className="text-lg bg-primary/10 text-primary">
+                      {client.name.split(" ").map(n => n[0]).join("").slice(0, 2).toUpperCase()}
+                    </AvatarFallback>
+                  </Avatar>
+                  <div className="min-w-0 w-full">
+                    <p className="font-medium truncate">{client.name}</p>
+                    <p className="text-xs text-muted-foreground truncate">{client.primaryEmail}</p>
+                    {getLocation(client) && (
+                      <p className="text-xs text-muted-foreground mt-1 flex items-center justify-center gap-1">
+                        <MapPin className="w-3 h-3" />
+                        {getLocation(client)}
+                      </p>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {getStatusBadge(client.subscriptionStatus)}
+                    <Badge variant="outline" className="text-xs">
+                      {getFrequencyLabel(client.newsletterFrequency)}
+                    </Badge>
+                  </div>
+                </div>
+              </Card>
+            ))}
           </div>
         ) : (
           <div className="border rounded-md overflow-hidden">

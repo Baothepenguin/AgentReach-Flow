@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { useLocation } from "wouter";
 import { TopNav } from "@/components/TopNav";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -7,10 +8,13 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { LayoutGrid, List, Calendar, ChevronRight } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { LayoutGrid, List, Calendar, ChevronRight, Plus, Search, Loader2 } from "lucide-react";
 import { format } from "date-fns";
 import { Link } from "wouter";
 import { queryClient, apiRequest } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 import {
   DndContext,
   DragEndEvent,
@@ -22,7 +26,7 @@ import {
   useDroppable,
 } from "@dnd-kit/core";
 import { useDraggable } from "@dnd-kit/core";
-import type { Newsletter, Client } from "@shared/schema";
+import type { Newsletter, Client, Subscription, Invoice } from "@shared/schema";
 
 const NEWSLETTER_STATUSES = [
   { value: "not_started", label: "Not Started", color: "bg-muted text-muted-foreground" },
@@ -205,18 +209,96 @@ function TableView({ newsletters, onStatusChange }: { newsletters: NewsletterWit
 }
 
 export default function NewslettersPage() {
+  const [, setLocation] = useLocation();
+  const { toast } = useToast();
   const [view, setView] = useState<"board" | "table">("board");
   const [filter, setFilter] = useState<"ongoing" | "sent" | "all">("ongoing");
+  const [showCreateDialog, setShowCreateDialog] = useState(false);
+  const [clientSearch, setClientSearch] = useState("");
+  const [selectedClient, setSelectedClient] = useState<Client | null>(null);
+  const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
+  const [isCreating, setIsCreating] = useState(false);
 
   const { data: newsletters = [], isLoading } = useQuery<NewsletterWithClient[]>({
     queryKey: ["/api/newsletters"],
   });
 
+  const { data: clients = [] } = useQuery<Client[]>({
+    queryKey: ["/api/clients"],
+  });
+
+  const { data: invoices = [] } = useQuery<(Invoice & { client?: Client })[]>({
+    queryKey: ["/api/invoices"],
+  });
+
+  const filteredClients = clients.filter(c => 
+    c.name.toLowerCase().includes(clientSearch.toLowerCase()) ||
+    c.primaryEmail.toLowerCase().includes(clientSearch.toLowerCase())
+  ).slice(0, 8);
+
+  const getFrequencyLabel = (frequency?: string) => {
+    switch (frequency) {
+      case "weekly": return "Weekly";
+      case "biweekly": return "Bi-Weekly";
+      case "monthly": return "Monthly";
+      default: return frequency || "Monthly";
+    }
+  };
+
+  const handleCreateNewsletter = async () => {
+    if (!selectedClient) return;
+    setIsCreating(true);
+    try {
+      const frequency = selectedClient.newsletterFrequency || "monthly";
+      const title = `${selectedClient.name} - ${getFrequencyLabel(frequency)}`;
+      
+      const res = await apiRequest("POST", `/api/clients/${selectedClient.id}/newsletters`, {
+        title,
+        invoiceId: selectedInvoice?.id || null,
+        isUnpaid: !selectedInvoice,
+        expectedSendDate: new Date().toISOString().split("T")[0],
+        status: "not_started",
+      });
+      
+      if (!res.ok) throw new Error("Failed to create newsletter");
+      
+      const newsletter = await res.json();
+      queryClient.invalidateQueries({ queryKey: ["/api/newsletters"] });
+      toast({ title: "Newsletter created" });
+      setShowCreateDialog(false);
+      setSelectedClient(null);
+      setSelectedInvoice(null);
+      setClientSearch("");
+      setLocation(`/newsletters/${newsletter.id}`);
+    } catch (error) {
+      toast({ title: "Failed to create newsletter", variant: "destructive" });
+    } finally {
+      setIsCreating(false);
+    }
+  };
+
+  const clientInvoices = selectedClient 
+    ? invoices.filter(inv => inv.clientId === selectedClient.id && inv.status !== "paid")
+    : [];
+
   const updateStatusMutation = useMutation({
     mutationFn: async ({ id, status }: { id: string; status: string }) => {
       return apiRequest("PATCH", `/api/newsletters/${id}`, { status });
     },
-    onSuccess: () => {
+    onMutate: async ({ id, status }) => {
+      await queryClient.cancelQueries({ queryKey: ["/api/newsletters"] });
+      const previousNewsletters = queryClient.getQueryData<NewsletterWithClient[]>(["/api/newsletters"]);
+      queryClient.setQueryData<NewsletterWithClient[]>(["/api/newsletters"], (old) =>
+        old?.map((n) => (n.id === id ? { ...n, status: status as Newsletter["status"] } : n))
+      );
+      return { previousNewsletters };
+    },
+    onError: (err, variables, context) => {
+      if (context?.previousNewsletters) {
+        queryClient.setQueryData(["/api/newsletters"], context.previousNewsletters);
+      }
+    },
+    onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/newsletters"] });
     },
   });
@@ -265,6 +347,11 @@ export default function NewslettersPage() {
             >
               <List className="w-4 h-4" />
             </Button>
+            <div className="w-px h-5 bg-border mx-1" />
+            <Button onClick={() => setShowCreateDialog(true)} data-testid="button-new-newsletter">
+              <Plus className="w-4 h-4 mr-2" />
+              New Newsletter
+            </Button>
           </div>
         </div>
 
@@ -285,6 +372,137 @@ export default function NewslettersPage() {
           <TableView newsletters={filteredNewsletters} onStatusChange={handleStatusChange} />
         )}
       </div>
+
+      <Dialog open={showCreateDialog} onOpenChange={(open) => {
+        setShowCreateDialog(open);
+        if (!open) {
+          setSelectedClient(null);
+          setSelectedInvoice(null);
+          setClientSearch("");
+        }
+      }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>New Newsletter</DialogTitle>
+            <DialogDescription>
+              {selectedClient ? `Creating for ${selectedClient.name}` : "Select a client to create a newsletter"}
+            </DialogDescription>
+          </DialogHeader>
+
+          {!selectedClient ? (
+            <div className="space-y-3">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                <Input
+                  placeholder="Search clients..."
+                  value={clientSearch}
+                  onChange={(e) => setClientSearch(e.target.value)}
+                  className="pl-10"
+                  data-testid="input-search-client"
+                  autoFocus
+                />
+              </div>
+              <div className="max-h-64 overflow-y-auto space-y-1">
+                {filteredClients.length === 0 ? (
+                  <p className="text-sm text-muted-foreground text-center py-4">No clients found</p>
+                ) : (
+                  filteredClients.map((client) => (
+                    <button
+                      key={client.id}
+                      type="button"
+                      className="w-full text-left p-3 rounded-md hover-elevate flex items-center justify-between"
+                      onClick={() => setSelectedClient(client)}
+                      data-testid={`client-option-${client.id}`}
+                    >
+                      <div>
+                        <p className="font-medium">{client.name}</p>
+                        <p className="text-xs text-muted-foreground">{client.primaryEmail}</p>
+                      </div>
+                      <Badge variant="outline" className="text-xs">
+                        {getFrequencyLabel(client.newsletterFrequency)}
+                      </Badge>
+                    </button>
+                  ))
+                )}
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div className="p-3 rounded-md bg-muted/30 flex items-center justify-between">
+                <div>
+                  <p className="font-medium">{selectedClient.name}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {selectedClient.name} - {getFrequencyLabel(selectedClient.newsletterFrequency)}
+                  </p>
+                </div>
+                <Button 
+                  variant="ghost" 
+                  size="sm" 
+                  onClick={() => setSelectedClient(null)}
+                  data-testid="button-change-client"
+                >
+                  Change
+                </Button>
+              </div>
+
+              {clientInvoices.length > 0 && (
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Link to Order (optional)</label>
+                  <div className="space-y-1">
+                    <button
+                      type="button"
+                      className={`w-full text-left p-2 rounded-md border ${!selectedInvoice ? 'border-primary bg-primary/5' : 'hover-elevate'}`}
+                      onClick={() => setSelectedInvoice(null)}
+                      data-testid="invoice-option-none"
+                    >
+                      <p className="text-sm">No order (mark as unpaid)</p>
+                    </button>
+                    {clientInvoices.map((inv) => (
+                      <button
+                        key={inv.id}
+                        type="button"
+                        className={`w-full text-left p-2 rounded-md border ${selectedInvoice?.id === inv.id ? 'border-primary bg-primary/5' : 'hover-elevate'}`}
+                        onClick={() => setSelectedInvoice(inv)}
+                        data-testid={`invoice-option-${inv.id}`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <p className="text-sm font-medium">Order #{inv.id.slice(0, 8)}</p>
+                          <p className="text-sm">${Number(inv.amount).toFixed(2)}</p>
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          {format(new Date(inv.createdAt), "MMM d, yyyy")}
+                        </p>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {clientInvoices.length === 0 && (
+                <div className="p-3 rounded-md bg-amber-500/10 border border-amber-500/20">
+                  <p className="text-sm text-amber-600 dark:text-amber-400">
+                    No unpaid orders found. This newsletter will be marked as unpaid.
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setShowCreateDialog(false)}>
+              Cancel
+            </Button>
+            <Button 
+              onClick={handleCreateNewsletter} 
+              disabled={!selectedClient || isCreating}
+              data-testid="button-create-newsletter"
+            >
+              {isCreating && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+              Create Newsletter
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
