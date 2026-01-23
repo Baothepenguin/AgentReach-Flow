@@ -11,6 +11,7 @@ import {
   aiDrafts,
   tasksFlags,
   reviewTokens,
+  reviewComments,
   integrationSettings,
   type User,
   type InsertUser,
@@ -36,6 +37,8 @@ import {
   type InsertTasksFlags,
   type ReviewToken,
   type InsertReviewToken,
+  type ReviewComment,
+  type InsertReviewComment,
   type NewsletterDocument,
   type NewsletterStatus,
   NEWSLETTER_STATUSES,
@@ -110,6 +113,12 @@ export interface IStorage {
   getValidReviewToken(token: string): Promise<ReviewToken | undefined>;
   createReviewToken(data: InsertReviewToken): Promise<ReviewToken>;
   markTokenUsed(id: string): Promise<void>;
+
+  // Review Comments
+  getReviewCommentsByNewsletter(newsletterId: string): Promise<ReviewComment[]>;
+  createReviewComment(comment: InsertReviewComment): Promise<ReviewComment>;
+  updateReviewComment(id: string, data: Partial<InsertReviewComment>): Promise<ReviewComment | undefined>;
+  toggleReviewCommentComplete(id: string, userId: string): Promise<ReviewComment | undefined>;
 
   // Projects
   getProjectsByClient(clientId: string): Promise<Project[]>;
@@ -494,6 +503,46 @@ export class DatabaseStorage implements IStorage {
       .where(eq(htmlTemplates.id, id))
       .returning();
     return template;
+  }
+
+  // Review Comments
+  async getReviewCommentsByNewsletter(newsletterId: string): Promise<ReviewComment[]> {
+    return db
+      .select()
+      .from(reviewComments)
+      .where(eq(reviewComments.newsletterId, newsletterId))
+      .orderBy(desc(reviewComments.createdAt));
+  }
+
+  async createReviewComment(comment: InsertReviewComment): Promise<ReviewComment> {
+    const [created] = await db.insert(reviewComments).values(comment).returning();
+    return created;
+  }
+
+  async updateReviewComment(id: string, data: Partial<InsertReviewComment>): Promise<ReviewComment | undefined> {
+    const [updated] = await db
+      .update(reviewComments)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(reviewComments.id, id))
+      .returning();
+    return updated;
+  }
+
+  async toggleReviewCommentComplete(id: string, userId: string): Promise<ReviewComment | undefined> {
+    const [existing] = await db.select().from(reviewComments).where(eq(reviewComments.id, id));
+    if (!existing) return undefined;
+
+    const [updated] = await db
+      .update(reviewComments)
+      .set({
+        isCompleted: !existing.isCompleted,
+        completedAt: existing.isCompleted ? null : new Date(),
+        completedById: existing.isCompleted ? null : userId,
+        updatedAt: new Date(),
+      })
+      .where(eq(reviewComments.id, id))
+      .returning();
+    return updated;
   }
 }
 

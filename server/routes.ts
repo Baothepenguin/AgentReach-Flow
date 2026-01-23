@@ -801,27 +801,92 @@ export async function registerRoutes(
 
   app.post("/api/review/:token/request-changes", async (req: Request, res: Response) => {
     try {
-      const { comment } = req.body;
+      const { comment, sectionId, commentType } = req.body;
       const reviewToken = await storage.getValidReviewToken(req.params.token);
       if (!reviewToken) {
         return res.status(404).json({ error: "Invalid or expired token" });
       }
 
-      if (reviewToken.singleUse) {
-        await storage.markTokenUsed(reviewToken.id);
-      }
-      await storage.updateNewsletter(reviewToken.newsletterId, { status: "revisions" });
-
-      await storage.createFlag({
+      const reviewComment = await storage.createReviewComment({
         newsletterId: reviewToken.newsletterId,
-        severity: "warning",
-        code: "CLIENT_CHANGES_REQUESTED",
-        message: comment || "Client requested changes",
+        reviewTokenId: reviewToken.id,
+        sectionId: sectionId || null,
+        commentType: commentType || "general",
+        content: comment || "Change requested",
+        attachments: [],
       });
 
-      res.json({ success: true });
+      await storage.updateNewsletter(reviewToken.newsletterId, { status: "revisions" });
+
+      res.json({ success: true, comment: reviewComment });
     } catch (error) {
       res.status(500).json({ error: "Request failed" });
+    }
+  });
+
+  app.get("/api/review/:token/comments", async (req: Request, res: Response) => {
+    try {
+      const reviewToken = await storage.getValidReviewToken(req.params.token);
+      if (!reviewToken) {
+        return res.status(404).json({ error: "Invalid or expired token" });
+      }
+
+      const comments = await storage.getReviewCommentsByNewsletter(reviewToken.newsletterId);
+      res.json(comments);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch comments" });
+    }
+  });
+
+  app.post("/api/review/:token/comments", async (req: Request, res: Response) => {
+    try {
+      const { content, sectionId, commentType, attachments } = req.body;
+      const reviewToken = await storage.getValidReviewToken(req.params.token);
+      if (!reviewToken) {
+        return res.status(404).json({ error: "Invalid or expired token" });
+      }
+
+      const comment = await storage.createReviewComment({
+        newsletterId: reviewToken.newsletterId,
+        reviewTokenId: reviewToken.id,
+        sectionId: sectionId || null,
+        commentType: commentType || "general",
+        content,
+        attachments: attachments || [],
+      });
+
+      await storage.updateNewsletter(reviewToken.newsletterId, { status: "revisions" });
+      res.status(201).json(comment);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to create comment" });
+    }
+  });
+
+  app.get("/api/newsletters/:id/review-comments", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const comments = await storage.getReviewCommentsByNewsletter(req.params.id);
+      res.json(comments);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch comments" });
+    }
+  });
+
+  app.patch("/api/review-comments/:id", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const comment = await storage.updateReviewComment(req.params.id, req.body);
+      res.json(comment);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to update comment" });
+    }
+  });
+
+  app.post("/api/review-comments/:id/toggle-complete", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = (req as Request & { userId: string }).userId;
+      const comment = await storage.toggleReviewCommentComplete(req.params.id, userId);
+      res.json(comment);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to toggle comment completion" });
     }
   });
 

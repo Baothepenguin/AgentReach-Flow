@@ -39,6 +39,7 @@ export const clients = pgTable("clients", {
   subscriptionStatus: text("subscription_status", { enum: ["active", "paused", "past_due", "canceled"] }).notNull().default("active"),
   isVerified: boolean("is_verified").notNull().default(false),
   postmarkSignatureId: integer("postmark_signature_id"),
+  assignedToId: varchar("assigned_to_id").references(() => users.id),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -47,6 +48,10 @@ export const clientsRelations = relations(clients, ({ one, many }) => ({
   brandingKit: one(brandingKits, {
     fields: [clients.id],
     references: [brandingKits.clientId],
+  }),
+  assignedTo: one(users, {
+    fields: [clients.assignedToId],
+    references: [users.id],
   }),
   projects: many(projects),
   subscriptions: many(subscriptions),
@@ -305,6 +310,7 @@ export const newslettersRelations = relations(newsletters, ({ one, many }) => ({
     fields: [newsletters.assignedToId],
     references: [users.id],
   }),
+  reviewComments: many(reviewComments),
   createdBy: one(users, {
     fields: [newsletters.createdById],
     references: [users.id],
@@ -443,6 +449,47 @@ export const insertReviewTokenSchema = createInsertSchema(reviewTokens).omit({
 });
 export type InsertReviewToken = z.infer<typeof insertReviewTokenSchema>;
 export type ReviewToken = typeof reviewTokens.$inferSelect;
+
+// ============================================================================
+// REVIEW COMMENTS - Client feedback on newsletters (to-do style)
+// ============================================================================
+export const reviewComments = pgTable("review_comments", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  newsletterId: varchar("newsletter_id").notNull().references(() => newsletters.id, { onDelete: "cascade" }),
+  reviewTokenId: varchar("review_token_id").references(() => reviewTokens.id, { onDelete: "set null" }),
+  sectionId: text("section_id"),
+  commentType: text("comment_type", { enum: ["change", "addition", "removal", "general"] }).notNull().default("general"),
+  content: text("content").notNull(),
+  attachments: jsonb("attachments").$type<string[]>().default([]),
+  isCompleted: boolean("is_completed").notNull().default(false),
+  completedAt: timestamp("completed_at"),
+  completedById: varchar("completed_by_id").references(() => users.id),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const reviewCommentsRelations = relations(reviewComments, ({ one }) => ({
+  newsletter: one(newsletters, {
+    fields: [reviewComments.newsletterId],
+    references: [newsletters.id],
+  }),
+  reviewToken: one(reviewTokens, {
+    fields: [reviewComments.reviewTokenId],
+    references: [reviewTokens.id],
+  }),
+  completedBy: one(users, {
+    fields: [reviewComments.completedById],
+    references: [users.id],
+  }),
+}));
+
+export const insertReviewCommentSchema = createInsertSchema(reviewComments).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type InsertReviewComment = z.infer<typeof insertReviewCommentSchema>;
+export type ReviewComment = typeof reviewComments.$inferSelect;
 
 // ============================================================================
 // SESSIONS - Persistent session store
