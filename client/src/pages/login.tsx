@@ -10,6 +10,7 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Loader2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import logoPath from "@assets/Logo_Colored_Trans_1770505643619.png";
 
 const loginSchema = z.object({
   email: z.string().email("Valid email required"),
@@ -75,7 +76,7 @@ export default function LoginPage() {
     <div className="min-h-screen flex items-center justify-center bg-background p-4">
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
-          <h1 className="font-serif font-bold text-2xl tracking-tight">AgentReach</h1>
+          <img src={logoPath} alt="AgentReach" className="h-10 mx-auto" data-testid="logo-agentreach-login" />
           <p className="text-sm text-muted-foreground mt-1">Newsletter Production System</p>
         </div>
         <Card>

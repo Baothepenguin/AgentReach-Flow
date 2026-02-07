@@ -334,7 +334,7 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
                 <ExternalLink className="w-4 h-4 mr-1" />
                 Get Review Link
               </Button>
-              <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive" onClick={handleDelete} data-testid="button-delete">
+              <Button variant="ghost" size="icon" className="text-destructive" onClick={handleDelete} data-testid="button-delete">
                 <Trash2 className="w-4 h-4" />
               </Button>
             </div>

@@ -149,7 +149,7 @@ export function CreateClientDialog({ open, onClose, onSubmit, isSubmitting }: Cr
               <Button type="button" variant="outline" onClick={onClose} className="flex-1">
                 Cancel
               </Button>
-              <Button type="submit" disabled={isSubmitting} className="flex-1 glow-green-hover" data-testid="button-submit-client">
+              <Button type="submit" disabled={isSubmitting} className="flex-1" data-testid="button-submit-client">
                 {isSubmitting && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
                 Create Client
               </Button>

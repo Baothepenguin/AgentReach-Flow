@@ -3,6 +3,7 @@ import { cn } from "@/lib/utils";
 import { ThemeToggle } from "./ThemeToggle";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
+import logoPath from "@assets/Logo_Colored_Trans_1770505643619.png";
 
 const navItems = [
   { path: "/", label: "Dashboard" },
@@ -20,7 +21,7 @@ export function TopNav() {
       <div className="flex h-full items-center justify-between px-5">
         <div className="flex items-center gap-8">
           <Link href="/" className="flex items-center" data-testid="link-home">
-            <span className="font-serif font-bold text-lg tracking-tight text-foreground">AgentReach</span>
+            <img src={logoPath} alt="AgentReach" className="h-7" data-testid="logo-agentreach" />
           </Link>
           
           <nav className="flex items-center gap-1">
@@ -31,7 +32,7 @@ export function TopNav() {
                   <Button
                     variant={isActive ? "secondary" : "ghost"}
                     size="sm"
-                    className={cn(!isActive && "text-muted-foreground")}
+                    className={cn("font-sans", !isActive && "text-muted-foreground")}
                     data-testid={`nav-${item.label.toLowerCase()}`}
                   >
                     {item.label}

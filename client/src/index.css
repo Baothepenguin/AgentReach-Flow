@@ -18,15 +18,15 @@
   --sidebar: 40 10% 97%;
   --sidebar-foreground: 220 10% 12%;
   --sidebar-border: 220 5% 92%;
-  --sidebar-primary: 152 50% 32%;
-  --sidebar-primary-foreground: 152 50% 98%;
+  --sidebar-primary: 15 64% 55%;
+  --sidebar-primary-foreground: 0 0% 100%;
   --sidebar-accent: 220 5% 93%;
   --sidebar-accent-foreground: 220 10% 12%;
-  --sidebar-ring: 152 50% 32%;
+  --sidebar-ring: 15 64% 55%;
   --popover: 0 0% 100%;
   --popover-foreground: 220 10% 12%;
   --popover-border: 220 5% 92%;
-  --primary: 152 50% 32%;
+  --primary: 15 64% 60%;
   --primary-foreground: 0 0% 100%;
   --secondary: 220 5% 94%;
   --secondary-foreground: 220 10% 15%;
@@ -37,14 +37,14 @@
   --destructive: 0 72% 51%;
   --destructive-foreground: 0 0% 100%;
   --input: 220 5% 80%;
-  --ring: 152 50% 32%;
-  --chart-1: 152 50% 32%;
-  --chart-2: 152 40% 42%;
-  --chart-3: 152 30% 52%;
-  --chart-4: 152 20% 62%;
-  --chart-5: 152 10% 72%;
-  --font-sans: Inter, system-ui, sans-serif;
-  --font-serif: Georgia, serif;
+  --ring: 15 64% 60%;
+  --chart-1: 15 64% 60%;
+  --chart-2: 15 54% 50%;
+  --chart-3: 15 44% 45%;
+  --chart-4: 15 34% 55%;
+  --chart-5: 15 24% 65%;
+  --font-sans: Satoshi, system-ui, sans-serif;
+  --font-serif: ui-serif, Georgia, Cambria, "Times New Roman", Times, serif;
   --font-mono: JetBrains Mono, monospace;
   --radius: .5rem;
   --shadow-2xs: 0 1px 2px 0 rgb(0 0 0 / 0.03);
@@ -89,15 +89,15 @@
   --sidebar: 220 10% 10%;
   --sidebar-foreground: 220 5% 92%;
   --sidebar-border: 220 5% 14%;
-  --sidebar-primary: 152 45% 38%;
-  --sidebar-primary-foreground: 152 45% 98%;
+  --sidebar-primary: 15 50% 50%;
+  --sidebar-primary-foreground: 0 0% 100%;
   --sidebar-accent: 220 5% 16%;
   --sidebar-accent-foreground: 220 5% 92%;
-  --sidebar-ring: 152 45% 38%;
+  --sidebar-ring: 15 50% 50%;
   --popover: 220 10% 11%;
   --popover-foreground: 220 5% 92%;
   --popover-border: 220 5% 16%;
-  --primary: 152 45% 38%;
+  --primary: 15 55% 55%;
   --primary-foreground: 0 0% 100%;
   --secondary: 220 5% 16%;
   --secondary-foreground: 220 5% 92%;
@@ -108,12 +108,12 @@
   --destructive: 0 72% 51%;
   --destructive-foreground: 0 0% 100%;
   --input: 220 5% 30%;
-  --ring: 152 45% 38%;
-  --chart-1: 152 50% 55%;
-  --chart-2: 152 40% 50%;
-  --chart-3: 152 35% 45%;
-  --chart-4: 152 25% 40%;
-  --chart-5: 152 15% 35%;
+  --ring: 15 55% 55%;
+  --chart-1: 15 55% 60%;
+  --chart-2: 15 45% 55%;
+  --chart-3: 15 40% 50%;
+  --chart-4: 15 30% 45%;
+  --chart-5: 15 20% 40%;
   --shadow-2xs: 0 1px 2px 0 rgb(0 0 0 / 0.10);
   --shadow-xs: 0 1px 2px 0 rgb(0 0 0 / 0.12);
   --shadow-sm: 0 1px 3px 0 rgb(0 0 0 / 0.15), 0 1px 2px -1px rgb(0 0 0 / 0.10);
@@ -145,7 +145,7 @@
   }
 
   body {
-    @apply font-sans antialiased bg-background text-foreground;
+    @apply font-serif antialiased bg-background text-foreground;
   }
 }
 

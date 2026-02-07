@@ -2,14 +2,11 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Bold, Trash2, Undo2, Redo2, Code, Plus, Monitor, Smartphone } from "lucide-react";
+import { registerEditorPlugin, type EditorPluginProps } from "@/lib/editor-plugins";
 
-interface HTMLPreviewFrameProps {
-  html: string;
-  isLoading?: boolean;
+interface HTMLPreviewFrameProps extends EditorPluginProps {
   title?: string;
-  onHtmlChange?: (html: string) => void;
   onCreateCampaign?: () => void;
-  fullWidth?: boolean;
 }
 
 export function HTMLPreviewFrame({ 
@@ -67,8 +64,8 @@ export function HTMLPreviewFrame({
       
       const style = doc.createElement("style");
       style.textContent = `
-        *:focus { outline: 2px solid hsl(152 65% 28% / 0.5); outline-offset: 2px; }
-        *:hover { outline: 1px dashed hsl(152 65% 28% / 0.3); }
+        *:focus { outline: 2px solid hsl(15 64% 60% / 0.5); outline-offset: 2px; }
+        *:hover { outline: 1px dashed hsl(15 64% 60% / 0.3); }
       `;
       doc.head.appendChild(style);
 
@@ -154,7 +151,7 @@ export function HTMLPreviewFrame({
             className={`bg-white overflow-hidden transition-all duration-300 ${
               deviceMode === "mobile" && !fullWidth
                 ? "rounded-3xl border-4 border-gray-700 shadow-lg" 
-                : fullWidth ? "" : "rounded-lg shadow-lg glow-green-hover"
+                : fullWidth ? "" : "rounded-lg shadow-lg"
             }`}
             style={{ width: previewWidth, maxWidth: fullWidth ? undefined : previewWidth }}
           >
@@ -184,7 +181,7 @@ export function HTMLPreviewFrame({
               Create a new campaign and paste your newsletter HTML to get started
             </p>
             {onCreateCampaign && (
-              <Button onClick={onCreateCampaign} className="glow-green-hover" data-testid="button-import-html-empty">
+              <Button onClick={onCreateCampaign} data-testid="button-import-html-empty">
                 <Plus className="w-4 h-4 mr-2" />
                 New Campaign
               </Button>
@@ -249,3 +246,10 @@ export function HTMLPreviewFrame({
     </div>
   );
 }
+
+registerEditorPlugin({
+  id: "raw-html",
+  name: "HTML Editor",
+  description: "Paste and edit raw HTML with inline editing",
+  component: HTMLPreviewFrame,
+});

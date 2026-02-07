@@ -167,7 +167,7 @@ export function CreateNewsletterDialog({
                     "aspect-square rounded-md text-sm flex items-center justify-center transition-all relative",
                     isPast && "opacity-30 cursor-not-allowed",
                     !isPast && !isSelected && "hover-elevate cursor-pointer",
-                    isSelected && "bg-primary text-primary-foreground glow-green",
+                    isSelected && "bg-primary text-primary-foreground",
                     !isSelected && !isPast && isSuggested && "ring-2 ring-primary/50 ring-offset-1",
                     !isSelected && !isPast && !isCurrentMonth && "text-muted-foreground/50"
                   )}
@@ -209,7 +209,7 @@ export function CreateNewsletterDialog({
             type="button" 
             onClick={handleSubmit} 
             disabled={isSubmitting || !selectedDate} 
-            className="flex-1 glow-green-hover"
+            className="flex-1"
             data-testid="button-start-campaign"
           >
             {isSubmitting && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
