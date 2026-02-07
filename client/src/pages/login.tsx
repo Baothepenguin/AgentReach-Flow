@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Loader2, Mail, Sparkles } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 const loginSchema = z.object({
@@ -75,11 +75,8 @@ export default function LoginPage() {
     <div className="min-h-screen flex items-center justify-center bg-background p-4">
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-primary mb-4">
-            <Sparkles className="w-8 h-8 text-primary-foreground" />
-          </div>
-          <h1 className="text-2xl font-semibold">AgentReach FLOW</h1>
-          <p className="text-muted-foreground mt-1">Newsletter Command Center</p>
+          <h1 className="font-serif font-bold text-2xl tracking-tight">AgentReach</h1>
+          <p className="text-sm text-muted-foreground mt-1">Newsletter Production System</p>
         </div>
         <Card>
           <Tabs value={activeTab} onValueChange={setActiveTab}>

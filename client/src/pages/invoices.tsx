@@ -2,10 +2,7 @@ import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation, useSearch } from "wouter";
 import { TopNav } from "@/components/TopNav";
-import { Badge } from "@/components/ui/badge";
-import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Receipt, X, Mail, Plus, ExternalLink } from "lucide-react";
 import { format } from "date-fns";
 import { queryClient, apiRequest } from "@/lib/queryClient";
@@ -26,30 +23,74 @@ function getOrderStatus(order: OrderWithRelations): "new" | "in_progress" | "com
   return "in_progress";
 }
 
-function getOrderStatusBadge(order: OrderWithRelations) {
+function StatusDot({ color }: { color: string }) {
+  return <span className={`inline-block w-1.5 h-1.5 rounded-full ${color}`} />;
+}
+
+function getOrderStatusIndicator(order: OrderWithRelations) {
   const status = getOrderStatus(order);
   switch (status) {
     case "new":
-      return <Badge variant="outline" className="text-xs">New</Badge>;
+      return (
+        <span className="inline-flex items-center gap-1.5 text-xs text-blue-600 dark:text-blue-400">
+          <StatusDot color="bg-blue-500" />
+          New
+        </span>
+      );
     case "in_progress":
-      return <Badge className="bg-amber-500/10 text-amber-600 dark:text-amber-400 text-xs">In Progress</Badge>;
+      return (
+        <span className="inline-flex items-center gap-1.5 text-xs text-amber-600 dark:text-amber-400">
+          <StatusDot color="bg-amber-500" />
+          In Progress
+        </span>
+      );
     case "complete":
-      return <Badge className="bg-green-500/10 text-green-600 dark:text-green-400 text-xs">Complete</Badge>;
+      return (
+        <span className="inline-flex items-center gap-1.5 text-xs text-green-600 dark:text-green-400">
+          <StatusDot color="bg-green-500" />
+          Complete
+        </span>
+      );
   }
 }
 
-function getPaymentStatusBadge(status: string) {
+function getPaymentStatusIndicator(status: string) {
   switch (status) {
     case "paid":
-      return <Badge className="bg-green-500/10 text-green-600 dark:text-green-400 text-xs">Paid</Badge>;
+      return (
+        <span className="inline-flex items-center gap-1.5 text-xs text-green-600 dark:text-green-400">
+          <StatusDot color="bg-green-500" />
+          Paid
+        </span>
+      );
     case "pending":
-      return <Badge className="bg-yellow-500/10 text-yellow-600 dark:text-yellow-400 text-xs">Pending</Badge>;
+      return (
+        <span className="inline-flex items-center gap-1.5 text-xs text-yellow-600 dark:text-yellow-400">
+          <StatusDot color="bg-yellow-500" />
+          Pending
+        </span>
+      );
     case "failed":
-      return <Badge className="bg-red-500/10 text-red-600 dark:text-red-400 text-xs">Failed</Badge>;
+      return (
+        <span className="inline-flex items-center gap-1.5 text-xs text-red-600 dark:text-red-400">
+          <StatusDot color="bg-red-500" />
+          Failed
+        </span>
+      );
     case "refunded":
-      return <Badge className="bg-muted text-muted-foreground text-xs">Refunded</Badge>;
+      return (
+        <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+          <StatusDot color="bg-muted-foreground" />
+          Refunded
+        </span>
+      );
     default:
-      return <Badge variant="outline" className="text-xs">{status}</Badge>;
+      return (
+        <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+          <StatusDot color="bg-muted-foreground" />
+          {status}
+        </span>
+      );
   }
 }
 
@@ -65,10 +106,10 @@ function OrderPreview({
   const [, setLocation] = useLocation();
   
   return (
-    <div className="w-96 border-l bg-background h-full overflow-y-auto">
-      <div className="p-4 border-b flex items-center justify-between sticky top-0 bg-background">
+    <div className="w-96 border-l border-border/50 bg-background h-full overflow-y-auto">
+      <div className="p-4 border-b border-border/50 flex items-center justify-between gap-2 sticky top-0 bg-background z-50">
         <div className="flex items-center gap-2">
-          {getOrderStatusBadge(order)}
+          {getOrderStatusIndicator(order)}
           <h3 className="font-semibold">{order.client.name}</h3>
         </div>
         <Button variant="ghost" size="icon" onClick={onClose} data-testid="button-close-preview">
@@ -78,39 +119,38 @@ function OrderPreview({
       
       <div className="p-4 space-y-4">
         <div className="space-y-3">
-          <div className="flex items-center justify-between text-sm">
+          <div className="flex items-center justify-between gap-2 text-sm">
             <span className="text-muted-foreground">Order ID</span>
             <span className="font-mono text-xs">{order.id.slice(0, 8)}</span>
           </div>
-          <div className="flex items-center justify-between text-sm">
+          <div className="flex items-center justify-between gap-2 text-sm">
             <span className="text-muted-foreground">Date</span>
             <span>{format(new Date(order.createdAt), "MMM d, yyyy")}</span>
           </div>
-          <div className="flex items-center justify-between text-sm">
+          <div className="flex items-center justify-between gap-2 text-sm">
             <span className="text-muted-foreground">Amount</span>
             <span className="font-medium">{order.currency} ${Number(order.amount).toFixed(2)}</span>
           </div>
-          <div className="flex items-center justify-between text-sm">
+          <div className="flex items-center justify-between gap-2 text-sm">
             <span className="text-muted-foreground">Payment</span>
-            {getPaymentStatusBadge(order.status)}
+            {getPaymentStatusIndicator(order.status)}
           </div>
         </div>
         
-        <div className="pt-4 border-t">
-          <h4 className="text-sm font-medium mb-2">Client</h4>
-          <Card className="p-3">
+        <div className="pt-4 border-t border-border/30">
+          <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3">Client</h4>
+          <div className="py-2">
             <p className="font-medium">{order.client.name}</p>
             <p className="text-sm text-muted-foreground">{order.client.primaryEmail}</p>
-          </Card>
+          </div>
         </div>
         
-        <div className="pt-4 border-t">
-          <div className="flex items-center justify-between mb-2">
-            <h4 className="text-sm font-medium">Newsletters</h4>
+        <div className="pt-4 border-t border-border/30">
+          <div className="flex items-center justify-between gap-2 mb-3">
+            <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Newsletters</h4>
             <Button 
               variant="ghost" 
               size="sm" 
-              className="h-7 text-xs"
               onClick={() => onCreateNewsletter(order)}
               data-testid="button-create-newsletter-from-order"
             >
@@ -119,19 +159,19 @@ function OrderPreview({
             </Button>
           </div>
           {(!order.newsletters || order.newsletters.length === 0) ? (
-            <div className="text-center py-4 text-sm text-muted-foreground bg-muted/30 rounded-md">
+            <div className="text-center py-4 text-sm text-muted-foreground rounded-md">
               No newsletters assigned
             </div>
           ) : (
-            <div className="space-y-2">
+            <div className="space-y-1">
               {order.newsletters.map((newsletter) => (
-                <Card 
+                <div 
                   key={newsletter.id} 
-                  className="p-3 hover-elevate cursor-pointer"
+                  className="p-3 rounded-md hover-elevate cursor-pointer"
                   onClick={() => setLocation(`/newsletters/${newsletter.id}`)}
                   data-testid={`order-newsletter-${newsletter.id}`}
                 >
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between gap-2">
                     <div>
                       <p className="font-medium text-sm">{newsletter.title}</p>
                       {newsletter.expectedSendDate && (
@@ -140,9 +180,9 @@ function OrderPreview({
                         </p>
                       )}
                     </div>
-                    <ExternalLink className="w-3 h-3 text-muted-foreground" />
+                    <ExternalLink className="w-3 h-3 text-muted-foreground flex-shrink-0" />
                   </div>
-                </Card>
+                </div>
               ))}
             </div>
           )}
@@ -206,8 +246,8 @@ export default function OrdersPage() {
       
       <div className="flex h-[calc(100vh-56px)]">
         <div className="flex-1 p-6 overflow-auto">
-          <div className="flex items-center justify-between mb-6">
-            <h1 className="text-2xl font-semibold">Orders</h1>
+          <div className="flex items-center justify-between gap-2 mb-6">
+            <h1 className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Orders</h1>
           </div>
 
           {isLoading ? (
@@ -221,40 +261,38 @@ export default function OrdersPage() {
               <p className="text-sm text-muted-foreground mt-1">Orders will appear here when payments are received</p>
             </div>
           ) : (
-            <div className="border rounded-lg overflow-hidden">
+            <div>
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="bg-muted/50">
-                    <th className="text-left p-3 font-medium">ID</th>
-                    <th className="text-left p-3 font-medium">Client</th>
-                    <th className="text-left p-3 font-medium">Date</th>
-                    <th className="text-right p-3 font-medium">Amount</th>
-                    <th className="text-center p-3 font-medium">Newsletters</th>
-                    <th className="text-left p-3 font-medium">Status</th>
-                    <th className="text-left p-3 font-medium">Payment</th>
+                  <tr className="border-b">
+                    <th className="text-left p-3 text-xs font-medium text-muted-foreground uppercase tracking-wider">ID</th>
+                    <th className="text-left p-3 text-xs font-medium text-muted-foreground uppercase tracking-wider">Client</th>
+                    <th className="text-left p-3 text-xs font-medium text-muted-foreground uppercase tracking-wider">Date</th>
+                    <th className="text-right p-3 text-xs font-medium text-muted-foreground uppercase tracking-wider">Amount</th>
+                    <th className="text-center p-3 text-xs font-medium text-muted-foreground uppercase tracking-wider">Newsletters</th>
+                    <th className="text-left p-3 text-xs font-medium text-muted-foreground uppercase tracking-wider">Status</th>
+                    <th className="text-left p-3 text-xs font-medium text-muted-foreground uppercase tracking-wider">Payment</th>
                   </tr>
                 </thead>
                 <tbody>
                   {orders.map((order) => (
                     <tr 
                       key={order.id} 
-                      className={`border-t cursor-pointer transition-colors ${selectedOrder?.id === order.id ? "bg-muted" : "hover:bg-muted/30"}`}
+                      className={`border-b border-border/50 cursor-pointer transition-colors ${selectedOrder?.id === order.id ? "bg-muted/30" : "hover:bg-muted/20"}`}
                       onClick={() => setSelectedOrder(order)}
                       data-testid={`order-row-${order.id}`}
                     >
-                      <td className="p-3 font-mono text-xs">{order.id.slice(0, 8)}</td>
+                      <td className="p-3 font-mono text-xs text-muted-foreground">{order.id.slice(0, 8)}</td>
                       <td className="p-3 font-medium">{order.client.name}</td>
                       <td className="p-3 text-muted-foreground">
                         {format(new Date(order.createdAt), "MMM d, yyyy")}
                       </td>
                       <td className="p-3 text-right">{order.currency} ${Number(order.amount).toFixed(2)}</td>
-                      <td className="p-3 text-center">
-                        <Badge variant="outline" className="text-xs">
-                          {order.newsletters?.length || 0}
-                        </Badge>
+                      <td className="p-3 text-center text-muted-foreground">
+                        {order.newsletters?.length || 0}
                       </td>
-                      <td className="p-3">{getOrderStatusBadge(order)}</td>
-                      <td className="p-3">{getPaymentStatusBadge(order.status)}</td>
+                      <td className="p-3">{getOrderStatusIndicator(order)}</td>
+                      <td className="p-3">{getPaymentStatusIndicator(order.status)}</td>
                     </tr>
                   ))}
                 </tbody>

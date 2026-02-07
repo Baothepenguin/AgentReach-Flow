@@ -29,6 +29,16 @@ import {
 import { useDraggable } from "@dnd-kit/core";
 import type { Newsletter, Client, Subscription, Invoice } from "@shared/schema";
 
+const STATUS_DOT_COLORS: Record<string, string> = {
+  not_started: "bg-gray-300",
+  in_progress: "bg-blue-400",
+  revisions: "bg-orange-400",
+  internal_review: "bg-purple-400",
+  client_review: "bg-yellow-400",
+  approved: "bg-green-400",
+  sent: "bg-emerald-600",
+};
+
 const NEWSLETTER_STATUSES = [
   { value: "not_started", label: "Not Started", color: "bg-muted text-muted-foreground" },
   { value: "in_progress", label: "In Progress", color: "bg-blue-500/10 text-blue-600 dark:text-blue-400" },
@@ -55,8 +65,11 @@ function DraggableNewsletterCard({ newsletter }: { newsletter: NewsletterWithCli
   return (
     <div ref={setNodeRef} style={style} {...listeners} {...attributes}>
       <Link href={`/newsletters/${newsletter.id}`}>
-        <Card className="p-3 hover-elevate cursor-pointer" data-testid={`newsletter-card-${newsletter.id}`}>
-          <div className="flex flex-col gap-1">
+        <Card
+          className="p-3 hover-elevate cursor-pointer"
+          data-testid={`newsletter-card-${newsletter.id}`}
+        >
+          <div className="flex flex-col gap-1.5">
             <p className="font-medium text-sm line-clamp-1">{newsletter.client.name}</p>
             <p className="text-xs text-muted-foreground">
               {newsletter.expectedSendDate 
@@ -76,16 +89,18 @@ function StatusColumn({ status, newsletters }: { status: typeof NEWSLETTER_STATU
     id: status.value,
   });
 
+  const dotColor = STATUS_DOT_COLORS[status.value] || "bg-gray-300";
+
   return (
     <div 
       ref={setNodeRef} 
-      className={`flex-shrink-0 w-56 min-h-[200px] rounded-lg transition-colors ${isOver ? 'bg-primary/5' : ''}`}
+      className={`flex-shrink-0 w-60 min-h-[300px] rounded-lg transition-colors ${isOver ? 'bg-primary/5' : ''}`}
     >
-      <div className="flex items-center gap-2 mb-3 px-1">
-        <Badge variant="outline" className={status.color} data-testid={`board-column-${status.value}`}>
-          {status.label}
-        </Badge>
-        <span className="text-xs text-muted-foreground">{newsletters.length}</span>
+      <div className="flex items-center gap-2 mb-4 px-1" data-testid={`board-column-${status.value}`}>
+        <span className={`w-2 h-2 rounded-full ${dotColor} flex-shrink-0`} />
+        <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+          {status.label} ({newsletters.length})
+        </span>
       </div>
       <div className="space-y-2">
         {newsletters.map((newsletter) => (
@@ -130,7 +145,7 @@ function BoardView({ newsletters, onStatusChange }: { newsletters: NewsletterWit
 
   return (
     <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
-      <div className="flex gap-4 overflow-x-auto pb-4">
+      <div className="flex gap-6 overflow-x-auto pb-4 pt-2">
         {ongoingStatuses.map((status) => {
           const statusNewsletters = newsletters.filter(n => n.status === status.value);
           return (
@@ -140,8 +155,8 @@ function BoardView({ newsletters, onStatusChange }: { newsletters: NewsletterWit
       </div>
       <DragOverlay>
         {activeNewsletter ? (
-          <Card className="p-3 shadow-lg border-2 border-primary/50 w-56">
-            <div className="flex flex-col gap-1">
+          <Card className="p-3 shadow-lg border-primary/30 w-60">
+            <div className="flex flex-col gap-1.5">
               <p className="font-medium text-sm line-clamp-1">{activeNewsletter.client.name}</p>
               <p className="text-xs text-muted-foreground">
                 {activeNewsletter.expectedSendDate 
@@ -159,25 +174,25 @@ function BoardView({ newsletters, onStatusChange }: { newsletters: NewsletterWit
 
 function TableView({ newsletters, onStatusChange }: { newsletters: NewsletterWithClient[]; onStatusChange: (id: string, status: string) => void }) {
   return (
-    <div className="border rounded-lg overflow-hidden">
+    <div className="rounded-lg overflow-hidden">
       <table className="w-full text-sm">
         <thead>
-          <tr className="bg-muted/50">
-            <th className="text-left p-3 font-medium">Client</th>
-            <th className="text-left p-3 font-medium">Title</th>
-            <th className="text-left p-3 font-medium">Due Date</th>
-            <th className="text-left p-3 font-medium">Status</th>
+          <tr className="border-b">
+            <th className="text-left p-3 text-xs font-medium text-muted-foreground uppercase tracking-wider">Client</th>
+            <th className="text-left p-3 text-xs font-medium text-muted-foreground uppercase tracking-wider">Title</th>
+            <th className="text-left p-3 text-xs font-medium text-muted-foreground uppercase tracking-wider">Due Date</th>
+            <th className="text-left p-3 text-xs font-medium text-muted-foreground uppercase tracking-wider">Status</th>
           </tr>
         </thead>
         <tbody>
           {newsletters.map((newsletter) => (
-            <tr key={newsletter.id} className="border-t hover:bg-muted/30" data-testid={`newsletter-row-${newsletter.id}`}>
+            <tr key={newsletter.id} className="border-b border-border/50 hover:bg-muted/20" data-testid={`newsletter-row-${newsletter.id}`}>
               <td className="p-3">
-                <Link href={`/newsletters/${newsletter.id}`} className="hover:underline">
+                <Link href={`/newsletters/${newsletter.id}`} className="hover:underline font-medium">
                   {newsletter.client.name}
                 </Link>
               </td>
-              <td className="p-3">{newsletter.title}</td>
+              <td className="p-3 text-muted-foreground">{newsletter.title}</td>
               <td className="p-3 text-muted-foreground">
                 {format(new Date(newsletter.expectedSendDate), "MMM d, yyyy")}
               </td>
@@ -193,7 +208,7 @@ function TableView({ newsletters, onStatusChange }: { newsletters: NewsletterWit
                     {NEWSLETTER_STATUSES.map((s) => (
                       <SelectItem key={s.value} value={s.value}>
                         <span className="inline-flex items-center gap-1.5">
-                          <span className={`w-2 h-2 rounded-full ${s.color.split(' ')[0]}`} />
+                          <span className={`w-2 h-2 rounded-full ${STATUS_DOT_COLORS[s.value] || "bg-gray-300"}`} />
                           {s.label}
                         </span>
                       </SelectItem>
@@ -320,17 +335,11 @@ export default function NewslettersPage() {
     <div className="min-h-screen bg-background">
       <TopNav />
       
-      <div className="p-6">
-        <div className="flex items-center justify-between mb-6">
-          <div className="flex items-center gap-4">
+      <div className="px-8 py-6">
+        <div className="flex items-center justify-between mb-2">
+          <div>
             <h1 className="text-2xl font-semibold">Newsletters</h1>
-            <Tabs value={filter} onValueChange={(v) => setFilter(v as typeof filter)}>
-              <TabsList>
-                <TabsTrigger value="ongoing" data-testid="tab-ongoing">Ongoing</TabsTrigger>
-                <TabsTrigger value="sent" data-testid="tab-sent">Sent</TabsTrigger>
-                <TabsTrigger value="all" data-testid="tab-all">All</TabsTrigger>
-              </TabsList>
-            </Tabs>
+            <p className="text-sm font-medium text-muted-foreground uppercase tracking-wider mt-1">Mission Control</p>
           </div>
           
           <div className="flex items-center gap-2">
@@ -358,6 +367,16 @@ export default function NewslettersPage() {
           </div>
         </div>
 
+        <div className="flex items-center gap-4 mb-6">
+          <Tabs value={filter} onValueChange={(v) => setFilter(v as typeof filter)}>
+            <TabsList>
+              <TabsTrigger value="ongoing" data-testid="tab-ongoing">Ongoing</TabsTrigger>
+              <TabsTrigger value="sent" data-testid="tab-sent">Sent</TabsTrigger>
+              <TabsTrigger value="all" data-testid="tab-all">All</TabsTrigger>
+            </TabsList>
+          </Tabs>
+        </div>
+
         {isLoading ? (
           <div className="flex items-center justify-center h-64">
             <p className="text-muted-foreground">Loading newsletters...</p>
@@ -368,9 +387,9 @@ export default function NewslettersPage() {
             <p className="text-muted-foreground">No newsletters found</p>
           </div>
         ) : view === "board" ? (
-          <ScrollArea className="h-[calc(100vh-180px)]">
+          <div className="h-[calc(100vh-200px)] overflow-auto">
             <BoardView newsletters={filteredNewsletters} onStatusChange={handleStatusChange} />
-          </ScrollArea>
+          </div>
         ) : (
           <TableView newsletters={filteredNewsletters} onStatusChange={handleStatusChange} />
         )}

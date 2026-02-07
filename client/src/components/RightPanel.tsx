@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import { StickyNote, CheckSquare, Paperclip, Link2, ExternalLink, Plus, Trash2 } from "lucide-react";
+import { Paperclip, Link2, ExternalLink, Plus, Trash2 } from "lucide-react";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import type { ReviewComment } from "@shared/schema";
 import { format } from "date-fns";
@@ -105,7 +105,7 @@ export function RightPanel({
   };
 
   return (
-    <div className="flex flex-col h-full bg-muted/30">
+    <div className="flex flex-col h-full bg-background">
       <div className="p-4 border-b">
         <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2 block" data-testid="label-status">
           Status
@@ -208,11 +208,10 @@ export function RightPanel({
 
       <div className="p-3 border-b">
         <div className="flex items-center justify-between mb-2">
-          <div className="flex items-center gap-2 text-sm font-medium" data-testid="label-internal-notes">
-            <StickyNote className="w-4 h-4" />
+          <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground uppercase tracking-wider" data-testid="label-internal-notes">
             Internal Notes
             {pendingInternalNotes.length > 0 && (
-              <span className="text-xs text-muted-foreground">({pendingInternalNotes.length})</span>
+              <span className="text-xs text-muted-foreground normal-case tracking-normal">({pendingInternalNotes.length})</span>
             )}
           </div>
         </div>
@@ -307,11 +306,10 @@ export function RightPanel({
       </div>
 
       <div className="p-3 border-b">
-        <div className="flex items-center gap-2 text-sm font-medium" data-testid="label-client-feedback">
-          <CheckSquare className="w-4 h-4" />
+        <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground uppercase tracking-wider" data-testid="label-client-feedback">
           Client Feedback
           {pendingFeedback.length > 0 && (
-            <span className="text-xs text-muted-foreground">({pendingFeedback.length} pending)</span>
+            <span className="text-xs text-muted-foreground normal-case tracking-normal">({pendingFeedback.length} pending)</span>
           )}
         </div>
       </div>
@@ -370,7 +368,7 @@ export function RightPanel({
                   {completedFeedback.map((comment) => (
                     <div
                       key={comment.id}
-                      className="p-2 rounded-md bg-muted/30"
+                      className="p-2 rounded-md"
                       data-testid={`review-comment-${comment.id}`}
                     >
                       <div className="flex items-start gap-2">

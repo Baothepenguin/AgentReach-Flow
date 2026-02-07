@@ -232,7 +232,7 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
       <TopNav />
       <div className="flex flex-1 overflow-hidden">
         <div className="flex-1 flex flex-col min-w-0">
-          <header className="flex items-center justify-between px-4 h-12 border-b bg-background/95 backdrop-blur">
+          <header className="flex items-center justify-between px-4 h-12 border-b bg-background">
             <div className="flex items-center gap-3">
               <Button variant="ghost" size="icon" onClick={() => setLocation("/newsletters")} data-testid="button-back">
                 <ArrowLeft className="w-5 h-5" />

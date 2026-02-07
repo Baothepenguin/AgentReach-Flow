@@ -14,18 +14,43 @@ import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { Client } from "@shared/schema";
 
-function getStatusBadge(status: string) {
+function getStatusDot(status: string) {
   switch (status) {
     case "active":
-      return <Badge className="bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-xs">Active</Badge>;
+      return (
+        <span className="inline-flex items-center gap-1.5 text-xs" data-testid={`status-${status}`}>
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+          <span className="text-emerald-600 dark:text-emerald-400">Active</span>
+        </span>
+      );
     case "paused":
-      return <Badge className="bg-amber-500/10 text-amber-600 dark:text-amber-400 text-xs">Paused</Badge>;
+      return (
+        <span className="inline-flex items-center gap-1.5 text-xs" data-testid={`status-${status}`}>
+          <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+          <span className="text-amber-600 dark:text-amber-400">Paused</span>
+        </span>
+      );
     case "canceled":
-      return <Badge className="bg-red-500/10 text-red-600 dark:text-red-400 text-xs">Churned</Badge>;
+      return (
+        <span className="inline-flex items-center gap-1.5 text-xs" data-testid={`status-${status}`}>
+          <span className="w-1.5 h-1.5 rounded-full bg-red-500" />
+          <span className="text-red-600 dark:text-red-400">Churned</span>
+        </span>
+      );
     case "past_due":
-      return <Badge className="bg-orange-500/10 text-orange-600 dark:text-orange-400 text-xs">Past Due</Badge>;
+      return (
+        <span className="inline-flex items-center gap-1.5 text-xs" data-testid={`status-${status}`}>
+          <span className="w-1.5 h-1.5 rounded-full bg-orange-500" />
+          <span className="text-orange-600 dark:text-orange-400">Past Due</span>
+        </span>
+      );
     default:
-      return <Badge variant="outline" className="text-xs">{status}</Badge>;
+      return (
+        <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground" data-testid={`status-${status}`}>
+          <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground/50" />
+          <span>{status}</span>
+        </span>
+      );
   }
 }
 
@@ -40,6 +65,27 @@ function getFrequencyLabel(frequency: string) {
     default:
       return frequency;
   }
+}
+
+const initialsColors = [
+  "bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-400",
+  "bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400",
+  "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400",
+  "bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400",
+  "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400",
+  "bg-teal-100 text-teal-700 dark:bg-teal-900/30 dark:text-teal-400",
+];
+
+function getInitialsColor(name: string) {
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) {
+    hash = name.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  return initialsColors[Math.abs(hash) % initialsColors.length];
+}
+
+function getInitials(name: string) {
+  return name.split(" ").map(n => n[0]).join("").slice(0, 2).toUpperCase();
 }
 
 export default function ClientsListPage() {
@@ -91,7 +137,7 @@ export default function ClientsListPage() {
       <TopNav />
       
       <div className="p-6">
-        <div className="flex items-center justify-between gap-4 mb-6 flex-wrap">
+        <div className="flex items-center justify-between gap-4 mb-8 flex-wrap">
           <div className="flex items-center gap-4 flex-wrap">
             <h1 className="text-2xl font-semibold">Clients</h1>
             <Tabs value={filter} onValueChange={(v) => setFilter(v as typeof filter)}>
@@ -104,24 +150,22 @@ export default function ClientsListPage() {
           </div>
           
           <div className="flex items-center gap-3">
-            <div className="flex items-center gap-1 bg-muted rounded-md p-0.5">
+            <div className="flex items-center gap-1">
               <Button
                 variant={viewMode === "list" ? "secondary" : "ghost"}
                 size="sm"
-                className="h-7 px-2"
                 onClick={() => setViewMode("list")}
                 data-testid="button-view-list"
               >
-                <List className="w-4 h-4" />
+                List
               </Button>
               <Button
                 variant={viewMode === "gallery" ? "secondary" : "ghost"}
                 size="sm"
-                className="h-7 px-2"
                 onClick={() => setViewMode("gallery")}
                 data-testid="button-view-gallery"
               >
-                <LayoutGrid className="w-4 h-4" />
+                Gallery
               </Button>
             </div>
             <div className="relative">
@@ -153,53 +197,50 @@ export default function ClientsListPage() {
             </p>
           </div>
         ) : viewMode === "gallery" ? (
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6">
             {filteredClients.map((client) => (
-              <Card
+              <div
                 key={client.id}
-                className="p-4 hover-elevate cursor-pointer"
+                className="p-5 rounded-md hover-elevate cursor-pointer"
                 onClick={() => setSelectedClientId(client.id)}
                 data-testid={`client-card-${client.id}`}
               >
                 <div className="flex flex-col items-center text-center gap-3">
-                  <Avatar className="w-16 h-16">
-                    <AvatarFallback className="text-lg bg-primary/10 text-primary">
-                      {client.name.split(" ").map(n => n[0]).join("").slice(0, 2).toUpperCase()}
-                    </AvatarFallback>
-                  </Avatar>
+                  <div className={`w-12 h-12 rounded-md flex items-center justify-center text-sm font-medium ${getInitialsColor(client.name)}`}>
+                    {getInitials(client.name)}
+                  </div>
                   <div className="min-w-0 w-full">
                     <p className="font-medium truncate">{client.name}</p>
-                    <p className="text-xs text-muted-foreground truncate">{client.primaryEmail}</p>
+                    <p className="text-xs text-muted-foreground truncate mt-0.5">{client.primaryEmail}</p>
                     {getLocation(client) && (
-                      <p className="text-xs text-muted-foreground mt-1 flex items-center justify-center gap-1">
-                        <MapPin className="w-3 h-3" />
+                      <p className="text-xs text-muted-foreground mt-1 truncate">
                         {getLocation(client)}
                       </p>
                     )}
                   </div>
-                  <div className="flex items-center gap-2">
-                    {getStatusBadge(client.subscriptionStatus)}
-                    <Badge variant="outline" className="text-xs">
+                  <div className="flex items-center gap-3">
+                    {getStatusDot(client.subscriptionStatus)}
+                    <span className="text-xs text-muted-foreground">
                       {getFrequencyLabel(client.newsletterFrequency)}
-                    </Badge>
+                    </span>
                   </div>
                 </div>
-              </Card>
+              </div>
             ))}
           </div>
         ) : (
-          <div className="border rounded-md overflow-hidden">
-            <div className="grid grid-cols-[1fr_200px_120px_100px] gap-4 px-4 py-3 text-sm font-medium text-muted-foreground bg-muted/30 border-b">
-              <span>Client</span>
-              <span>Location</span>
-              <span>Frequency</span>
-              <span>Status</span>
+          <div>
+            <div className="grid grid-cols-[1fr_200px_120px_100px] gap-4 px-3 py-2 border-b">
+              <span className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Client</span>
+              <span className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Location</span>
+              <span className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Frequency</span>
+              <span className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Status</span>
             </div>
-            <div className="divide-y">
+            <div className="space-y-px">
               {filteredClients.map((client) => (
                 <div
                   key={client.id}
-                  className="grid grid-cols-[1fr_200px_120px_100px] gap-4 px-4 py-3 hover-elevate cursor-pointer items-center"
+                  className="grid grid-cols-[1fr_200px_120px_100px] gap-4 px-3 py-3 hover-elevate cursor-pointer items-center rounded-md"
                   onClick={() => setSelectedClientId(client.id)}
                   data-testid={`client-row-${client.id}`}
                   role="button"
@@ -208,26 +249,18 @@ export default function ClientsListPage() {
                 >
                   <div className="min-w-0">
                     <div className="font-medium truncate">{client.name}</div>
-                    <div className="flex items-center gap-1 text-sm text-muted-foreground">
-                      <Mail className="w-3 h-3 flex-shrink-0" />
-                      <span className="truncate">{client.primaryEmail}</span>
+                    <div className="text-sm text-muted-foreground truncate">
+                      {client.primaryEmail}
                     </div>
                   </div>
                   <div className="text-sm text-muted-foreground truncate">
-                    {getLocation(client) ? (
-                      <span className="flex items-center gap-1">
-                        <MapPin className="w-3 h-3 flex-shrink-0" />
-                        {getLocation(client)}
-                      </span>
-                    ) : (
-                      "—"
-                    )}
+                    {getLocation(client) || "—"}
                   </div>
                   <div className="text-sm text-muted-foreground">
                     {getFrequencyLabel(client.newsletterFrequency)}
                   </div>
                   <div>
-                    {getStatusBadge(client.subscriptionStatus)}
+                    {getStatusDot(client.subscriptionStatus)}
                   </div>
                 </div>
               ))}
