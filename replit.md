@@ -5,6 +5,7 @@ Client portal and CRM for managing real estate email newsletters.
 ## Overview
 
 AgentReach FLOW is a newsletter production system for real estate agents that enables:
+- AI-powered email generation via Gemini AI (MJML-based, rendered to HTML)
 - Simple HTML paste/preview workflow - import HTML from any email builder
 - Click-to-edit HTML preview with inline editing capability
 - Client review workflow with tokenized links
@@ -49,7 +50,9 @@ AgentReach FLOW is a newsletter production system for real estate agents that en
 ### Backend
 - `server/routes.ts` - All API endpoints
 - `server/storage.ts` - DatabaseStorage class for data access
-- `server/ai-service.ts` - Optional AI HTML editing
+- `server/ai-service.ts` - Optional AI HTML editing (OpenAI-based, legacy)
+- `server/gemini-email-service.ts` - Gemini AI email generation (MJML-based)
+- `server/mjml-service.ts` - MJML rendering and validation
 - `server/email-compiler.ts` - Returns raw HTML from document
 - `server/postmark-service.ts` - Postmark sender signature management
 
@@ -110,7 +113,10 @@ AgentReach FLOW is a newsletter production system for real estate agents that en
 - `POST /api/clients/:clientId/newsletters` - Create newsletter (with optional HTML import)
 - `GET /api/newsletters/:id` - Get newsletter with versions
 - `PATCH /api/newsletters/:id` - Update newsletter (status, html)
-- `POST /api/newsletters/:id/ai-command` - AI HTML editing (optional)
+- `POST /api/newsletters/:id/ai-command` - AI HTML editing (OpenAI, legacy)
+- `POST /api/newsletters/:id/ai-generate` - AI email generation from prompt (Gemini + MJML)
+- `POST /api/newsletters/:id/ai-edit` - AI email editing with existing MJML (Gemini)
+- `POST /api/newsletters/:id/suggest-subjects` - AI subject line suggestions
 - `POST /api/newsletters/:id/send-for-review` - Create review token
 - `POST /api/newsletters/:id/restore/:versionId` - Restore version
 - `GET /api/newsletters/:id/export` - Export HTML

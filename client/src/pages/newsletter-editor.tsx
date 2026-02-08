@@ -13,6 +13,7 @@ import { Calendar } from "@/components/ui/calendar";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   ArrowLeft,
+  ArrowUp,
   User,
   Download,
   Copy,
@@ -22,6 +23,8 @@ import {
   Pencil,
   Check,
   X,
+  Sparkles,
+  Loader2,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import type { Newsletter, NewsletterVersion, NewsletterDocument, Client, TasksFlags } from "@shared/schema";
@@ -39,6 +42,8 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved">("idle");
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [editedTitle, setEditedTitle] = useState("");
+  const [aiPrompt, setAiPrompt] = useState("");
+  const [isGenerating, setIsGenerating] = useState(false);
   const saveTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const { data: newsletterData, isLoading: loadingNewsletter, refetch: refetchNewsletter } = useQuery<{
@@ -157,6 +162,56 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
       toast({ title: "Failed to delete", description: error.message, variant: "destructive" });
     },
   });
+
+  const hasMjml = !!(newsletter?.designJson as any)?.mjml;
+  const hasContent = !!newsletterData?.html;
+
+  const aiGenerateMutation = useMutation({
+    mutationFn: async (prompt: string) => {
+      const res = await apiRequest("POST", `/api/newsletters/${newsletterId}/ai-generate`, { prompt });
+      return res.json();
+    },
+    onMutate: () => setIsGenerating(true),
+    onSuccess: async (data: { type: string; html: string; mjml?: string; subject?: string }) => {
+      queryClient.setQueryData(["/api/newsletters", newsletterId], (old: typeof newsletterData) =>
+        old ? { ...old, html: data.html } : old
+      );
+      setAiPrompt("");
+      await refetchNewsletter();
+    },
+    onSettled: () => setIsGenerating(false),
+    onError: (error) => {
+      toast({ title: "AI generation failed", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const aiEditMutation = useMutation({
+    mutationFn: async (command: string) => {
+      const res = await apiRequest("POST", `/api/newsletters/${newsletterId}/ai-edit`, { command });
+      return res.json();
+    },
+    onMutate: () => setIsGenerating(true),
+    onSuccess: async (data: { type: string; html: string; mjml?: string; subject?: string }) => {
+      queryClient.setQueryData(["/api/newsletters", newsletterId], (old: typeof newsletterData) =>
+        old ? { ...old, html: data.html } : old
+      );
+      setAiPrompt("");
+      await refetchNewsletter();
+    },
+    onSettled: () => setIsGenerating(false),
+    onError: (error) => {
+      toast({ title: "AI edit failed", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const handleAiSubmit = () => {
+    if (!aiPrompt.trim() || isGenerating) return;
+    if (hasMjml && hasContent) {
+      aiEditMutation.mutate(aiPrompt.trim());
+    } else {
+      aiGenerateMutation.mutate(aiPrompt.trim());
+    }
+  };
 
   const handleExportHtml = async () => {
     if (!newsletterData?.html) return;
@@ -340,7 +395,7 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
             </div>
           </header>
 
-          <div className="flex-1 min-h-0">
+          <div className="flex-1 min-h-0 relative">
             <HTMLPreviewFrame
               html={newsletterData?.html || ""}
               isLoading={loadingNewsletter}
@@ -348,6 +403,29 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
               onHtmlChange={debouncedSaveHtml}
               fullWidth
             />
+            <div className="absolute bottom-14 left-1/2 -translate-x-1/2 w-full max-w-xl z-10">
+              <div className="flex items-center gap-2 bg-background/95 backdrop-blur-sm rounded-full p-1.5 pl-4 shadow-lg border">
+                <Sparkles className="w-4 h-4 text-primary/60 flex-shrink-0" />
+                <input
+                  value={aiPrompt}
+                  onChange={(e) => setAiPrompt(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && handleAiSubmit()}
+                  placeholder={hasContent ? "Ask AI to edit..." : "Describe the newsletter you want to create..."}
+                  className="flex-1 bg-transparent border-0 outline-none text-sm placeholder:text-muted-foreground/60"
+                  disabled={isGenerating}
+                  data-testid="input-ai-prompt"
+                />
+                <Button
+                  size="icon"
+                  className="rounded-full"
+                  onClick={handleAiSubmit}
+                  disabled={!aiPrompt.trim() || isGenerating}
+                  data-testid="button-ai-submit"
+                >
+                  {isGenerating ? <Loader2 className="w-4 h-4 animate-spin" /> : <ArrowUp className="w-4 h-4" />}
+                </Button>
+              </div>
+            </div>
           </div>
         </div>
 

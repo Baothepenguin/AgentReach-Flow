@@ -3,6 +3,8 @@ import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { compileNewsletterToHtml } from "./email-compiler";
 import { processHtmlCommand } from "./ai-service";
+import { generateEmailFromPrompt, editEmailWithAI, suggestSubjectLines } from "./gemini-email-service";
+import { renderMjml, validateMjml } from "./mjml-service";
 import { createSenderSignature, getSenderSignature } from "./postmark-service";
 import { registerObjectStorageRoutes } from "./replit_integrations/object_storage";
 import { DEFAULT_NEWSLETTER_DOCUMENT, type NewsletterDocument, type LegacyNewsletterDocument, type NewsletterStatus, NEWSLETTER_STATUSES } from "@shared/schema";
@@ -740,6 +742,161 @@ export async function registerRoutes(
     } catch (error) {
       console.error("AI command error:", error);
       res.status(500).json({ error: "AI command failed" });
+    }
+  });
+
+  app.post("/api/newsletters/:id/ai-generate", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = (req as Request & { userId: string }).userId;
+      const { prompt } = req.body;
+
+      if (!prompt || typeof prompt !== "string") {
+        return res.status(400).json({ error: "Prompt is required" });
+      }
+
+      const newsletter = await storage.getNewsletter(req.params.id);
+      if (!newsletter) {
+        return res.status(404).json({ error: "Newsletter not found" });
+      }
+
+      const client = await storage.getClient(newsletter.clientId);
+      const brandingKit = client ? await storage.getBrandingKit(client.id) : null;
+
+      const result = await generateEmailFromPrompt(prompt, brandingKit || null);
+
+      const newDoc: NewsletterDocument = { html: result.html };
+      const latestNum = await storage.getLatestVersionNumber(newsletter.id);
+
+      const newVersion = await storage.createVersion({
+        newsletterId: newsletter.id,
+        versionNumber: latestNum + 1,
+        snapshotJson: newDoc,
+        createdById: userId,
+        changeSummary: `AI generated: ${prompt.slice(0, 50)}`,
+      });
+
+      await storage.updateNewsletter(newsletter.id, {
+        currentVersionId: newVersion.id,
+        documentJson: newDoc,
+        designJson: { mjml: result.mjml },
+        lastEditedById: userId,
+        lastEditedAt: new Date(),
+      });
+
+      return res.json({
+        type: "success",
+        html: result.html,
+        mjml: result.mjml,
+        subject: result.subject,
+      });
+    } catch (error) {
+      console.error("AI generate error:", error);
+      res.status(500).json({ error: error instanceof Error ? error.message : "AI generation failed" });
+    }
+  });
+
+  app.post("/api/newsletters/:id/ai-edit", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = (req as Request & { userId: string }).userId;
+      const { command } = req.body;
+
+      if (!command || typeof command !== "string") {
+        return res.status(400).json({ error: "Command is required" });
+      }
+
+      const newsletter = await storage.getNewsletter(req.params.id);
+      if (!newsletter) {
+        return res.status(404).json({ error: "Newsletter not found" });
+      }
+
+      const client = await storage.getClient(newsletter.clientId);
+      const brandingKit = client ? await storage.getBrandingKit(client.id) : null;
+
+      const currentMjml = (newsletter.designJson as any)?.mjml;
+      if (!currentMjml) {
+        return res.status(400).json({ error: "No MJML source found. Generate a newsletter first using AI." });
+      }
+
+      const result = await editEmailWithAI(command, currentMjml, brandingKit || null);
+
+      const newDoc: NewsletterDocument = { html: result.html };
+      const latestNum = await storage.getLatestVersionNumber(newsletter.id);
+
+      const newVersion = await storage.createVersion({
+        newsletterId: newsletter.id,
+        versionNumber: latestNum + 1,
+        snapshotJson: newDoc,
+        createdById: userId,
+        changeSummary: `AI edit: ${command.slice(0, 50)}`,
+      });
+
+      await storage.updateNewsletter(newsletter.id, {
+        currentVersionId: newVersion.id,
+        documentJson: newDoc,
+        designJson: { mjml: result.mjml },
+        lastEditedById: userId,
+        lastEditedAt: new Date(),
+      });
+
+      return res.json({
+        type: "success",
+        html: result.html,
+        mjml: result.mjml,
+      });
+    } catch (error) {
+      console.error("AI edit error:", error);
+      res.status(500).json({ error: error instanceof Error ? error.message : "AI editing failed" });
+    }
+  });
+
+  app.post("/api/newsletters/:id/suggest-subjects", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const newsletter = await storage.getNewsletter(req.params.id);
+      if (!newsletter) {
+        return res.status(404).json({ error: "Newsletter not found" });
+      }
+
+      const versions = await storage.getVersionsByNewsletter(newsletter.id);
+      const currentVersion = versions.find((v) => v.id === newsletter.currentVersionId);
+      const document = (currentVersion?.snapshotJson || newsletter.documentJson || DEFAULT_NEWSLETTER_DOCUMENT) as NewsletterDocument;
+
+      if (!document.html) {
+        return res.status(400).json({ error: "No content to analyze" });
+      }
+
+      const subjects = await suggestSubjectLines(document.html);
+      return res.json({ subjects });
+    } catch (error) {
+      console.error("Subject suggest error:", error);
+      res.status(500).json({ error: "Failed to suggest subject lines" });
+    }
+  });
+
+  app.post("/api/mjml/render", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const { mjml } = req.body;
+      if (!mjml || typeof mjml !== "string") {
+        return res.status(400).json({ error: "MJML markup is required" });
+      }
+      const result = renderMjml(mjml);
+      return res.json(result);
+    } catch (error) {
+      console.error("MJML render error:", error);
+      res.status(500).json({ error: "MJML rendering failed" });
+    }
+  });
+
+  app.post("/api/mjml/validate", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const { mjml } = req.body;
+      if (!mjml || typeof mjml !== "string") {
+        return res.status(400).json({ error: "MJML markup is required" });
+      }
+      const result = validateMjml(mjml);
+      return res.json(result);
+    } catch (error) {
+      console.error("MJML validate error:", error);
+      res.status(500).json({ error: "MJML validation failed" });
     }
   });
 
