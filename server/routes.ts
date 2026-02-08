@@ -227,6 +227,52 @@ export async function registerRoutes(
   });
 
   // ============================================================================
+  // CLIENT NOTES
+  // ============================================================================
+  app.get("/api/clients/:clientId/notes", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const notes = await storage.getClientNotes(req.params.clientId);
+      res.json(notes);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/clients/:clientId/notes", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const note = await storage.createClientNote({
+        clientId: req.params.clientId,
+        type: req.body.type || "note",
+        content: req.body.content,
+        priority: req.body.priority || "medium",
+        sourceEmailId: req.body.sourceEmailId || null,
+        createdById: (req.session as any).userId,
+      });
+      res.json(note);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.patch("/api/notes/:id", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const note = await storage.updateClientNote(req.params.id, req.body);
+      res.json(note);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.delete("/api/notes/:id", requireAuth, async (req: Request, res: Response) => {
+    try {
+      await storage.deleteClientNote(req.params.id);
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // ============================================================================
   // BRANDING KITS
   // ============================================================================
   app.get("/api/clients/:clientId/branding-kit", requireAuth, async (req: Request, res: Response) => {
@@ -1171,6 +1217,39 @@ export async function registerRoutes(
       res.status(204).send();
     } catch (error) {
       res.status(500).json({ error: "Failed to delete task" });
+    }
+  });
+
+  app.get("/api/gmail/status", requireAuth, async (req, res) => {
+    try {
+      const { isGmailConnected } = await import("./gmail-service");
+      const connected = await isGmailConnected();
+      res.json({ connected });
+    } catch {
+      res.json({ connected: false });
+    }
+  });
+
+  app.get("/api/clients/:clientId/emails", requireAuth, async (req, res) => {
+    try {
+      const client = await storage.getClient(req.params.clientId);
+      if (!client) return res.status(404).json({ error: "Client not found" });
+
+      const { searchEmailsByContact } = await import("./gmail-service");
+      const emails = await searchEmailsByContact(client.primaryEmail, 30);
+      res.json(emails);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to fetch emails" });
+    }
+  });
+
+  app.get("/api/gmail/threads/:threadId", requireAuth, async (req, res) => {
+    try {
+      const { getEmailThread } = await import("./gmail-service");
+      const thread = await getEmailThread(req.params.threadId);
+      res.json(thread);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to fetch thread" });
     }
   });
 

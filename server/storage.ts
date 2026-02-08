@@ -14,6 +14,7 @@ import {
   reviewComments,
   integrationSettings,
   productionTasks,
+  clientNotes,
   type User,
   type InsertUser,
   type Client,
@@ -42,6 +43,8 @@ import {
   type InsertReviewComment,
   type ProductionTask,
   type InsertProductionTask,
+  type ClientNote,
+  type InsertClientNote,
   type NewsletterDocument,
   type NewsletterStatus,
   NEWSLETTER_STATUSES,
@@ -143,6 +146,12 @@ export interface IStorage {
   createProductionTask(task: InsertProductionTask): Promise<ProductionTask>;
   updateProductionTask(id: string, data: Partial<InsertProductionTask>): Promise<ProductionTask | undefined>;
   deleteProductionTask(id: string): Promise<void>;
+
+  // Client Notes
+  getClientNotes(clientId: string): Promise<ClientNote[]>;
+  createClientNote(data: InsertClientNote): Promise<ClientNote>;
+  updateClientNote(id: string, data: Partial<ClientNote>): Promise<ClientNote>;
+  deleteClientNote(id: string): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -590,6 +599,25 @@ export class DatabaseStorage implements IStorage {
 
   async deleteProductionTask(id: string): Promise<void> {
     await db.delete(productionTasks).where(eq(productionTasks.id, id));
+  }
+
+  // Client Notes
+  async getClientNotes(clientId: string): Promise<ClientNote[]> {
+    return db.select().from(clientNotes).where(eq(clientNotes.clientId, clientId)).orderBy(desc(clientNotes.createdAt));
+  }
+
+  async createClientNote(data: InsertClientNote): Promise<ClientNote> {
+    const [note] = await db.insert(clientNotes).values(data).returning();
+    return note;
+  }
+
+  async updateClientNote(id: string, data: Partial<ClientNote>): Promise<ClientNote> {
+    const [note] = await db.update(clientNotes).set({ ...data, updatedAt: new Date() }).where(eq(clientNotes.id, id)).returning();
+    return note;
+  }
+
+  async deleteClientNote(id: string): Promise<void> {
+    await db.delete(clientNotes).where(eq(clientNotes.id, id));
   }
 }
 

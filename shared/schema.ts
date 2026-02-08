@@ -57,6 +57,7 @@ export const clientsRelations = relations(clients, ({ one, many }) => ({
   subscriptions: many(subscriptions),
   invoices: many(invoices),
   newsletters: many(newsletters),
+  notes: many(clientNotes),
 }));
 
 export const insertClientSchema = createInsertSchema(clients).omit({
@@ -542,6 +543,41 @@ export const insertReviewCommentSchema = createInsertSchema(reviewComments).omit
 });
 export type InsertReviewComment = z.infer<typeof insertReviewCommentSchema>;
 export type ReviewComment = typeof reviewComments.$inferSelect;
+
+// ============================================================================
+// CLIENT NOTES - Notes, tasks, and checklists per client
+// ============================================================================
+export const clientNotes = pgTable("client_notes", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  clientId: varchar("client_id").notNull().references(() => clients.id, { onDelete: "cascade" }),
+  type: text("type", { enum: ["note", "task", "checklist"] }).notNull().default("note"),
+  content: text("content").notNull(),
+  isCompleted: boolean("is_completed").notNull().default(false),
+  priority: text("priority", { enum: ["low", "medium", "high"] }).default("medium"),
+  sourceEmailId: text("source_email_id"),
+  createdById: varchar("created_by_id").references(() => users.id),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const clientNotesRelations = relations(clientNotes, ({ one }) => ({
+  client: one(clients, {
+    fields: [clientNotes.clientId],
+    references: [clients.id],
+  }),
+  createdBy: one(users, {
+    fields: [clientNotes.createdById],
+    references: [users.id],
+  }),
+}));
+
+export const insertClientNoteSchema = createInsertSchema(clientNotes).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type InsertClientNote = z.infer<typeof insertClientNoteSchema>;
+export type ClientNote = typeof clientNotes.$inferSelect;
 
 // ============================================================================
 // SESSIONS - Persistent session store

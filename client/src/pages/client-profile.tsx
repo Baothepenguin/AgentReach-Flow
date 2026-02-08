@@ -16,6 +16,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Plus,
   ChevronLeft,
@@ -35,10 +36,191 @@ import {
   CreditCard,
   Palette,
   Users,
+  ArrowDownLeft,
+  ArrowUpRight,
+  Trash2,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import type { Client, Newsletter, NewsletterVersion, NewsletterDocument, BrandingKit, Project, TasksFlags, Subscription, Invoice } from "@shared/schema";
+import type { Client, Newsletter, NewsletterVersion, NewsletterDocument, BrandingKit, Project, TasksFlags, Subscription, Invoice, ClientNote } from "@shared/schema";
 import { format } from "date-fns";
+
+interface EmailItem {
+  id: string;
+  subject: string;
+  snippet: string;
+  date: string;
+  isInbound: boolean;
+  threadId: string;
+}
+
+function ClientEmailsList({ clientId }: { clientId: string }) {
+  const { data: gmailStatus } = useQuery<{ connected: boolean }>({
+    queryKey: ["/api/gmail/status"],
+  });
+
+  const { data: emails = [], isLoading } = useQuery<EmailItem[]>({
+    queryKey: ["/api/clients", clientId, "emails"],
+    enabled: !!gmailStatus?.connected,
+  });
+
+  if (!gmailStatus?.connected) {
+    return (
+      <div className="text-center py-8">
+        <Mail className="w-8 h-8 mx-auto text-muted-foreground/40 mb-2" />
+        <p className="text-sm text-muted-foreground" data-testid="text-gmail-not-connected">Gmail not connected</p>
+      </div>
+    );
+  }
+
+  if (isLoading) {
+    return (
+      <div className="space-y-2 p-1">
+        <Skeleton className="h-12 w-full" />
+        <Skeleton className="h-12 w-full" />
+        <Skeleton className="h-12 w-full" />
+      </div>
+    );
+  }
+
+  if (emails.length === 0) {
+    return (
+      <div className="text-center py-8">
+        <Mail className="w-8 h-8 mx-auto text-muted-foreground/40 mb-2" />
+        <p className="text-sm text-muted-foreground" data-testid="text-no-emails">No emails found</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-0.5">
+      {emails.map((email) => (
+        <div key={email.id} className="p-2 rounded-md hover-elevate cursor-pointer" data-testid={`email-${email.id}`}>
+          <div className="flex items-center gap-2 mb-0.5">
+            {email.isInbound ? (
+              <ArrowDownLeft className="w-3 h-3 text-blue-500 flex-shrink-0" />
+            ) : (
+              <ArrowUpRight className="w-3 h-3 text-green-500 flex-shrink-0" />
+            )}
+            <span className="text-sm font-medium truncate font-sans">{email.subject || "(No subject)"}</span>
+          </div>
+          <p className="text-xs text-muted-foreground line-clamp-2 pl-5">{email.snippet}</p>
+          <p className="text-xs text-muted-foreground/60 pl-5 mt-0.5">
+            {email.date ? format(new Date(email.date), "MMM d, yyyy") : ""}
+          </p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ClientNotesPanel({ clientId }: { clientId: string }) {
+  const [newNoteContent, setNewNoteContent] = useState("");
+  const [noteType, setNoteType] = useState<"note" | "task">("note");
+
+  const { data: notes = [], isLoading } = useQuery<ClientNote[]>({
+    queryKey: ["/api/clients", clientId, "notes"],
+  });
+
+  const createNoteMutation = useMutation({
+    mutationFn: async (data: { content: string; type: string }) => {
+      return apiRequest("POST", `/api/clients/${clientId}/notes`, data);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/clients", clientId, "notes"] });
+    },
+  });
+
+  const updateNoteMutation = useMutation({
+    mutationFn: async (data: { id: string; isCompleted: boolean }) => {
+      return apiRequest("PATCH", `/api/notes/${data.id}`, { isCompleted: data.isCompleted });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/clients", clientId, "notes"] });
+    },
+  });
+
+  const deleteNoteMutation = useMutation({
+    mutationFn: async (id: string) => {
+      return apiRequest("DELETE", `/api/notes/${id}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/clients", clientId, "notes"] });
+    },
+  });
+
+  return (
+    <div>
+      <div className="flex items-center gap-1 mb-3 px-1">
+        <Input
+          placeholder="Add a note or task..."
+          value={newNoteContent}
+          onChange={(e) => setNewNoteContent(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && newNoteContent.trim()) {
+              createNoteMutation.mutate({ content: newNoteContent.trim(), type: noteType });
+              setNewNoteContent("");
+            }
+          }}
+          className="h-8 text-sm flex-1 font-sans"
+          data-testid="input-new-note"
+        />
+        <Select value={noteType} onValueChange={(v) => setNoteType(v as "note" | "task")}>
+          <SelectTrigger className="h-8 w-20 text-xs font-sans" data-testid="select-note-type">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="note">Note</SelectItem>
+            <SelectItem value="task">Task</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+
+      {isLoading ? (
+        <div className="space-y-2 p-1">
+          <Skeleton className="h-10 w-full" />
+          <Skeleton className="h-10 w-full" />
+        </div>
+      ) : notes.length === 0 ? (
+        <div className="text-center py-8">
+          <FileText className="w-8 h-8 mx-auto text-muted-foreground/40 mb-2" />
+          <p className="text-sm text-muted-foreground" data-testid="text-no-notes">No notes yet</p>
+        </div>
+      ) : (
+        <div className="space-y-0.5">
+          {notes.map((note) => (
+            <div key={note.id} className="flex items-start gap-2 p-2 rounded-md group" data-testid={`note-${note.id}`}>
+              {note.type === "task" && (
+                <Checkbox
+                  checked={note.isCompleted}
+                  onCheckedChange={(checked) => updateNoteMutation.mutate({ id: note.id, isCompleted: !!checked })}
+                  className="mt-0.5"
+                  data-testid={`checkbox-note-${note.id}`}
+                />
+              )}
+              <div className="flex-1 min-w-0">
+                <p className={`text-sm ${note.type === "task" && note.isCompleted ? "line-through text-muted-foreground" : ""}`}>
+                  {note.content}
+                </p>
+                <p className="text-xs text-muted-foreground/60 mt-0.5">
+                  {format(new Date(note.createdAt), "MMM d")}
+                </p>
+              </div>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="invisible group-hover:visible"
+                onClick={() => deleteNoteMutation.mutate(note.id)}
+                data-testid={`delete-note-${note.id}`}
+              >
+                <Trash2 className="w-3 h-3" />
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 interface ClientProfilePageProps {
   clientId: string;
@@ -49,7 +231,7 @@ export default function ClientProfilePage({ clientId }: ClientProfilePageProps) 
   const [, setLocation] = useLocation();
   const [selectedNewsletterId, setSelectedNewsletterId] = useState<string | null>(null);
   const [showCreateNewsletter, setShowCreateNewsletter] = useState(false);
-  const [sidebarTab, setSidebarTab] = useState<"campaigns" | "orders" | "info">("campaigns");
+  const [sidebarTab, setSidebarTab] = useState<"campaigns" | "orders" | "emails" | "notes" | "info">("campaigns");
   const [isEditingInfo, setIsEditingInfo] = useState(false);
   const [editedClient, setEditedClient] = useState<Partial<Client>>({});
   const [showAddSubscription, setShowAddSubscription] = useState(false);
@@ -273,12 +455,18 @@ export default function ClientProfilePage({ clientId }: ClientProfilePageProps) 
           </div>
 
         <Tabs value={sidebarTab} onValueChange={(v) => setSidebarTab(v as typeof sidebarTab)} className="flex flex-col flex-1 overflow-hidden">
-          <TabsList className="mx-2 mt-2 grid grid-cols-3">
+          <TabsList className="mx-2 mt-2 grid grid-cols-5">
             <TabsTrigger value="campaigns" className="text-xs" data-testid="tab-campaigns">
               Campaigns
             </TabsTrigger>
             <TabsTrigger value="orders" className="text-xs" data-testid="tab-orders">
               Orders
+            </TabsTrigger>
+            <TabsTrigger value="emails" className="text-xs" data-testid="tab-emails">
+              Emails
+            </TabsTrigger>
+            <TabsTrigger value="notes" className="text-xs" data-testid="tab-notes">
+              Notes
             </TabsTrigger>
             <TabsTrigger value="info" className="text-xs" data-testid="tab-info">
               Info
@@ -395,6 +583,25 @@ export default function ClientProfilePage({ clientId }: ClientProfilePageProps) 
                     </div>
                   )}
                 </div>
+              </div>
+            </ScrollArea>
+          </TabsContent>
+
+          <TabsContent value="emails" className="flex-1 overflow-hidden m-0">
+            <ScrollArea className="h-full">
+              <div className="p-2">
+                <div className="px-2 py-1 mb-1">
+                  <span className="text-xs uppercase tracking-wider text-muted-foreground font-medium">Email History</span>
+                </div>
+                <ClientEmailsList clientId={clientId} />
+              </div>
+            </ScrollArea>
+          </TabsContent>
+
+          <TabsContent value="notes" className="flex-1 overflow-hidden m-0">
+            <ScrollArea className="h-full">
+              <div className="p-2">
+                <ClientNotesPanel clientId={clientId} />
               </div>
             </ScrollArea>
           </TabsContent>
@@ -606,9 +813,7 @@ export default function ClientProfilePage({ clientId }: ClientProfilePageProps) 
           <RightPanel
             newsletterId={selectedNewsletterId}
             status={newsletterData.newsletter?.status || "not_started"}
-            internalNotes={newsletterData.newsletter?.internalNotes}
-            onStatusChange={(status) => updateStatusMutation.mutate(status)}
-            onInternalNotesChange={(notes) => updateNotesMutation.mutate(notes)}
+            onStatusChange={(status: string) => updateStatusMutation.mutate(status)}
           />
         </div>
       )}
