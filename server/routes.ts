@@ -277,6 +277,21 @@ export async function registerRoutes(
   // ============================================================================
   // BRANDING KITS
   // ============================================================================
+  app.get("/api/branding-kits", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const kits = await storage.getAllBrandingKits();
+      const enriched = await Promise.all(
+        kits.map(async (kit) => {
+          const client = await storage.getClient(kit.clientId);
+          return { ...kit, client: client || { id: kit.clientId, name: "Unknown" } };
+        })
+      );
+      res.json(enriched);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch branding kits" });
+    }
+  });
+
   app.get("/api/clients/:clientId/branding-kit", requireAuth, async (req: Request, res: Response) => {
     try {
       const kit = await storage.getBrandingKit(req.params.clientId);
@@ -302,6 +317,21 @@ export async function registerRoutes(
   // ============================================================================
   // SUBSCRIPTIONS
   // ============================================================================
+  app.get("/api/subscriptions", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const allSubscriptions = await storage.getAllSubscriptions();
+      const enriched = await Promise.all(
+        allSubscriptions.map(async (sub) => {
+          const client = await storage.getClient(sub.clientId);
+          return { ...sub, client: client || { id: sub.clientId, name: "Unknown" } };
+        })
+      );
+      res.json(enriched);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch subscriptions" });
+    }
+  });
+
   app.get("/api/clients/:clientId/subscriptions", requireAuth, async (req: Request, res: Response) => {
     try {
       const subscriptions = await storage.getSubscriptionsByClient(req.params.clientId);
@@ -869,6 +899,163 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Subject suggest error:", error);
       res.status(500).json({ error: "Failed to suggest subject lines" });
+    }
+  });
+
+  // ============================================================================
+  // NEWSLETTER CHAT - Persistent AI chat per newsletter
+  // ============================================================================
+  app.get("/api/newsletters/:id/chat", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const messages = await storage.getChatMessages(req.params.id);
+      res.json(messages);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch chat messages" });
+    }
+  });
+
+  app.post("/api/newsletters/:id/chat", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const newsletter = await storage.getNewsletter(req.params.id);
+      if (!newsletter) {
+        return res.status(404).json({ error: "Newsletter not found" });
+      }
+
+      const { message } = req.body;
+      if (!message || typeof message !== "string") {
+        return res.status(400).json({ error: "Message is required" });
+      }
+
+      const userMsg = await storage.addChatMessage({
+        newsletterId: req.params.id,
+        role: "user",
+        content: message,
+      });
+
+      const masterPrompt = await storage.getMasterPrompt();
+      const clientPrompt = newsletter.clientId 
+        ? await storage.getClientPrompt(newsletter.clientId) 
+        : undefined;
+
+      const brandingKit = await storage.getBrandingKit(newsletter.clientId);
+
+      const chatHistory = await storage.getChatMessages(req.params.id);
+      
+      const systemParts: string[] = [];
+      if (masterPrompt) systemParts.push(masterPrompt.prompt);
+      if (clientPrompt) systemParts.push(`CLIENT-SPECIFIC INSTRUCTIONS:\n${clientPrompt.prompt}`);
+      if (brandingKit) {
+        const brandParts: string[] = [];
+        if (brandingKit.title) brandParts.push(`Agent: ${brandingKit.title}`);
+        if (brandingKit.companyName) brandParts.push(`Company: ${brandingKit.companyName}`);
+        if (brandingKit.primaryColor) brandParts.push(`Primary Color: ${brandingKit.primaryColor}`);
+        if (brandingKit.tone) brandParts.push(`Tone: ${brandingKit.tone}`);
+        if (brandParts.length) systemParts.push(`BRANDING:\n${brandParts.join("\n")}`);
+      }
+
+      const systemInstruction = systemParts.length > 0 
+        ? systemParts.join("\n\n") 
+        : "You are a helpful assistant for creating real estate email newsletters. Help the user with content ideas, writing, and newsletter strategy.";
+
+      const conversationContents = chatHistory
+        .filter(m => m.role !== "system")
+        .map(m => ({
+          role: m.role as "user" | "model",
+          parts: [{ text: m.content }],
+        }))
+        .map(m => m.role === "assistant" ? { ...m, role: "model" as const } : m);
+
+      const { GoogleGenAI } = await import("@google/genai");
+      const ai = new GoogleGenAI({
+        apiKey: process.env.AI_INTEGRATIONS_GEMINI_API_KEY,
+        httpOptions: {
+          apiVersion: "",
+          baseUrl: process.env.AI_INTEGRATIONS_GEMINI_BASE_URL,
+        },
+      });
+
+      const response = await ai.models.generateContent({
+        model: "gemini-2.5-flash",
+        contents: conversationContents,
+        config: {
+          systemInstruction,
+          maxOutputTokens: 4096,
+          temperature: 0.7,
+        },
+      });
+
+      const assistantContent = response.text ?? "I'm sorry, I couldn't generate a response.";
+
+      const assistantMsg = await storage.addChatMessage({
+        newsletterId: req.params.id,
+        role: "assistant",
+        content: assistantContent,
+      });
+
+      res.json({ userMessage: userMsg, assistantMessage: assistantMsg });
+    } catch (error) {
+      console.error("Chat error:", error);
+      res.status(500).json({ error: "Failed to process chat message" });
+    }
+  });
+
+  app.delete("/api/newsletters/:id/chat", requireAuth, async (req: Request, res: Response) => {
+    try {
+      await storage.clearChatMessages(req.params.id);
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to clear chat" });
+    }
+  });
+
+  // ============================================================================
+  // AI PROMPTS - Master and client-level system prompts
+  // ============================================================================
+  app.get("/api/ai-prompts/master", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const prompt = await storage.getMasterPrompt();
+      res.json(prompt || null);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch master prompt" });
+    }
+  });
+
+  app.get("/api/clients/:clientId/ai-prompt", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const prompt = await storage.getClientPrompt(req.params.clientId);
+      res.json(prompt || null);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch client prompt" });
+    }
+  });
+
+  app.put("/api/ai-prompts/master", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const { prompt } = req.body;
+      if (!prompt || typeof prompt !== "string") {
+        return res.status(400).json({ error: "Prompt text is required" });
+      }
+      const result = await storage.upsertAiPrompt({ type: "master", prompt });
+      res.json(result);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to save master prompt" });
+    }
+  });
+
+  app.put("/api/clients/:clientId/ai-prompt", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const { prompt } = req.body;
+      if (!prompt || typeof prompt !== "string") {
+        return res.status(400).json({ error: "Prompt text is required" });
+      }
+      const result = await storage.upsertAiPrompt({ 
+        type: "client", 
+        clientId: req.params.clientId, 
+        prompt 
+      });
+      res.json(result);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to save client prompt" });
     }
   });
 

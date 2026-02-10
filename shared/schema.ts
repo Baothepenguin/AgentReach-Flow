@@ -909,3 +909,53 @@ export type Conversation = typeof conversations.$inferSelect;
 export type InsertConversation = z.infer<typeof insertConversationSchema>;
 export type Message = typeof messages.$inferSelect;
 export type InsertMessage = z.infer<typeof insertMessageSchema>;
+
+// ============================================================================
+// NEWSLETTER CHAT MESSAGES - Persistent AI chat per newsletter
+// ============================================================================
+export const newsletterChatMessages = pgTable("newsletter_chat_messages", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  newsletterId: varchar("newsletter_id").notNull().references(() => newsletters.id, { onDelete: "cascade" }),
+  role: text("role", { enum: ["user", "assistant", "system"] }).notNull(),
+  content: text("content").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const newsletterChatMessagesRelations = relations(newsletterChatMessages, ({ one }) => ({
+  newsletter: one(newsletters, {
+    fields: [newsletterChatMessages.newsletterId],
+    references: [newsletters.id],
+  }),
+}));
+
+export const insertNewsletterChatMessageSchema = createInsertSchema(newsletterChatMessages).omit({
+  id: true,
+  createdAt: true,
+});
+export type InsertNewsletterChatMessage = z.infer<typeof insertNewsletterChatMessageSchema>;
+export type NewsletterChatMessage = typeof newsletterChatMessages.$inferSelect;
+
+// ============================================================================
+// AI PROMPTS - Master and client-level system prompts
+// ============================================================================
+export const aiPrompts = pgTable("ai_prompts", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  type: text("type", { enum: ["master", "client"] }).notNull(),
+  clientId: varchar("client_id").references(() => clients.id, { onDelete: "cascade" }),
+  prompt: text("prompt").notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const aiPromptsRelations = relations(aiPrompts, ({ one }) => ({
+  client: one(clients, {
+    fields: [aiPrompts.clientId],
+    references: [clients.id],
+  }),
+}));
+
+export const insertAiPromptSchema = createInsertSchema(aiPrompts).omit({
+  id: true,
+  updatedAt: true,
+});
+export type InsertAiPrompt = z.infer<typeof insertAiPromptSchema>;
+export type AiPrompt = typeof aiPrompts.$inferSelect;

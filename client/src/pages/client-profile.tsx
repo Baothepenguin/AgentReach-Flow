@@ -101,7 +101,7 @@ function ClientEmailsList({ clientId }: { clientId: string }) {
             ) : (
               <ArrowUpRight className="w-3 h-3 text-green-500 flex-shrink-0" />
             )}
-            <span className="text-sm font-medium truncate font-sans">{email.subject || "(No subject)"}</span>
+            <span className="text-sm font-medium truncate">{email.subject || "(No subject)"}</span>
           </div>
           <p className="text-xs text-muted-foreground line-clamp-2 pl-5">{email.snippet}</p>
           <p className="text-xs text-muted-foreground/60 pl-5 mt-0.5">
@@ -161,11 +161,11 @@ function ClientNotesPanel({ clientId }: { clientId: string }) {
               setNewNoteContent("");
             }
           }}
-          className="h-8 text-sm flex-1 font-sans"
+          className="h-8 text-sm flex-1"
           data-testid="input-new-note"
         />
         <Select value={noteType} onValueChange={(v) => setNoteType(v as "note" | "task")}>
-          <SelectTrigger className="h-8 w-20 text-xs font-sans" data-testid="select-note-type">
+          <SelectTrigger className="h-8 w-20 text-xs" data-testid="select-note-type">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>

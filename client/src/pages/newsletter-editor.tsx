@@ -1,13 +1,15 @@
 import { useState, useRef, useCallback } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { useLocation } from "wouter";
+import { useLocation, Link } from "wouter";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { TopNav } from "@/components/TopNav";
 import { RightPanel } from "@/components/RightPanel";
 import { HTMLPreviewFrame } from "@/components/HTMLPreviewFrame";
 import { ClientSidePanel } from "@/components/ClientSidePanel";
+import { GeminiChatPanel } from "@/components/GeminiChatPanel";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -25,6 +27,7 @@ import {
   X,
   Sparkles,
   Loader2,
+  Code,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import type { Newsletter, NewsletterVersion, NewsletterDocument, Client, TasksFlags } from "@shared/schema";
@@ -44,6 +47,9 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
   const [editedTitle, setEditedTitle] = useState("");
   const [aiPrompt, setAiPrompt] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
+  const [chatCollapsed, setChatCollapsed] = useState(true);
+  const [editingHtml, setEditingHtml] = useState(false);
+  const [htmlDraft, setHtmlDraft] = useState("");
   const saveTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const { data: newsletterData, isLoading: loadingNewsletter, refetch: refetchNewsletter } = useQuery<{
@@ -372,11 +378,32 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
             </div>
             <div className="flex items-center gap-2">
               {client && (
-                <Button variant="ghost" size="icon" onClick={() => setShowClientPanel(true)} data-testid="button-client">
-                  <User className="w-4 h-4" />
-                </Button>
+                <Link
+                  href={`/clients/${client.id}`}
+                  className="text-sm text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1"
+                  data-testid="link-client-name"
+                >
+                  <User className="w-3.5 h-3.5" />
+                  {client.name}
+                </Link>
               )}
               <div className="w-px h-5 bg-border mx-1" />
+              {hasContent && (
+                <Button
+                  variant={editingHtml ? "secondary" : "ghost"}
+                  size="sm"
+                  onClick={() => {
+                    if (!editingHtml) {
+                      setHtmlDraft(newsletterData?.html || "");
+                    }
+                    setEditingHtml(!editingHtml);
+                  }}
+                  data-testid="button-edit-html"
+                >
+                  <Code className="w-4 h-4 mr-1" />
+                  {editingHtml ? "Preview" : "Edit HTML"}
+                </Button>
+              )}
               <Button variant="ghost" size="sm" onClick={handleCopyHtml} data-testid="button-copy">
                 <Copy className="w-4 h-4 mr-1" />
                 Copy
@@ -396,36 +423,70 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
           </header>
 
           <div className="flex-1 min-h-0 relative">
-            <HTMLPreviewFrame
-              html={newsletterData?.html || ""}
-              isLoading={loadingNewsletter}
-              title={newsletter.title}
-              onHtmlChange={debouncedSaveHtml}
-              fullWidth
-            />
-            <div className="absolute bottom-14 left-1/2 -translate-x-1/2 w-full max-w-xl z-10">
-              <div className="flex items-center gap-2 bg-background/95 backdrop-blur-sm rounded-full p-1.5 pl-4 shadow-lg border">
-                <Sparkles className="w-4 h-4 text-primary/60 flex-shrink-0" />
-                <input
-                  value={aiPrompt}
-                  onChange={(e) => setAiPrompt(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && handleAiSubmit()}
-                  placeholder={hasContent ? "Ask AI to edit..." : "Describe the newsletter you want to create..."}
-                  className="flex-1 bg-transparent border-0 outline-none text-sm placeholder:text-muted-foreground/60"
-                  disabled={isGenerating}
-                  data-testid="input-ai-prompt"
+            {editingHtml ? (
+              <div className="h-full flex flex-col">
+                <Textarea
+                  value={htmlDraft}
+                  onChange={(e) => setHtmlDraft(e.target.value)}
+                  className="flex-1 font-mono text-xs resize-none rounded-none border-0 focus-visible:ring-0"
+                  data-testid="textarea-html-editor"
                 />
-                <Button
-                  size="icon"
-                  className="rounded-full"
-                  onClick={handleAiSubmit}
-                  disabled={!aiPrompt.trim() || isGenerating}
-                  data-testid="button-ai-submit"
-                >
-                  {isGenerating ? <Loader2 className="w-4 h-4 animate-spin" /> : <ArrowUp className="w-4 h-4" />}
-                </Button>
+                <div className="flex items-center gap-2 p-2 border-t bg-background">
+                  <Button
+                    size="sm"
+                    onClick={() => {
+                      debouncedSaveHtml(htmlDraft);
+                      setEditingHtml(false);
+                    }}
+                    data-testid="button-save-html"
+                  >
+                    <Check className="w-4 h-4 mr-1" />
+                    Save & Preview
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setEditingHtml(false)}
+                    data-testid="button-cancel-html"
+                  >
+                    Cancel
+                  </Button>
+                </div>
               </div>
-            </div>
+            ) : (
+              <>
+                <HTMLPreviewFrame
+                  html={newsletterData?.html || ""}
+                  isLoading={loadingNewsletter}
+                  title={newsletter.title}
+                  onHtmlChange={debouncedSaveHtml}
+                  fullWidth
+                />
+                <div className="absolute bottom-14 left-1/2 -translate-x-1/2 w-full max-w-xl z-10">
+                  <div className="flex items-center gap-2 bg-background/95 backdrop-blur-sm rounded-full p-1.5 pl-4 shadow-lg border">
+                    <Sparkles className="w-4 h-4 text-primary/60 flex-shrink-0" />
+                    <input
+                      value={aiPrompt}
+                      onChange={(e) => setAiPrompt(e.target.value)}
+                      onKeyDown={(e) => e.key === "Enter" && handleAiSubmit()}
+                      placeholder={hasContent ? "Ask AI to edit..." : "Describe the newsletter you want to create..."}
+                      className="flex-1 bg-transparent border-0 outline-none text-sm placeholder:text-muted-foreground/60"
+                      disabled={isGenerating}
+                      data-testid="input-ai-prompt"
+                    />
+                    <Button
+                      size="icon"
+                      className="rounded-full"
+                      onClick={handleAiSubmit}
+                      disabled={!aiPrompt.trim() || isGenerating}
+                      data-testid="button-ai-submit"
+                    >
+                      {isGenerating ? <Loader2 className="w-4 h-4 animate-spin" /> : <ArrowUp className="w-4 h-4" />}
+                    </Button>
+                  </div>
+                </div>
+              </>
+            )}
           </div>
         </div>
 
@@ -440,6 +501,16 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
             onContentChatUrlChange={(url) => updateUrlMutation.mutate({ contentChatUrl: url })}
           />
         </div>
+
+        {client && (
+          <GeminiChatPanel
+            newsletterId={newsletterId}
+            clientId={client.id}
+            clientName={client.name}
+            collapsed={chatCollapsed}
+            onToggleCollapse={() => setChatCollapsed(!chatCollapsed)}
+          />
+        )}
       </div>
 
       {client && (

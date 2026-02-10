@@ -9,6 +9,8 @@ import MasterDashboard from "@/pages/master-dashboard";
 import ClientsListPage from "@/pages/clients-list";
 import NewslettersPage from "@/pages/newsletters";
 import InvoicesPage from "@/pages/invoices";
+import SubscriptionsPage from "@/pages/subscriptions";
+import BrandingKitsPage from "@/pages/branding-kits";
 import NewsletterEditorPage from "@/pages/newsletter-editor";
 import ReviewPage from "@/pages/review";
 import NotFound from "@/pages/not-found";
@@ -53,6 +55,16 @@ function Router() {
       <Route path="/orders" component={() => (
         <ProtectedRoute>
           <InvoicesPage />
+        </ProtectedRoute>
+      )} />
+      <Route path="/subscriptions" component={() => (
+        <ProtectedRoute>
+          <SubscriptionsPage />
+        </ProtectedRoute>
+      )} />
+      <Route path="/branding-kits" component={() => (
+        <ProtectedRoute>
+          <BrandingKitsPage />
         </ProtectedRoute>
       )} />
       <Route path="/newsletters/:id" component={(params) => (

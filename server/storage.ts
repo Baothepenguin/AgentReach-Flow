@@ -48,6 +48,12 @@ import {
   type NewsletterDocument,
   type NewsletterStatus,
   NEWSLETTER_STATUSES,
+  newsletterChatMessages,
+  aiPrompts,
+  type NewsletterChatMessage,
+  type InsertNewsletterChatMessage,
+  type AiPrompt,
+  type InsertAiPrompt,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, ne, isNull, or, inArray, sql } from "drizzle-orm";
@@ -74,9 +80,11 @@ export interface IStorage {
 
   // Branding Kits
   getBrandingKit(clientId: string): Promise<BrandingKit | undefined>;
+  getAllBrandingKits(): Promise<BrandingKit[]>;
   upsertBrandingKit(kit: InsertBrandingKit): Promise<BrandingKit>;
 
   // Subscriptions
+  getAllSubscriptions(): Promise<Subscription[]>;
   getSubscriptionsByClient(clientId: string): Promise<Subscription[]>;
   getSubscription(id: string): Promise<Subscription | undefined>;
   createSubscription(subscription: InsertSubscription): Promise<Subscription>;
@@ -152,6 +160,16 @@ export interface IStorage {
   createClientNote(data: InsertClientNote): Promise<ClientNote>;
   updateClientNote(id: string, data: Partial<ClientNote>): Promise<ClientNote>;
   deleteClientNote(id: string): Promise<void>;
+
+  // Newsletter Chat Messages
+  getChatMessages(newsletterId: string): Promise<NewsletterChatMessage[]>;
+  addChatMessage(data: InsertNewsletterChatMessage): Promise<NewsletterChatMessage>;
+  clearChatMessages(newsletterId: string): Promise<void>;
+
+  // AI Prompts
+  getMasterPrompt(): Promise<AiPrompt | undefined>;
+  getClientPrompt(clientId: string): Promise<AiPrompt | undefined>;
+  upsertAiPrompt(data: InsertAiPrompt): Promise<AiPrompt>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -227,6 +245,10 @@ export class DatabaseStorage implements IStorage {
     return kit;
   }
 
+  async getAllBrandingKits(): Promise<BrandingKit[]> {
+    return db.select().from(brandingKits).orderBy(desc(brandingKits.createdAt));
+  }
+
   async upsertBrandingKit(kit: InsertBrandingKit): Promise<BrandingKit> {
     const existing = await this.getBrandingKit(kit.clientId);
     if (existing) {
@@ -242,6 +264,10 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Subscriptions
+  async getAllSubscriptions(): Promise<Subscription[]> {
+    return db.select().from(subscriptions).orderBy(desc(subscriptions.createdAt));
+  }
+
   async getSubscriptionsByClient(clientId: string): Promise<Subscription[]> {
     return db
       .select()
@@ -618,6 +644,59 @@ export class DatabaseStorage implements IStorage {
 
   async deleteClientNote(id: string): Promise<void> {
     await db.delete(clientNotes).where(eq(clientNotes.id, id));
+  }
+
+  // Newsletter Chat Messages
+  async getChatMessages(newsletterId: string): Promise<NewsletterChatMessage[]> {
+    return db.select().from(newsletterChatMessages)
+      .where(eq(newsletterChatMessages.newsletterId, newsletterId))
+      .orderBy(newsletterChatMessages.createdAt);
+  }
+
+  async addChatMessage(data: InsertNewsletterChatMessage): Promise<NewsletterChatMessage> {
+    const [msg] = await db.insert(newsletterChatMessages).values(data).returning();
+    return msg;
+  }
+
+  async clearChatMessages(newsletterId: string): Promise<void> {
+    await db.delete(newsletterChatMessages).where(eq(newsletterChatMessages.newsletterId, newsletterId));
+  }
+
+  // AI Prompts
+  async getMasterPrompt(): Promise<AiPrompt | undefined> {
+    const [prompt] = await db.select().from(aiPrompts)
+      .where(and(eq(aiPrompts.type, "master"), isNull(aiPrompts.clientId)));
+    return prompt;
+  }
+
+  async getClientPrompt(clientId: string): Promise<AiPrompt | undefined> {
+    const [prompt] = await db.select().from(aiPrompts)
+      .where(and(eq(aiPrompts.type, "client"), eq(aiPrompts.clientId, clientId)));
+    return prompt;
+  }
+
+  async upsertAiPrompt(data: InsertAiPrompt): Promise<AiPrompt> {
+    if (data.type === "master") {
+      const existing = await this.getMasterPrompt();
+      if (existing) {
+        const [updated] = await db.update(aiPrompts)
+          .set({ prompt: data.prompt, updatedAt: new Date() })
+          .where(eq(aiPrompts.id, existing.id))
+          .returning();
+        return updated;
+      }
+    } else if (data.type === "client" && data.clientId) {
+      const existing = await this.getClientPrompt(data.clientId);
+      if (existing) {
+        const [updated] = await db.update(aiPrompts)
+          .set({ prompt: data.prompt, updatedAt: new Date() })
+          .where(eq(aiPrompts.id, existing.id))
+          .returning();
+        return updated;
+      }
+    }
+    const [created] = await db.insert(aiPrompts).values(data).returning();
+    return created;
   }
 }
 

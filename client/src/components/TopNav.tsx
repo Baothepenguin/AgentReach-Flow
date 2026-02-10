@@ -9,7 +9,9 @@ const navItems = [
   { path: "/", label: "Dashboard" },
   { path: "/clients", label: "Clients" },
   { path: "/orders", label: "Orders" },
+  { path: "/subscriptions", label: "Subscriptions" },
   { path: "/newsletters", label: "Newsletters" },
+  { path: "/branding-kits", label: "Branding Kits" },
 ];
 
 export function TopNav() {
@@ -32,7 +34,7 @@ export function TopNav() {
                   <Button
                     variant={isActive ? "secondary" : "ghost"}
                     size="sm"
-                    className={cn("font-sans", !isActive && "text-muted-foreground")}
+                    className={cn(!isActive && "text-muted-foreground")}
                     data-testid={`nav-${item.label.toLowerCase()}`}
                   >
                     {item.label}
