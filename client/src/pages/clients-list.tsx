@@ -8,7 +8,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Plus, Search, Mail, MapPin, Users, LayoutGrid, List } from "lucide-react";
+import { Plus, Search, Mail, MapPin, Users, LayoutGrid, List, Mail as MailIcon } from "lucide-react";
 import { CreateClientDialog } from "@/components/CreateClientDialog";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -139,7 +139,7 @@ export default function ClientsListPage() {
       <div className="p-6">
         <div className="flex items-center justify-between gap-4 mb-8 flex-wrap">
           <div className="flex items-center gap-4 flex-wrap">
-            <h1 className="text-2xl font-semibold">Clients</h1>
+            <h1 className="text-xl font-semibold">Clients</h1>
             <Tabs value={filter} onValueChange={(v) => setFilter(v as typeof filter)}>
               <TabsList>
                 <TabsTrigger value="all" data-testid="tab-all">All</TabsTrigger>
@@ -197,44 +197,41 @@ export default function ClientsListPage() {
             </p>
           </div>
         ) : viewMode === "gallery" ? (
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6">
+          <div className="grid grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
             {filteredClients.map((client) => (
-              <div
+              <Card
                 key={client.id}
-                className="p-5 rounded-md hover-elevate cursor-pointer"
+                className="p-3 hover-elevate cursor-pointer border"
                 onClick={() => setSelectedClientId(client.id)}
                 data-testid={`client-card-${client.id}`}
               >
-                <div className="flex flex-col items-center text-center gap-3">
-                  <div className={`w-12 h-12 rounded-md flex items-center justify-center text-sm font-medium ${getInitialsColor(client.name)}`}>
+                <div className="flex flex-col items-center text-center gap-2">
+                  <div className={`w-10 h-10 rounded-md flex items-center justify-center text-xs font-medium flex-shrink-0 ${getInitialsColor(client.name)}`}>
                     {getInitials(client.name)}
                   </div>
                   <div className="min-w-0 w-full">
-                    <p className="font-medium truncate">{client.name}</p>
+                    <p className="font-medium text-sm truncate">{client.name}</p>
                     <p className="text-xs text-muted-foreground truncate mt-0.5">{client.primaryEmail}</p>
-                    {getLocation(client) && (
-                      <p className="text-xs text-muted-foreground mt-1 truncate">
-                        {getLocation(client)}
-                      </p>
-                    )}
                   </div>
-                  <div className="flex items-center gap-3">
-                    {getStatusDot(client.subscriptionStatus)}
-                    <span className="text-xs text-muted-foreground">
-                      {getFrequencyLabel(client.newsletterFrequency)}
-                    </span>
+                  <div className="w-full pt-1 border-t border-border/30">
+                    <div className="flex items-center justify-center gap-1.5">
+                      {getStatusDot(client.subscriptionStatus)}
+                      <span className="text-xs text-muted-foreground">
+                        {getFrequencyLabel(client.newsletterFrequency)}
+                      </span>
+                    </div>
                   </div>
                 </div>
-              </div>
+              </Card>
             ))}
           </div>
         ) : (
           <div>
             <div className="grid grid-cols-[1fr_200px_120px_100px] gap-4 px-3 py-2 border-b">
-              <span className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Client</span>
-              <span className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Location</span>
-              <span className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Frequency</span>
-              <span className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Status</span>
+              <span className="text-sm font-medium text-muted-foreground">Client</span>
+              <span className="text-sm font-medium text-muted-foreground">Location</span>
+              <span className="text-sm font-medium text-muted-foreground">Frequency</span>
+              <span className="text-sm font-medium text-muted-foreground">Status</span>
             </div>
             <div className="space-y-px">
               {filteredClients.map((client) => (

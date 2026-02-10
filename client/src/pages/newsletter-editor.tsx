@@ -14,6 +14,14 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Calendar } from "@/components/ui/calendar";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import {
   ArrowLeft,
   ArrowUp,
   User,
@@ -28,6 +36,9 @@ import {
   Sparkles,
   Loader2,
   Code,
+  Upload,
+  FileImage,
+  FileText,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import type { Newsletter, NewsletterVersion, NewsletterDocument, Client, TasksFlags } from "@shared/schema";
@@ -50,6 +61,8 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
   const [chatCollapsed, setChatCollapsed] = useState(true);
   const [editingHtml, setEditingHtml] = useState(false);
   const [htmlDraft, setHtmlDraft] = useState("");
+  const [showImportDialog, setShowImportDialog] = useState(false);
+  const [importHtml, setImportHtml] = useState("");
   const saveTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const { data: newsletterData, isLoading: loadingNewsletter, refetch: refetchNewsletter } = useQuery<{
@@ -130,17 +143,18 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
     },
   });
 
-  const updateUrlMutation = useMutation({
-    mutationFn: async (data: { editorFileUrl?: string; contentChatUrl?: string }) => {
-      const res = await apiRequest("PATCH", `/api/newsletters/${newsletterId}`, data);
+  const updateAssignedToMutation = useMutation({
+    mutationFn: async (assignedToId: string | null) => {
+      const res = await apiRequest("PATCH", `/api/newsletters/${newsletterId}`, { assignedToId });
       return res.json();
     },
     onSuccess: async () => {
       await refetchNewsletter();
-      toast({ title: "URL saved" });
+      queryClient.invalidateQueries({ queryKey: ["/api/newsletters"] });
+      toast({ title: "Team member updated" });
     },
     onError: (error) => {
-      toast({ title: "Failed to save URL", description: error.message, variant: "destructive" });
+      toast({ title: "Failed to update team member", description: error.message, variant: "destructive" });
     },
   });
 
@@ -253,6 +267,45 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
     } catch {
       toast({ title: "Failed to generate review link", variant: "destructive" });
     }
+  };
+
+  const handleImportHtml = () => {
+    if (!importHtml.trim()) return;
+    updateHtmlMutation.mutate(importHtml.trim());
+    setImportHtml("");
+    setShowImportDialog(false);
+  };
+
+  const handleExportPdf = async () => {
+    if (!newsletterData?.html) return;
+    try {
+      const res = await fetch(`/api/newsletters/${newsletterId}/export?format=pdf`, { credentials: "include" });
+      if (res.ok) {
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `${newsletter?.title || "newsletter"}.pdf`;
+        a.click();
+        URL.revokeObjectURL(url);
+      }
+    } catch {}
+  };
+
+  const handleExportPng = async () => {
+    if (!newsletterData?.html) return;
+    try {
+      const res = await fetch(`/api/newsletters/${newsletterId}/export?format=png`, { credentials: "include" });
+      if (res.ok) {
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `${newsletter?.title || "newsletter"}.png`;
+        a.click();
+        URL.revokeObjectURL(url);
+      }
+    } catch {}
   };
 
   const handleDelete = () => {
@@ -404,14 +457,38 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
                   {editingHtml ? "Preview" : "Edit HTML"}
                 </Button>
               )}
-              <Button variant="ghost" size="sm" onClick={handleCopyHtml} data-testid="button-copy">
+              {!hasContent && (
+                <Button variant="ghost" size="sm" onClick={() => setShowImportDialog(true)} data-testid="button-import-header">
+                  <Upload className="w-4 h-4 mr-1" />
+                  Import
+                </Button>
+              )}
+              <Button variant="ghost" size="sm" onClick={handleCopyHtml} disabled={!hasContent} data-testid="button-copy">
                 <Copy className="w-4 h-4 mr-1" />
                 Copy
               </Button>
-              <Button variant="ghost" size="sm" onClick={handleExportHtml} data-testid="button-export">
-                <Download className="w-4 h-4 mr-1" />
-                Export
-              </Button>
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button variant="ghost" size="sm" disabled={!hasContent} data-testid="button-export">
+                    <Download className="w-4 h-4 mr-1" />
+                    Export
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-40 p-1" align="end">
+                  <Button variant="ghost" size="sm" className="w-full justify-start" onClick={handleExportHtml} data-testid="button-export-html">
+                    <FileText className="w-4 h-4 mr-2" />
+                    HTML
+                  </Button>
+                  <Button variant="ghost" size="sm" className="w-full justify-start" onClick={handleExportPdf} data-testid="button-export-pdf">
+                    <FileText className="w-4 h-4 mr-2" />
+                    PDF
+                  </Button>
+                  <Button variant="ghost" size="sm" className="w-full justify-start" onClick={handleExportPng} data-testid="button-export-png">
+                    <FileImage className="w-4 h-4 mr-2" />
+                    PNG
+                  </Button>
+                </PopoverContent>
+              </Popover>
               <Button size="sm" onClick={handleGetReviewLink} data-testid="button-review-link">
                 <ExternalLink className="w-4 h-4 mr-1" />
                 Get Review Link
@@ -455,14 +532,34 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
               </div>
             ) : (
               <>
-                <HTMLPreviewFrame
-                  html={newsletterData?.html || ""}
-                  isLoading={loadingNewsletter}
-                  title={newsletter.title}
-                  onHtmlChange={debouncedSaveHtml}
-                  fullWidth
-                />
-                <div className="absolute bottom-14 left-1/2 -translate-x-1/2 w-full max-w-xl z-10">
+                {hasContent ? (
+                  <HTMLPreviewFrame
+                    html={newsletterData?.html || ""}
+                    isLoading={loadingNewsletter}
+                    title={newsletter.title}
+                    onHtmlChange={debouncedSaveHtml}
+                    fullWidth
+                  />
+                ) : (
+                  <div className="flex-1 flex items-center justify-center">
+                    <div className="flex flex-col items-center justify-center text-center p-12 rounded-md border-2 border-dashed border-muted-foreground/20 max-w-md">
+                      <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center mb-4">
+                        <Code className="w-8 h-8 text-primary/60" />
+                      </div>
+                      <p className="text-lg font-medium mb-2">Get started</p>
+                      <p className="text-sm text-muted-foreground mb-5">
+                        Import HTML from your email builder or use AI to generate a newsletter
+                      </p>
+                      <div className="flex items-center gap-3">
+                        <Button onClick={() => setShowImportDialog(true)} data-testid="button-import-html">
+                          <Upload className="w-4 h-4 mr-2" />
+                          Import HTML
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+                <div className="absolute bottom-4 left-1/2 -translate-x-1/2 w-full max-w-xl z-10 px-4">
                   <div className="flex items-center gap-2 bg-background/95 backdrop-blur-sm rounded-full p-1.5 pl-4 shadow-lg border">
                     <Sparkles className="w-4 h-4 text-primary/60 flex-shrink-0" />
                     <input
@@ -494,11 +591,9 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
           <RightPanel
             newsletterId={newsletterId}
             status={newsletter.status}
-            editorFileUrl={newsletter.editorFileUrl}
-            contentChatUrl={newsletter.contentChatUrl}
             onStatusChange={(status) => updateStatusMutation.mutate(status)}
-            onEditorFileUrlChange={(url) => updateUrlMutation.mutate({ editorFileUrl: url })}
-            onContentChatUrlChange={(url) => updateUrlMutation.mutate({ contentChatUrl: url })}
+            assignedToId={newsletter.assignedToId}
+            onAssignedToChange={(assignedToId) => updateAssignedToMutation.mutate(assignedToId)}
           />
         </div>
 
@@ -520,6 +615,32 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
           onClose={() => setShowClientPanel(false)}
         />
       )}
+
+      <Dialog open={showImportDialog} onOpenChange={setShowImportDialog}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Import HTML</DialogTitle>
+            <DialogDescription>
+              Paste your newsletter HTML code below
+            </DialogDescription>
+          </DialogHeader>
+          <Textarea
+            value={importHtml}
+            onChange={(e) => setImportHtml(e.target.value)}
+            placeholder="Paste HTML here..."
+            className="min-h-[200px] font-mono text-xs"
+            data-testid="textarea-import-html"
+          />
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setShowImportDialog(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleImportHtml} disabled={!importHtml.trim()} data-testid="button-confirm-import">
+              Import
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

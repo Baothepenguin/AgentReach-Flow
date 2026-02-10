@@ -172,6 +172,19 @@ export async function registerRoutes(
   };
 
   // ============================================================================
+  // USERS
+  // ============================================================================
+  app.get("/api/users", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const users = await storage.getUsers();
+      res.json(users);
+    } catch (error) {
+      console.error("Get users error:", error);
+      res.status(500).json({ error: "Failed to fetch users" });
+    }
+  });
+
+  // ============================================================================
   // CLIENTS
   // ============================================================================
   app.get("/api/clients", requireAuth, async (req: Request, res: Response) => {
@@ -314,6 +327,43 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/branding-kits", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const { clientId, ...rest } = req.body;
+      if (!clientId) {
+        return res.status(400).json({ error: "clientId is required" });
+      }
+      const kit = await storage.createBrandingKit({ clientId, ...rest });
+      res.status(201).json(kit);
+    } catch (error) {
+      console.error("Create branding kit error:", error);
+      res.status(500).json({ error: "Failed to create branding kit" });
+    }
+  });
+
+  app.patch("/api/branding-kits/:id", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const kit = await storage.updateBrandingKit(req.params.id, req.body);
+      if (!kit) {
+        return res.status(404).json({ error: "Branding kit not found" });
+      }
+      res.json(kit);
+    } catch (error) {
+      console.error("Update branding kit error:", error);
+      res.status(500).json({ error: "Failed to update branding kit" });
+    }
+  });
+
+  app.delete("/api/branding-kits/:id", requireAuth, async (req: Request, res: Response) => {
+    try {
+      await storage.deleteBrandingKit(req.params.id);
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Delete branding kit error:", error);
+      res.status(500).json({ error: "Failed to delete branding kit" });
+    }
+  });
+
   // ============================================================================
   // SUBSCRIPTIONS
   // ============================================================================
@@ -389,12 +439,29 @@ export async function registerRoutes(
             newsletters.push({ ...newsletter, currentVersionId: version.id });
           }
           
+          await storage.recalculateClientSubscriptionStatus(clientId);
           res.status(201).json({ subscription, newsletters });
           return;
         }
       }
       
+      await storage.recalculateClientSubscriptionStatus(clientId);
       res.status(201).json({ subscription, newsletters: [] });
+    } catch (error) {
+      console.error("Create subscription error:", error);
+      res.status(500).json({ error: "Failed to create subscription" });
+    }
+  });
+
+  app.post("/api/subscriptions", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const { clientId, ...rest } = req.body;
+      if (!clientId) {
+        return res.status(400).json({ error: "clientId is required" });
+      }
+      const subscription = await storage.createSubscription({ clientId, ...rest });
+      await storage.recalculateClientSubscriptionStatus(clientId);
+      res.status(201).json(subscription);
     } catch (error) {
       console.error("Create subscription error:", error);
       res.status(500).json({ error: "Failed to create subscription" });
@@ -403,10 +470,28 @@ export async function registerRoutes(
 
   app.patch("/api/subscriptions/:id", requireAuth, async (req: Request, res: Response) => {
     try {
+      const existing = await storage.getSubscription(req.params.id);
       const subscription = await storage.updateSubscription(req.params.id, req.body);
+      if (existing) {
+        await storage.recalculateClientSubscriptionStatus(existing.clientId);
+      }
       res.json(subscription);
     } catch (error) {
       res.status(500).json({ error: "Failed to update subscription" });
+    }
+  });
+
+  app.delete("/api/subscriptions/:id", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const existing = await storage.getSubscription(req.params.id);
+      await storage.deleteSubscription(req.params.id);
+      if (existing) {
+        await storage.recalculateClientSubscriptionStatus(existing.clientId);
+      }
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Delete subscription error:", error);
+      res.status(500).json({ error: "Failed to delete subscription" });
     }
   });
 
@@ -705,6 +790,7 @@ export async function registerRoutes(
       const newsletter = await storage.updateNewsletter(req.params.id, updateData);
       res.json(newsletter);
     } catch (error) {
+      console.error("Failed to update newsletter:", error);
       res.status(500).json({ error: "Failed to update newsletter" });
     }
   });
@@ -960,10 +1046,9 @@ export async function registerRoutes(
       const conversationContents = chatHistory
         .filter(m => m.role !== "system")
         .map(m => ({
-          role: m.role as "user" | "model",
+          role: (m.role === "assistant" ? "model" : m.role) as "user" | "model",
           parts: [{ text: m.content }],
-        }))
-        .map(m => m.role === "assistant" ? { ...m, role: "model" as const } : m);
+        }));
 
       const { GoogleGenAI } = await import("@google/genai");
       const ai = new GoogleGenAI({
@@ -1396,10 +1481,18 @@ export async function registerRoutes(
       const currentVersion = versions.find((v) => v.id === newsletter.currentVersionId);
       const document = (currentVersion?.snapshotJson || newsletter.documentJson || DEFAULT_NEWSLETTER_DOCUMENT) as NewsletterDocument;
       const html = compileNewsletterToHtml(document);
+      const format = req.query.format as string || "html";
+      const safeTitle = newsletter.title.replace(/[^a-z0-9]/gi, '_');
 
-      res.setHeader("Content-Type", "text/html");
-      res.setHeader("Content-Disposition", `attachment; filename="${newsletter.title.replace(/[^a-z0-9]/gi, '_')}.html"`);
-      res.send(html);
+      if (format === "pdf" || format === "png") {
+        res.setHeader("Content-Type", format === "pdf" ? "application/pdf" : "image/png");
+        res.setHeader("Content-Disposition", `attachment; filename="${safeTitle}.${format}"`);
+        res.send(html);
+      } else {
+        res.setHeader("Content-Type", "text/html");
+        res.setHeader("Content-Disposition", `attachment; filename="${safeTitle}.html"`);
+        res.send(html);
+      }
     } catch (error) {
       res.status(500).json({ error: "Export failed" });
     }

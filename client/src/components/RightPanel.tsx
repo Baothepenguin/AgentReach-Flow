@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Paperclip, Link2, ExternalLink, Plus, Trash2 } from "lucide-react";
+import { Paperclip, Plus, Trash2 } from "lucide-react";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import type { ReviewComment } from "@shared/schema";
 import { format } from "date-fns";
@@ -23,28 +23,25 @@ const NEWSLETTER_STATUSES = [
 interface RightPanelProps {
   newsletterId: string;
   status: string;
-  editorFileUrl?: string | null;
-  contentChatUrl?: string | null;
   onStatusChange?: (status: string) => void;
-  onEditorFileUrlChange?: (url: string) => void;
-  onContentChatUrlChange?: (url: string) => void;
+  assignedToId?: string | null;
+  onAssignedToChange?: (userId: string | null) => void;
 }
 
 export function RightPanel({
   newsletterId,
   status,
-  editorFileUrl,
-  contentChatUrl,
   onStatusChange,
-  onEditorFileUrlChange,
-  onContentChatUrlChange,
+  assignedToId,
+  onAssignedToChange,
 }: RightPanelProps) {
-  const [localEditorUrl, setLocalEditorUrl] = useState(editorFileUrl || "");
-  const [localChatUrl, setLocalChatUrl] = useState(contentChatUrl || "");
-  const [editorUrlDirty, setEditorUrlDirty] = useState(false);
-  const [chatUrlDirty, setChatUrlDirty] = useState(false);
   const [newNoteContent, setNewNoteContent] = useState("");
   const currentStatus = NEWSLETTER_STATUSES.find(s => s.value === status) || NEWSLETTER_STATUSES[0];
+
+  const { data: users = [] } = useQuery<any[]>({
+    queryKey: ["/api/users"],
+    enabled: true,
+  });
 
   const { data: reviewComments = [] } = useQuery<ReviewComment[]>({
     queryKey: ["/api/newsletters", newsletterId, "review-comments"],
@@ -106,8 +103,8 @@ export function RightPanel({
 
   return (
     <div className="flex flex-col h-full bg-background">
-      <div className="p-4 border-b">
-        <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2 block" data-testid="label-status">
+      <div className="p-3 border-b">
+        <label className="text-xs font-medium text-muted-foreground mb-2 block" data-testid="label-status">
           Status
         </label>
         {onStatusChange ? (
@@ -130,186 +127,135 @@ export function RightPanel({
         )}
       </div>
 
-      {onEditorFileUrlChange && (
-        <div className="p-3 border-b space-y-3">
-          <div>
-            <div className="flex items-center justify-between mb-1.5">
-              <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-                <Link2 className="w-3 h-3" />
-                Editor File
-              </div>
-              {localEditorUrl && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-5 px-1.5 text-xs"
-                  onClick={() => window.open(localEditorUrl, "_blank")}
-                  data-testid="button-open-editor-file"
-                >
-                  <ExternalLink className="w-3 h-3" />
-                </Button>
-              )}
-            </div>
-            <Input
-              placeholder="Paste URL..."
-              value={localEditorUrl}
-              onChange={(e) => {
-                setLocalEditorUrl(e.target.value);
-                setEditorUrlDirty(e.target.value !== (editorFileUrl || ""));
-              }}
-              onBlur={() => {
-                if (editorUrlDirty && onEditorFileUrlChange) {
-                  onEditorFileUrlChange(localEditorUrl);
-                  setEditorUrlDirty(false);
-                }
-              }}
-              className="h-8 text-xs"
-              data-testid="input-editor-file-url"
-            />
-          </div>
-
-          <div>
-            <div className="flex items-center justify-between mb-1.5">
-              <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-                <Link2 className="w-3 h-3" />
-                Content Chat
-              </div>
-              {localChatUrl && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-5 px-1.5 text-xs"
-                  onClick={() => window.open(localChatUrl, "_blank")}
-                  data-testid="button-open-content-chat"
-                >
-                  <ExternalLink className="w-3 h-3" />
-                </Button>
-              )}
-            </div>
-            <Input
-              placeholder="Paste URL..."
-              value={localChatUrl}
-              onChange={(e) => {
-                setLocalChatUrl(e.target.value);
-                setChatUrlDirty(e.target.value !== (contentChatUrl || ""));
-              }}
-              onBlur={() => {
-                if (chatUrlDirty && onContentChatUrlChange) {
-                  onContentChatUrlChange(localChatUrl);
-                  setChatUrlDirty(false);
-                }
-              }}
-              className="h-8 text-xs"
-              data-testid="input-content-chat-url"
-            />
-          </div>
-        </div>
-      )}
-
       <div className="p-3 border-b">
-        <div className="flex items-center justify-between mb-2">
-          <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground uppercase tracking-wider" data-testid="label-internal-notes">
+        <label className="text-xs font-medium text-muted-foreground mb-2 block" data-testid="label-team-member">
+          Team Member
+        </label>
+        {onAssignedToChange ? (
+          <Select value={assignedToId || ""} onValueChange={(value) => onAssignedToChange(value || null)}>
+            <SelectTrigger className="w-full" data-testid="select-team-member-trigger">
+              <SelectValue placeholder="Select team member" data-testid="select-team-member-value" />
+            </SelectTrigger>
+            <SelectContent align="start" data-testid="select-team-member-content">
+              <SelectItem value="" data-testid="team-member-option-unassigned">
+                Unassigned
+              </SelectItem>
+              {users.map((user) => (
+                <SelectItem key={user.id} value={user.id} data-testid={`team-member-option-${user.id}`}>
+                  {user.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        ) : (
+          <div className="px-3 py-2 rounded-md text-sm font-medium bg-muted" data-testid="text-team-member-readonly">
+            {assignedToId && users.find(u => u.id === assignedToId)?.name ? users.find(u => u.id === assignedToId)?.name : "Unassigned"}
+          </div>
+        )}
+      </div>
+
+      <div className="p-2 border-b space-y-2">
+        <div className="flex items-center gap-2">
+          <div className="text-xs font-medium text-muted-foreground" data-testid="label-internal-notes">
             Internal Notes
             {pendingInternalNotes.length > 0 && (
-              <span className="text-xs text-muted-foreground normal-case tracking-normal">({pendingInternalNotes.length})</span>
+              <span className="text-xs text-muted-foreground normal-case tracking-normal ml-1">({pendingInternalNotes.length})</span>
             )}
           </div>
         </div>
-        <div className="flex gap-1 mb-2">
+        <div className="flex gap-1">
           <Input
-            placeholder="Add a note..."
+            placeholder="Add..."
             value={newNoteContent}
             onChange={(e) => setNewNoteContent(e.target.value)}
-            className="h-8 text-sm"
+            className="h-7 text-xs"
             onKeyDown={(e) => e.key === "Enter" && handleAddNote()}
             data-testid="input-add-note"
           />
           <Button
             variant="ghost"
             size="icon"
-            className="h-8 w-8 flex-shrink-0"
+            className="h-7 w-7 flex-shrink-0"
             onClick={handleAddNote}
             disabled={!newNoteContent.trim() || createNoteMutation.isPending}
             data-testid="button-add-note"
           >
-            <Plus className="w-4 h-4" />
+            <Plus className="w-3 h-3" />
           </Button>
         </div>
-        <div className="space-y-1">
+        <div className="space-y-0.5 max-h-48 overflow-y-auto">
           {pendingInternalNotes.map((note) => (
             <div
               key={note.id}
-              className="flex items-start gap-2 p-1.5 rounded bg-background group"
+              className="flex items-start gap-1.5 p-1 rounded bg-background group"
               data-testid={`internal-note-${note.id}`}
             >
               <Checkbox
                 checked={false}
                 onCheckedChange={() => toggleCompleteMutation.mutate(note.id)}
-                className="mt-0.5"
+                className="mt-0.5 h-3 w-3"
                 data-testid={`checkbox-note-${note.id}`}
               />
               <div className="flex-1 min-w-0">
-                <p className="text-sm">{note.content}</p>
+                <p className="text-xs">{note.content}</p>
                 <span className="text-xs text-muted-foreground">
-                  {format(new Date(note.createdAt), "MMM d, h:mm a")}
+                  {format(new Date(note.createdAt), "MMM d")}
                 </span>
               </div>
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-5 w-5 opacity-0 group-hover:opacity-100 transition-opacity"
+                className="h-4 w-4 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
                 onClick={() => deleteNoteMutation.mutate(note.id)}
                 data-testid={`button-delete-note-${note.id}`}
               >
-                <Trash2 className="w-3 h-3 text-muted-foreground" />
+                <Trash2 className="w-2.5 h-2.5 text-muted-foreground" />
               </Button>
             </div>
           ))}
           {completedInternalNotes.length > 0 && (
             <div className="pt-1">
-              <div className="text-xs text-muted-foreground mb-1">Completed</div>
+              <div className="text-xs text-muted-foreground mb-0.5">Completed</div>
               {completedInternalNotes.map((note) => (
                 <div
                   key={note.id}
-                  className="flex items-start gap-2 p-1.5 rounded group"
+                  className="flex items-start gap-1.5 p-1 rounded group"
                   data-testid={`internal-note-${note.id}`}
                 >
                   <Checkbox
                     checked={true}
                     onCheckedChange={() => toggleCompleteMutation.mutate(note.id)}
-                    className="mt-0.5"
+                    className="mt-0.5 h-3 w-3"
                     data-testid={`checkbox-note-${note.id}`}
                   />
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm line-through text-muted-foreground">{note.content}</p>
+                    <p className="text-xs line-through text-muted-foreground">{note.content}</p>
                     <span className="text-xs text-muted-foreground">
-                      {format(new Date(note.createdAt), "MMM d, h:mm a")}
+                      {format(new Date(note.createdAt), "MMM d")}
                     </span>
                   </div>
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="h-5 w-5 opacity-0 group-hover:opacity-100 transition-opacity"
+                    className="h-4 w-4 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
                     onClick={() => deleteNoteMutation.mutate(note.id)}
                     data-testid={`button-delete-note-${note.id}`}
                   >
-                    <Trash2 className="w-3 h-3 text-muted-foreground" />
+                    <Trash2 className="w-2.5 h-2.5 text-muted-foreground" />
                   </Button>
                 </div>
               ))}
             </div>
           )}
         </div>
-        <p className="text-xs text-muted-foreground mt-2">
-          Only visible to team members
-        </p>
+        <p className="text-xs text-muted-foreground/70">Team only</p>
       </div>
 
-      <div className="p-3 border-b">
-        <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground uppercase tracking-wider" data-testid="label-client-feedback">
+      <div className="p-2 border-b">
+        <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground" data-testid="label-client-feedback">
           Client Feedback
           {pendingFeedback.length > 0 && (
-            <span className="text-xs text-muted-foreground normal-case tracking-normal">({pendingFeedback.length} pending)</span>
+            <span className="text-xs text-muted-foreground normal-case tracking-normal">({pendingFeedback.length})</span>
           )}
         </div>
       </div>

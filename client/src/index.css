@@ -9,7 +9,7 @@
   --opaque-button-border-intensity: -6;
   --elevate-1: rgba(0,0,0, .025);
   --elevate-2: rgba(0,0,0, .06);
-  --background: 38 33% 89%;
+  --background: 30 18% 97%;
   --foreground: 60 4% 11%;
   --border: 50 8% 82%;
   --card: 45 25% 95%;
@@ -18,15 +18,15 @@
   --sidebar: 43 20% 92%;
   --sidebar-foreground: 60 4% 11%;
   --sidebar-border: 50 8% 82%;
-  --sidebar-primary: 155 35% 30%;
+  --sidebar-primary: 143 59% 33%;
   --sidebar-primary-foreground: 0 0% 100%;
   --sidebar-accent: 50 8% 85%;
   --sidebar-accent-foreground: 60 4% 11%;
-  --sidebar-ring: 155 35% 30%;
+  --sidebar-ring: 143 59% 33%;
   --popover: 45 25% 95%;
   --popover-foreground: 60 4% 11%;
   --popover-border: 50 8% 82%;
-  --primary: 155 35% 30%;
+  --primary: 143 59% 33%;
   --primary-foreground: 0 0% 100%;
   --secondary: 50 8% 84%;
   --secondary-foreground: 60 4% 15%;
@@ -37,8 +37,8 @@
   --destructive: 4 50% 52%;
   --destructive-foreground: 0 0% 100%;
   --input: 50 6% 72%;
-  --ring: 155 35% 30%;
-  --chart-1: 155 35% 30%;
+  --ring: 143 59% 33%;
+  --chart-1: 143 59% 33%;
   --chart-2: 20 40% 55%;
   --chart-3: 30 35% 60%;
   --chart-4: 40 25% 65%;
@@ -89,15 +89,15 @@
   --sidebar: 60 4% 12%;
   --sidebar-foreground: 50 8% 90%;
   --sidebar-border: 60 3% 16%;
-  --sidebar-primary: 155 30% 35%;
+  --sidebar-primary: 143 50% 38%;
   --sidebar-primary-foreground: 0 0% 100%;
   --sidebar-accent: 60 3% 18%;
   --sidebar-accent-foreground: 50 8% 90%;
-  --sidebar-ring: 155 30% 35%;
+  --sidebar-ring: 143 50% 38%;
   --popover: 60 4% 13%;
   --popover-foreground: 50 8% 90%;
   --popover-border: 60 3% 18%;
-  --primary: 155 30% 38%;
+  --primary: 143 50% 38%;
   --primary-foreground: 0 0% 100%;
   --secondary: 60 3% 18%;
   --secondary-foreground: 50 8% 90%;
@@ -108,8 +108,8 @@
   --destructive: 4 50% 50%;
   --destructive-foreground: 0 0% 100%;
   --input: 60 3% 28%;
-  --ring: 155 30% 38%;
-  --chart-1: 155 30% 40%;
+  --ring: 143 50% 38%;
+  --chart-1: 143 50% 38%;
   --chart-2: 20 35% 50%;
   --chart-3: 30 30% 45%;
   --chart-4: 40 25% 40%;
@@ -142,6 +142,30 @@
 @layer base {
   * {
     @apply border-border;
+    scrollbar-width: thin;
+    scrollbar-color: transparent transparent;
+  }
+
+  *:hover {
+    scrollbar-color: hsl(var(--border)) transparent;
+  }
+
+  *::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  *::-webkit-scrollbar-thumb {
+    background: transparent;
+    border-radius: 3px;
+  }
+
+  *:hover::-webkit-scrollbar-thumb {
+    background: hsl(var(--border));
   }
 
   body {

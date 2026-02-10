@@ -63,6 +63,7 @@ export interface IStorage {
   // Users
   getUser(id: string): Promise<User | undefined>;
   getUserByEmail(email: string): Promise<User | undefined>;
+  getUsers(): Promise<User[]>;
   createUser(user: InsertUser): Promise<User>;
 
   // Clients
@@ -80,8 +81,12 @@ export interface IStorage {
 
   // Branding Kits
   getBrandingKit(clientId: string): Promise<BrandingKit | undefined>;
+  getBrandingKitById(id: string): Promise<BrandingKit | undefined>;
   getAllBrandingKits(): Promise<BrandingKit[]>;
   upsertBrandingKit(kit: InsertBrandingKit): Promise<BrandingKit>;
+  createBrandingKit(kit: InsertBrandingKit): Promise<BrandingKit>;
+  updateBrandingKit(id: string, data: Partial<InsertBrandingKit>): Promise<BrandingKit | undefined>;
+  deleteBrandingKit(id: string): Promise<void>;
 
   // Subscriptions
   getAllSubscriptions(): Promise<Subscription[]>;
@@ -89,6 +94,7 @@ export interface IStorage {
   getSubscription(id: string): Promise<Subscription | undefined>;
   createSubscription(subscription: InsertSubscription): Promise<Subscription>;
   updateSubscription(id: string, data: Partial<InsertSubscription>): Promise<Subscription | undefined>;
+  deleteSubscription(id: string): Promise<void>;
 
   // Invoices
   getAllInvoices(): Promise<Invoice[]>;
@@ -184,6 +190,10 @@ export class DatabaseStorage implements IStorage {
     return user;
   }
 
+  async getUsers(): Promise<User[]> {
+    return db.select().from(users).orderBy(users.name);
+  }
+
   async createUser(insertUser: InsertUser): Promise<User> {
     const [user] = await db.insert(users).values(insertUser).returning();
     return user;
@@ -239,6 +249,25 @@ export class DatabaseStorage implements IStorage {
     return client;
   }
 
+  async recalculateClientSubscriptionStatus(clientId: string): Promise<void> {
+    const subs = await this.getSubscriptionsByClient(clientId);
+    let newStatus: "active" | "paused" | "past_due" | "canceled" = "active";
+    if (subs.length === 0) {
+      newStatus = "active";
+    } else {
+      const hasActive = subs.some(s => s.status === "active");
+      const hasPastDue = subs.some(s => s.status === "past_due");
+      if (hasActive) {
+        newStatus = "active";
+      } else if (hasPastDue) {
+        newStatus = "past_due";
+      } else {
+        newStatus = "canceled";
+      }
+    }
+    await this.updateClient(clientId, { subscriptionStatus: newStatus } as any);
+  }
+
   // Branding Kits
   async getBrandingKit(clientId: string): Promise<BrandingKit | undefined> {
     const [kit] = await db.select().from(brandingKits).where(eq(brandingKits.clientId, clientId));
@@ -247,6 +276,11 @@ export class DatabaseStorage implements IStorage {
 
   async getAllBrandingKits(): Promise<BrandingKit[]> {
     return db.select().from(brandingKits).orderBy(desc(brandingKits.createdAt));
+  }
+
+  async getBrandingKitById(id: string): Promise<BrandingKit | undefined> {
+    const [kit] = await db.select().from(brandingKits).where(eq(brandingKits.id, id));
+    return kit;
   }
 
   async upsertBrandingKit(kit: InsertBrandingKit): Promise<BrandingKit> {
@@ -261,6 +295,24 @@ export class DatabaseStorage implements IStorage {
     }
     const [created] = await db.insert(brandingKits).values(kit).returning();
     return created;
+  }
+
+  async createBrandingKit(kit: InsertBrandingKit): Promise<BrandingKit> {
+    const [created] = await db.insert(brandingKits).values(kit).returning();
+    return created;
+  }
+
+  async updateBrandingKit(id: string, data: Partial<InsertBrandingKit>): Promise<BrandingKit | undefined> {
+    const [updated] = await db
+      .update(brandingKits)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(brandingKits.id, id))
+      .returning();
+    return updated;
+  }
+
+  async deleteBrandingKit(id: string): Promise<void> {
+    await db.delete(brandingKits).where(eq(brandingKits.id, id));
   }
 
   // Subscriptions
@@ -293,6 +345,10 @@ export class DatabaseStorage implements IStorage {
       .where(eq(subscriptions.id, id))
       .returning();
     return sub;
+  }
+
+  async deleteSubscription(id: string): Promise<void> {
+    await db.delete(subscriptions).where(eq(subscriptions.id, id));
   }
 
   // Invoices

@@ -98,7 +98,7 @@ function StatusColumn({ status, newsletters }: { status: typeof NEWSLETTER_STATU
     >
       <div className="flex items-center gap-2 mb-4 px-1" data-testid={`board-column-${status.value}`}>
         <span className={`w-2 h-2 rounded-full ${dotColor} flex-shrink-0`} />
-        <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+        <span className="text-xs font-medium text-muted-foreground">
           {status.label} ({newsletters.length})
         </span>
       </div>
@@ -178,10 +178,10 @@ function TableView({ newsletters, onStatusChange }: { newsletters: NewsletterWit
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b">
-            <th className="text-left p-3 text-xs font-medium text-muted-foreground uppercase tracking-wider">Client</th>
-            <th className="text-left p-3 text-xs font-medium text-muted-foreground uppercase tracking-wider">Title</th>
-            <th className="text-left p-3 text-xs font-medium text-muted-foreground uppercase tracking-wider">Due Date</th>
-            <th className="text-left p-3 text-xs font-medium text-muted-foreground uppercase tracking-wider">Status</th>
+            <th className="text-left p-3 text-xs font-medium text-muted-foreground">Client</th>
+            <th className="text-left p-3 text-xs font-medium text-muted-foreground">Title</th>
+            <th className="text-left p-3 text-xs font-medium text-muted-foreground">Due Date</th>
+            <th className="text-left p-3 text-xs font-medium text-muted-foreground">Status</th>
           </tr>
         </thead>
         <tbody>
@@ -338,8 +338,7 @@ export default function NewslettersPage() {
       <div className="px-8 py-6">
         <div className="flex items-center justify-between mb-2">
           <div>
-            <h1 className="text-2xl font-semibold">Newsletters</h1>
-            <p className="text-sm font-medium text-muted-foreground uppercase tracking-wider mt-1">Mission Control</p>
+            <h1 className="text-xl font-semibold">Newsletters</h1>
           </div>
           
           <div className="flex items-center gap-2">

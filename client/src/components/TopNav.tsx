@@ -23,7 +23,7 @@ export function TopNav() {
       <div className="flex h-full items-center justify-between px-5">
         <div className="flex items-center gap-8">
           <Link href="/" className="flex items-center" data-testid="link-home">
-            <img src={logoPath} alt="AgentReach" className="h-7" data-testid="logo-agentreach" />
+            <img src={logoPath} alt="AgentReach" className="h-5" data-testid="logo-agentreach" />
           </Link>
           
           <nav className="flex items-center gap-1">

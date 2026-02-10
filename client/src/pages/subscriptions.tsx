@@ -1,10 +1,16 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { TopNav } from "@/components/TopNav";
 import { Button } from "@/components/ui/button";
-import { RefreshCw, X } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Label } from "@/components/ui/label";
+import { RefreshCw, X, Plus, Save, Trash2 } from "lucide-react";
 import { format } from "date-fns";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 import type { Subscription, Client } from "@shared/schema";
 
 type SubscriptionWithClient = Subscription & { client: Client };
@@ -65,11 +71,54 @@ function formatFrequency(frequency: string) {
 function SubscriptionPreview({
   subscription,
   onClose,
+  onUpdated,
 }: {
   subscription: SubscriptionWithClient;
   onClose: () => void;
+  onUpdated: () => void;
 }) {
   const [, setLocation] = useLocation();
+  const { toast } = useToast();
+
+  const [editFrequency, setEditFrequency] = useState(subscription.frequency);
+  const [editAmount, setEditAmount] = useState(String(subscription.amount));
+  const [editStatus, setEditStatus] = useState(subscription.status);
+  const [editStartDate, setEditStartDate] = useState(subscription.startDate || "");
+  const [editEndDate, setEditEndDate] = useState(subscription.endDate || "");
+
+  const updateMutation = useMutation({
+    mutationFn: async () => {
+      await apiRequest("PATCH", `/api/subscriptions/${subscription.id}`, {
+        frequency: editFrequency,
+        amount: editAmount,
+        status: editStatus,
+        startDate: editStartDate || null,
+        endDate: editEndDate || null,
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/subscriptions"] });
+      toast({ title: "Subscription updated" });
+      onUpdated();
+    },
+    onError: (error: Error) => {
+      toast({ title: "Failed to update", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async () => {
+      await apiRequest("DELETE", `/api/subscriptions/${subscription.id}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/subscriptions"] });
+      toast({ title: "Subscription deleted" });
+      onClose();
+    },
+    onError: (error: Error) => {
+      toast({ title: "Failed to delete", description: error.message, variant: "destructive" });
+    },
+  });
 
   return (
     <div className="w-96 border-l border-border/50 bg-background h-full overflow-y-auto">
@@ -85,40 +134,85 @@ function SubscriptionPreview({
 
       <div className="p-4 space-y-4">
         <div className="space-y-3">
-          <div className="flex items-center justify-between gap-2 text-sm">
-            <span className="text-muted-foreground">Frequency</span>
-            <span>{formatFrequency(subscription.frequency)}</span>
+          <div className="space-y-1">
+            <Label className="text-xs text-muted-foreground">Frequency</Label>
+            <Select value={editFrequency} onValueChange={(v) => setEditFrequency(v as typeof editFrequency)}>
+              <SelectTrigger data-testid="select-edit-frequency">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="weekly">Weekly</SelectItem>
+                <SelectItem value="biweekly">Biweekly</SelectItem>
+                <SelectItem value="monthly">Monthly</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
-          <div className="flex items-center justify-between gap-2 text-sm">
-            <span className="text-muted-foreground">Amount</span>
-            <span className="font-medium">{subscription.currency} ${Number(subscription.amount).toFixed(2)}</span>
+          <div className="space-y-1">
+            <Label className="text-xs text-muted-foreground">Amount</Label>
+            <Input
+              type="number"
+              step="0.01"
+              value={editAmount}
+              onChange={(e) => setEditAmount(e.target.value)}
+              data-testid="input-edit-amount"
+            />
           </div>
-          {subscription.mrr && (
-            <div className="flex items-center justify-between gap-2 text-sm">
-              <span className="text-muted-foreground">MRR</span>
-              <span className="font-medium">${Number(subscription.mrr).toFixed(2)}</span>
-            </div>
-          )}
-          <div className="flex items-center justify-between gap-2 text-sm">
-            <span className="text-muted-foreground">Status</span>
-            {getStatusIndicator(subscription.status)}
+          <div className="space-y-1">
+            <Label className="text-xs text-muted-foreground">Status</Label>
+            <Select value={editStatus} onValueChange={(v) => setEditStatus(v as typeof editStatus)}>
+              <SelectTrigger data-testid="select-edit-status">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="active">Active</SelectItem>
+                <SelectItem value="paused">Paused</SelectItem>
+                <SelectItem value="canceled">Canceled</SelectItem>
+                <SelectItem value="past_due">Past Due</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
-          {subscription.startDate && (
-            <div className="flex items-center justify-between gap-2 text-sm">
-              <span className="text-muted-foreground">Start Date</span>
-              <span>{format(new Date(subscription.startDate), "MMM d, yyyy")}</span>
-            </div>
-          )}
-          {subscription.endDate && (
-            <div className="flex items-center justify-between gap-2 text-sm">
-              <span className="text-muted-foreground">End Date</span>
-              <span>{format(new Date(subscription.endDate), "MMM d, yyyy")}</span>
-            </div>
-          )}
+          <div className="space-y-1">
+            <Label className="text-xs text-muted-foreground">Start Date</Label>
+            <Input
+              type="date"
+              value={editStartDate}
+              onChange={(e) => setEditStartDate(e.target.value)}
+              data-testid="input-edit-start-date"
+            />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs text-muted-foreground">End Date</Label>
+            <Input
+              type="date"
+              value={editEndDate}
+              onChange={(e) => setEditEndDate(e.target.value)}
+              data-testid="input-edit-end-date"
+            />
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 pt-2">
+          <Button
+            onClick={() => updateMutation.mutate()}
+            disabled={updateMutation.isPending}
+            data-testid="button-save-subscription"
+          >
+            <Save className="w-4 h-4 mr-1.5" />
+            {updateMutation.isPending ? "Saving..." : "Save"}
+          </Button>
+          <Button
+            variant="destructive"
+            onClick={() => deleteMutation.mutate()}
+            disabled={deleteMutation.isPending}
+            data-testid="button-delete-subscription"
+          >
+            <Trash2 className="w-4 h-4 mr-1.5" />
+            {deleteMutation.isPending ? "Deleting..." : "Delete"}
+          </Button>
         </div>
 
         <div className="pt-4 border-t border-border/30">
-          <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3">Client</h4>
+          <h4 className="text-xs font-medium text-muted-foreground mb-3">Client</h4>
           <div
             className="py-2 cursor-pointer hover-elevate rounded-md px-2"
             onClick={() => setLocation(`/clients?id=${subscription.client.id}`)}
@@ -135,9 +229,46 @@ function SubscriptionPreview({
 
 export default function SubscriptionsPage() {
   const [selectedSubscription, setSelectedSubscription] = useState<SubscriptionWithClient | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
+  const { toast } = useToast();
 
   const { data: subscriptions = [], isLoading } = useQuery<SubscriptionWithClient[]>({
     queryKey: ["/api/subscriptions"],
+  });
+
+  const { data: clients = [] } = useQuery<Client[]>({
+    queryKey: ["/api/clients"],
+  });
+
+  const [newClientId, setNewClientId] = useState("");
+  const [newFrequency, setNewFrequency] = useState("monthly");
+  const [newAmount, setNewAmount] = useState("");
+  const [newCurrency, setNewCurrency] = useState("USD");
+  const [newStatus, setNewStatus] = useState("active");
+
+  const createMutation = useMutation({
+    mutationFn: async () => {
+      await apiRequest("POST", "/api/subscriptions", {
+        clientId: newClientId,
+        frequency: newFrequency,
+        amount: newAmount,
+        currency: newCurrency,
+        status: newStatus,
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/subscriptions"] });
+      toast({ title: "Subscription created" });
+      setCreateOpen(false);
+      setNewClientId("");
+      setNewFrequency("monthly");
+      setNewAmount("");
+      setNewCurrency("USD");
+      setNewStatus("active");
+    },
+    onError: (error: Error) => {
+      toast({ title: "Failed to create", description: error.message, variant: "destructive" });
+    },
   });
 
   return (
@@ -147,7 +278,11 @@ export default function SubscriptionsPage() {
       <div className="flex h-[calc(100vh-56px)]">
         <div className="flex-1 p-6 overflow-auto">
           <div className="flex items-center justify-between gap-2 mb-6">
-            <h1 className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Subscriptions</h1>
+            <h1 className="text-xl font-semibold">Subscriptions</h1>
+            <Button onClick={() => setCreateOpen(true)} data-testid="button-new-subscription">
+              <Plus className="w-4 h-4 mr-1.5" />
+              New Subscription
+            </Button>
           </div>
 
           {isLoading ? (
@@ -165,11 +300,11 @@ export default function SubscriptionsPage() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b">
-                    <th className="text-left p-3 text-xs font-medium text-muted-foreground uppercase tracking-wider">Client</th>
-                    <th className="text-left p-3 text-xs font-medium text-muted-foreground uppercase tracking-wider">Frequency</th>
-                    <th className="text-right p-3 text-xs font-medium text-muted-foreground uppercase tracking-wider">Amount</th>
-                    <th className="text-left p-3 text-xs font-medium text-muted-foreground uppercase tracking-wider">Status</th>
-                    <th className="text-left p-3 text-xs font-medium text-muted-foreground uppercase tracking-wider">Start Date</th>
+                    <th className="text-left p-3 text-xs font-medium text-muted-foreground">Client</th>
+                    <th className="text-left p-3 text-xs font-medium text-muted-foreground">Frequency</th>
+                    <th className="text-right p-3 text-xs font-medium text-muted-foreground">Amount</th>
+                    <th className="text-left p-3 text-xs font-medium text-muted-foreground">Status</th>
+                    <th className="text-left p-3 text-xs font-medium text-muted-foreground">Start Date</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -197,11 +332,93 @@ export default function SubscriptionsPage() {
 
         {selectedSubscription && (
           <SubscriptionPreview
+            key={selectedSubscription.id}
             subscription={selectedSubscription}
             onClose={() => setSelectedSubscription(null)}
+            onUpdated={() => setSelectedSubscription(null)}
           />
         )}
       </div>
+
+      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>New Subscription</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-1">
+              <Label>Client</Label>
+              <Select value={newClientId} onValueChange={setNewClientId}>
+                <SelectTrigger data-testid="select-new-client">
+                  <SelectValue placeholder="Select a client" />
+                </SelectTrigger>
+                <SelectContent>
+                  {clients.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <Label>Frequency</Label>
+              <Select value={newFrequency} onValueChange={setNewFrequency}>
+                <SelectTrigger data-testid="select-new-frequency">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="weekly">Weekly</SelectItem>
+                  <SelectItem value="biweekly">Biweekly</SelectItem>
+                  <SelectItem value="monthly">Monthly</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <Label>Amount</Label>
+              <Input
+                type="number"
+                step="0.01"
+                placeholder="0.00"
+                value={newAmount}
+                onChange={(e) => setNewAmount(e.target.value)}
+                data-testid="input-new-amount"
+              />
+            </div>
+            <div className="space-y-1">
+              <Label>Currency</Label>
+              <Input
+                value={newCurrency}
+                onChange={(e) => setNewCurrency(e.target.value)}
+                data-testid="input-new-currency"
+              />
+            </div>
+            <div className="space-y-1">
+              <Label>Status</Label>
+              <Select value={newStatus} onValueChange={setNewStatus}>
+                <SelectTrigger data-testid="select-new-status">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="active">Active</SelectItem>
+                  <SelectItem value="paused">Paused</SelectItem>
+                  <SelectItem value="canceled">Canceled</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCreateOpen(false)} data-testid="button-cancel-create">
+              Cancel
+            </Button>
+            <Button
+              onClick={() => createMutation.mutate()}
+              disabled={!newClientId || !newAmount || createMutation.isPending}
+              data-testid="button-confirm-create-subscription"
+            >
+              {createMutation.isPending ? "Creating..." : "Create"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

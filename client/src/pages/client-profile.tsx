@@ -477,7 +477,7 @@ export default function ClientProfilePage({ clientId }: ClientProfilePageProps) 
             <ScrollArea className="h-full">
               <div className="p-2">
                 <div className="flex items-center justify-between px-2 py-1 mb-1">
-                  <span className="text-xs uppercase tracking-wider text-muted-foreground font-medium">Newsletters</span>
+                  <span className="text-xs text-muted-foreground font-medium">Newsletters</span>
                   <Button variant="ghost" size="sm" onClick={() => setShowCreateNewsletter(true)} data-testid="button-new-campaign">
                     <Plus className="w-3.5 h-3.5" />
                   </Button>
@@ -527,7 +527,7 @@ export default function ClientProfilePage({ clientId }: ClientProfilePageProps) 
             <ScrollArea className="h-full">
               <div className="p-2">
                 <div className="flex items-center justify-between px-2 py-1 mb-1">
-                  <span className="text-xs uppercase tracking-wider text-muted-foreground font-medium">Orders</span>
+                  <span className="text-xs text-muted-foreground font-medium">Orders</span>
                   <Button variant="ghost" size="sm" onClick={() => setLocation("/invoices")} data-testid="button-view-orders">
                     <ExternalLink className="w-3.5 h-3.5" />
                   </Button>
@@ -563,7 +563,7 @@ export default function ClientProfilePage({ clientId }: ClientProfilePageProps) 
 
                 <div className="mt-4 px-2">
                   <div className="flex items-center justify-between py-1 mb-1">
-                    <span className="text-xs uppercase tracking-wider text-muted-foreground font-medium">Subscriptions</span>
+                    <span className="text-xs text-muted-foreground font-medium">Subscriptions</span>
                     <Button variant="ghost" size="sm" onClick={() => setShowAddSubscription(true)} data-testid="button-add-subscription">
                       <Plus className="w-3.5 h-3.5" />
                     </Button>
@@ -591,7 +591,7 @@ export default function ClientProfilePage({ clientId }: ClientProfilePageProps) 
             <ScrollArea className="h-full">
               <div className="p-2">
                 <div className="px-2 py-1 mb-1">
-                  <span className="text-xs uppercase tracking-wider text-muted-foreground font-medium">Email History</span>
+                  <span className="text-xs text-muted-foreground font-medium">Email History</span>
                 </div>
                 <ClientEmailsList clientId={clientId} />
               </div>
@@ -610,7 +610,7 @@ export default function ClientProfilePage({ clientId }: ClientProfilePageProps) 
             <ScrollArea className="h-full">
               <div className="p-3 space-y-4">
                 <div className="flex items-center justify-between">
-                  <span className="text-xs uppercase tracking-wider text-muted-foreground font-medium">Client Info</span>
+                  <span className="text-xs text-muted-foreground font-medium">Client Info</span>
                   {!isEditingInfo ? (
                     <Button
                       variant="ghost"

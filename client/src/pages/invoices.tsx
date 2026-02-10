@@ -18,6 +18,8 @@ type OrderWithRelations = Invoice & {
 function getOrderStatus(order: OrderWithRelations): "new" | "in_progress" | "complete" {
   const newsletters = order.newsletters || [];
   if (newsletters.length === 0) return "new";
+  const allNotStarted = newsletters.every(nl => nl.status === "not_started");
+  if (allNotStarted) return "new";
   const allSent = newsletters.every(nl => nl.status === "sent");
   if (allSent) return "complete";
   return "in_progress";
@@ -138,7 +140,7 @@ function OrderPreview({
         </div>
         
         <div className="pt-4 border-t border-border/30">
-          <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3">Client</h4>
+          <h4 className="text-xs font-medium text-muted-foreground mb-3">Client</h4>
           <div className="py-2">
             <p className="font-medium">{order.client.name}</p>
             <p className="text-sm text-muted-foreground">{order.client.primaryEmail}</p>
@@ -147,7 +149,7 @@ function OrderPreview({
         
         <div className="pt-4 border-t border-border/30">
           <div className="flex items-center justify-between gap-2 mb-3">
-            <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Newsletters</h4>
+            <h4 className="text-xs font-medium text-muted-foreground">Newsletters</h4>
             <Button 
               variant="ghost" 
               size="sm" 
@@ -247,7 +249,7 @@ export default function OrdersPage() {
       <div className="flex h-[calc(100vh-56px)]">
         <div className="flex-1 p-6 overflow-auto">
           <div className="flex items-center justify-between gap-2 mb-6">
-            <h1 className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Orders</h1>
+            <h1 className="text-xl font-semibold">Orders</h1>
           </div>
 
           {isLoading ? (
@@ -265,13 +267,13 @@ export default function OrdersPage() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b">
-                    <th className="text-left p-3 text-xs font-medium text-muted-foreground uppercase tracking-wider">ID</th>
-                    <th className="text-left p-3 text-xs font-medium text-muted-foreground uppercase tracking-wider">Client</th>
-                    <th className="text-left p-3 text-xs font-medium text-muted-foreground uppercase tracking-wider">Date</th>
-                    <th className="text-right p-3 text-xs font-medium text-muted-foreground uppercase tracking-wider">Amount</th>
-                    <th className="text-center p-3 text-xs font-medium text-muted-foreground uppercase tracking-wider">Newsletters</th>
-                    <th className="text-left p-3 text-xs font-medium text-muted-foreground uppercase tracking-wider">Status</th>
-                    <th className="text-left p-3 text-xs font-medium text-muted-foreground uppercase tracking-wider">Payment</th>
+                    <th className="text-left p-3 text-xs font-medium text-muted-foreground">ID</th>
+                    <th className="text-left p-3 text-xs font-medium text-muted-foreground">Client</th>
+                    <th className="text-left p-3 text-xs font-medium text-muted-foreground">Date</th>
+                    <th className="text-right p-3 text-xs font-medium text-muted-foreground">Amount</th>
+                    <th className="text-center p-3 text-xs font-medium text-muted-foreground">Newsletters</th>
+                    <th className="text-left p-3 text-xs font-medium text-muted-foreground">Status</th>
+                    <th className="text-left p-3 text-xs font-medium text-muted-foreground">Payment</th>
                   </tr>
                 </thead>
                 <tbody>

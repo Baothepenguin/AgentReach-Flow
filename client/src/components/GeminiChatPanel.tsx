@@ -144,7 +144,7 @@ export function GeminiChatPanel({
         >
           <ChevronLeft className="w-4 h-4" />
         </Button>
-        <div className="mt-4 -rotate-90 whitespace-nowrap text-xs text-muted-foreground font-medium tracking-wider uppercase">
+        <div className="mt-4 -rotate-90 whitespace-nowrap text-xs text-muted-foreground font-medium">
           AI Chat
         </div>
       </div>
