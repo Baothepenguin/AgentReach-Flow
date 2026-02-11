@@ -183,6 +183,21 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
     },
   });
 
+  const duplicateNewsletterMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", `/api/newsletters/${newsletterId}/duplicate`);
+      return res.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/newsletters"] });
+      toast({ title: "Newsletter duplicated" });
+      setLocation("/newsletters/" + data.id);
+    },
+    onError: (error) => {
+      toast({ title: "Failed to duplicate", description: error.message, variant: "destructive" });
+    },
+  });
+
   const hasMjml = !!(newsletter?.designJson as any)?.mjml;
   const hasContent = !!newsletterData?.html;
 
@@ -492,6 +507,16 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
               <Button size="sm" onClick={handleGetReviewLink} data-testid="button-review-link">
                 <ExternalLink className="w-4 h-4 mr-1" />
                 Get Review Link
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => duplicateNewsletterMutation.mutate()}
+                disabled={duplicateNewsletterMutation.isPending}
+                data-testid="button-duplicate-newsletter"
+              >
+                <Copy className="w-4 h-4 mr-1" />
+                Duplicate
               </Button>
               <Button variant="ghost" size="icon" className="text-destructive" onClick={handleDelete} data-testid="button-delete">
                 <Trash2 className="w-4 h-4" />

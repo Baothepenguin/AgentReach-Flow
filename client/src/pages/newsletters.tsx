@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { LayoutGrid, List, Calendar, ChevronRight, Plus, Search, Loader2 } from "lucide-react";
+import { LayoutGrid, List, Calendar, ChevronRight, Plus, Search, Loader2, Copy } from "lucide-react";
 import { format } from "date-fns";
 import { Link } from "wouter";
 import { queryClient, apiRequest } from "@/lib/queryClient";
@@ -51,7 +51,7 @@ const NEWSLETTER_STATUSES = [
 
 type NewsletterWithClient = Newsletter & { client: Client };
 
-function DraggableNewsletterCard({ newsletter }: { newsletter: NewsletterWithClient }) {
+function DraggableNewsletterCard({ newsletter, onDuplicate }: { newsletter: NewsletterWithClient; onDuplicate: (id: string) => void }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: newsletter.id,
   });
@@ -70,7 +70,22 @@ function DraggableNewsletterCard({ newsletter }: { newsletter: NewsletterWithCli
           data-testid={`newsletter-card-${newsletter.id}`}
         >
           <div className="flex flex-col gap-1.5">
-            <p className="font-medium text-sm line-clamp-1">{newsletter.client.name}</p>
+            <div className="flex items-center justify-between gap-1">
+              <p className="font-medium text-sm line-clamp-1">{newsletter.client.name}</p>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-6 w-6 flex-shrink-0"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  onDuplicate(newsletter.id);
+                }}
+                data-testid="button-duplicate-newsletter"
+              >
+                <Copy className="w-3.5 h-3.5" />
+              </Button>
+            </div>
             <p className="text-xs text-muted-foreground">
               {newsletter.expectedSendDate 
                 ? format(new Date(newsletter.expectedSendDate), "MMM d")
@@ -84,7 +99,7 @@ function DraggableNewsletterCard({ newsletter }: { newsletter: NewsletterWithCli
   );
 }
 
-function StatusColumn({ status, newsletters }: { status: typeof NEWSLETTER_STATUSES[number]; newsletters: NewsletterWithClient[] }) {
+function StatusColumn({ status, newsletters, onDuplicate }: { status: typeof NEWSLETTER_STATUSES[number]; newsletters: NewsletterWithClient[]; onDuplicate: (id: string) => void }) {
   const { setNodeRef, isOver } = useDroppable({
     id: status.value,
   });
@@ -104,14 +119,14 @@ function StatusColumn({ status, newsletters }: { status: typeof NEWSLETTER_STATU
       </div>
       <div className="space-y-2">
         {newsletters.map((newsletter) => (
-          <DraggableNewsletterCard key={newsletter.id} newsletter={newsletter} />
+          <DraggableNewsletterCard key={newsletter.id} newsletter={newsletter} onDuplicate={onDuplicate} />
         ))}
       </div>
     </div>
   );
 }
 
-function BoardView({ newsletters, onStatusChange }: { newsletters: NewsletterWithClient[]; onStatusChange: (id: string, status: string) => void }) {
+function BoardView({ newsletters, onStatusChange, onDuplicate }: { newsletters: NewsletterWithClient[]; onStatusChange: (id: string, status: string) => void; onDuplicate: (id: string) => void }) {
   const ongoingStatuses = NEWSLETTER_STATUSES.filter(s => s.value !== "sent");
   const [activeNewsletter, setActiveNewsletter] = useState<NewsletterWithClient | null>(null);
 
@@ -149,7 +164,7 @@ function BoardView({ newsletters, onStatusChange }: { newsletters: NewsletterWit
         {ongoingStatuses.map((status) => {
           const statusNewsletters = newsletters.filter(n => n.status === status.value);
           return (
-            <StatusColumn key={status.value} status={status} newsletters={statusNewsletters} />
+            <StatusColumn key={status.value} status={status} newsletters={statusNewsletters} onDuplicate={onDuplicate} />
           );
         })}
       </div>
@@ -172,7 +187,7 @@ function BoardView({ newsletters, onStatusChange }: { newsletters: NewsletterWit
   );
 }
 
-function TableView({ newsletters, onStatusChange }: { newsletters: NewsletterWithClient[]; onStatusChange: (id: string, status: string) => void }) {
+function TableView({ newsletters, onStatusChange, onDuplicate }: { newsletters: NewsletterWithClient[]; onStatusChange: (id: string, status: string) => void; onDuplicate: (id: string) => void }) {
   return (
     <div className="rounded-lg overflow-hidden">
       <table className="w-full text-sm">
@@ -182,6 +197,7 @@ function TableView({ newsletters, onStatusChange }: { newsletters: NewsletterWit
             <th className="text-left p-3 text-xs font-medium text-muted-foreground">Title</th>
             <th className="text-left p-3 text-xs font-medium text-muted-foreground">Due Date</th>
             <th className="text-left p-3 text-xs font-medium text-muted-foreground">Status</th>
+            <th className="text-left p-3 text-xs font-medium text-muted-foreground">Actions</th>
           </tr>
         </thead>
         <tbody>
@@ -215,6 +231,16 @@ function TableView({ newsletters, onStatusChange }: { newsletters: NewsletterWit
                     ))}
                   </SelectContent>
                 </Select>
+              </td>
+              <td className="p-3">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => onDuplicate(newsletter.id)}
+                  data-testid="button-duplicate-newsletter"
+                >
+                  <Copy className="w-4 h-4" />
+                </Button>
               </td>
             </tr>
           ))}
@@ -327,8 +353,27 @@ export default function NewslettersPage() {
     return true;
   });
 
+  const duplicateNewsletterMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const res = await apiRequest("POST", `/api/newsletters/${id}/duplicate`);
+      return res.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/newsletters"] });
+      toast({ title: "Newsletter duplicated" });
+      setLocation("/newsletters/" + data.id);
+    },
+    onError: (error) => {
+      toast({ title: "Failed to duplicate", description: error.message, variant: "destructive" });
+    },
+  });
+
   const handleStatusChange = (id: string, status: string) => {
     updateStatusMutation.mutate({ id, status });
+  };
+
+  const handleDuplicate = (id: string) => {
+    duplicateNewsletterMutation.mutate(id);
   };
 
   return (
@@ -387,10 +432,10 @@ export default function NewslettersPage() {
           </div>
         ) : view === "board" ? (
           <div className="h-[calc(100vh-200px)] overflow-auto">
-            <BoardView newsletters={filteredNewsletters} onStatusChange={handleStatusChange} />
+            <BoardView newsletters={filteredNewsletters} onStatusChange={handleStatusChange} onDuplicate={handleDuplicate} />
           </div>
         ) : (
-          <TableView newsletters={filteredNewsletters} onStatusChange={handleStatusChange} />
+          <TableView newsletters={filteredNewsletters} onStatusChange={handleStatusChange} onDuplicate={handleDuplicate} />
         )}
       </div>
 

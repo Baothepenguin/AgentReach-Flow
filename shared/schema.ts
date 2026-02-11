@@ -284,6 +284,7 @@ export const newsletters = pgTable("newsletters", {
   internalNotes: text("internal_notes"),
   editorFileUrl: text("editor_file_url"),
   contentChatUrl: text("content_chat_url"),
+  sendDate: date("send_date"),
   isUnpaid: boolean("is_unpaid").default(false),
   assignedToId: varchar("assigned_to_id").references(() => users.id),
   createdById: varchar("created_by_id").references(() => users.id),

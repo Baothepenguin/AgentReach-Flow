@@ -14,12 +14,13 @@ import {
   Loader2, 
   Monitor, 
   Smartphone, 
-  Plus,
   CheckSquare,
   Paperclip,
   X,
   Image as ImageIcon,
   FileText,
+  Download,
+  Send,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { format } from "date-fns";
@@ -44,7 +45,6 @@ interface UploadedFile {
 export default function ReviewPage() {
   const { token } = useParams<{ token: string }>();
   const { toast } = useToast();
-  const [showCommentBox, setShowCommentBox] = useState(false);
   const [comment, setComment] = useState("");
   const [approved, setApproved] = useState(false);
   const [deviceMode, setDeviceMode] = useState<"desktop" | "mobile">("desktop");
@@ -97,9 +97,8 @@ export default function ReviewPage() {
     onSuccess: () => {
       setComment("");
       setAttachments([]);
-      setShowCommentBox(false);
       refetchComments();
-      toast({ title: "Comment added" });
+      toast({ title: "Feedback submitted" });
     },
   });
 
@@ -157,6 +156,11 @@ export default function ReviewPage() {
       return <ImageIcon className="w-3 h-3" />;
     }
     return <FileText className="w-3 h-3" />;
+  };
+
+  const getAttachmentFileName = (path: string) => {
+    const parts = path.split("/");
+    return parts[parts.length - 1] || `Attachment`;
   };
 
   const pendingComments = existingComments.filter(c => !c.isCompleted);
@@ -243,184 +247,178 @@ export default function ReviewPage() {
 
       <div className="w-80 bg-background border-l flex flex-col">
         <div className="p-4 border-b">
-          <h1 className="font-semibold">{data?.newsletter.title}</h1>
-          <p className="text-sm text-muted-foreground">{data?.newsletter.clientName}</p>
+          <h1 className="font-semibold" data-testid="text-newsletter-title">{data?.newsletter.title}</h1>
+          <p className="text-sm text-muted-foreground" data-testid="text-client-name">{data?.newsletter.clientName}</p>
         </div>
 
-        <div className="flex-1 flex flex-col min-h-0">
-          <div className="p-3 border-b">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2 text-sm font-medium">
-                <MessageSquare className="w-4 h-4" />
-                Feedback
+        <div className="p-3 border-b">
+          <div className="flex items-center gap-2 text-sm font-medium">
+            <MessageSquare className="w-4 h-4" />
+            Feedback
+            {pendingComments.length > 0 && (
+              <Badge variant="secondary" className="text-xs">{pendingComments.length}</Badge>
+            )}
+          </div>
+        </div>
+
+        <ScrollArea className="flex-1">
+          <div className="p-3 space-y-2">
+            {existingComments.length === 0 ? (
+              <div className="text-center py-8 text-sm text-muted-foreground">
+                No feedback yet. Use the box below to leave a comment.
+              </div>
+            ) : (
+              <>
+                {pendingComments.map((c) => (
+                  <div
+                    key={c.id}
+                    className="p-2 rounded-md bg-muted/30 border border-amber-500/40"
+                    data-testid={`comment-${c.id}`}
+                  >
+                    <p className="text-sm">{c.content}</p>
+                    {c.attachments && c.attachments.length > 0 && (
+                      <div className="flex flex-wrap gap-1 mt-2">
+                        {c.attachments.map((path, i) => (
+                          <a
+                            key={i}
+                            href={path}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            download
+                            className="flex items-center gap-1 px-2 py-0.5 text-xs bg-background rounded border"
+                            data-testid={`link-attachment-${c.id}-${i}`}
+                          >
+                            <Download className="w-3 h-3" />
+                            <span className="max-w-[100px] truncate">{getAttachmentFileName(path)}</span>
+                          </a>
+                        ))}
+                      </div>
+                    )}
+                    <p className="text-xs text-muted-foreground mt-1">
+                      {format(new Date(c.createdAt), "MMM d, yyyy 'at' h:mm a")}
+                    </p>
+                  </div>
+                ))}
+
+                {completedComments.length > 0 && (
+                  <div className="pt-2">
+                    <div className="text-xs font-medium text-muted-foreground mb-2 flex items-center gap-1">
+                      <CheckSquare className="w-3 h-3" />
+                      Resolved ({completedComments.length})
+                    </div>
+                    {completedComments.map((c) => (
+                      <div
+                        key={c.id}
+                        className="p-2 rounded-md bg-muted/20 mb-2"
+                        data-testid={`comment-${c.id}`}
+                      >
+                        <p className="text-sm line-through text-muted-foreground">{c.content}</p>
+                        {c.attachments && c.attachments.length > 0 && (
+                          <div className="flex flex-wrap gap-1 mt-2">
+                            {c.attachments.map((path, i) => (
+                              <a
+                                key={i}
+                                href={path}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                download
+                                className="flex items-center gap-1 px-2 py-0.5 text-xs bg-background rounded border"
+                                data-testid={`link-attachment-${c.id}-${i}`}
+                              >
+                                <Download className="w-3 h-3" />
+                                <span className="max-w-[100px] truncate">{getAttachmentFileName(path)}</span>
+                              </a>
+                            ))}
+                          </div>
+                        )}
+                        <p className="text-xs text-muted-foreground mt-1">
+                          {format(new Date(c.createdAt), "MMM d, yyyy 'at' h:mm a")}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        </ScrollArea>
+
+        <div className="border-t p-3 space-y-3">
+          <div className="space-y-2">
+            <Textarea
+              value={comment}
+              onChange={(e) => setComment(e.target.value)}
+              placeholder="Describe the change you'd like..."
+              className="min-h-[80px] text-sm"
+              data-testid="input-review-comment"
+            />
+
+            {attachments.length > 0 && (
+              <div className="flex flex-wrap gap-1">
+                {attachments.map((file, index) => (
+                  <div
+                    key={index}
+                    className="flex items-center gap-1 px-2 py-1 text-xs bg-muted/50 rounded border"
+                  >
+                    {getFileIcon(file.type)}
+                    <span className="max-w-[100px] truncate">{file.name}</span>
+                    <button
+                      type="button"
+                      onClick={() => removeAttachment(index)}
+                      className="text-muted-foreground"
+                      data-testid={`button-remove-attachment-${index}`}
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  multiple
+                  accept="image/*,.pdf,.doc,.docx"
+                  onChange={handleFileSelect}
+                  className="hidden"
+                  data-testid="input-file-attachment"
+                />
+                <Button
+                  type="button"
+                  size="icon"
+                  variant="ghost"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={uploading}
+                  data-testid="button-attach-file"
+                >
+                  {uploading ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Paperclip className="w-4 h-4" />
+                  )}
+                </Button>
               </div>
               <Button
-                variant="ghost"
                 size="sm"
-                onClick={() => setShowCommentBox(true)}
-                className="h-7 text-xs"
-                data-testid="button-add-comment"
+                variant="outline"
+                onClick={() => addCommentMutation.mutate()}
+                disabled={!comment.trim() || addCommentMutation.isPending || uploading}
+                data-testid="button-submit-comment"
               >
-                <Plus className="w-3 h-3 mr-1" />
-                Add
+                {addCommentMutation.isPending ? (
+                  <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                ) : (
+                  <Send className="w-3 h-3 mr-1" />
+                )}
+                Request Changes
               </Button>
             </div>
           </div>
 
-          <ScrollArea className="flex-1">
-            <div className="p-3 space-y-2">
-              {showCommentBox && (
-                <div className="p-3 rounded-md bg-muted/50 border space-y-2">
-                  <Textarea
-                    value={comment}
-                    onChange={(e) => setComment(e.target.value)}
-                    placeholder="Describe the change you'd like..."
-                    className="min-h-[80px] text-sm"
-                    data-testid="input-review-comment"
-                  />
-                  
-                  {attachments.length > 0 && (
-                    <div className="flex flex-wrap gap-1">
-                      {attachments.map((file, index) => (
-                        <div
-                          key={index}
-                          className="flex items-center gap-1 px-2 py-1 text-xs bg-background rounded border"
-                        >
-                          {getFileIcon(file.type)}
-                          <span className="max-w-[100px] truncate">{file.name}</span>
-                          <button
-                            type="button"
-                            onClick={() => removeAttachment(index)}
-                            className="text-muted-foreground hover:text-foreground"
-                          >
-                            <X className="w-3 h-3" />
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-1">
-                      <input
-                        ref={fileInputRef}
-                        type="file"
-                        multiple
-                        accept="image/*,.pdf,.doc,.docx"
-                        onChange={handleFileSelect}
-                        className="hidden"
-                        data-testid="input-file-attachment"
-                      />
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="ghost"
-                        className="h-7 px-2"
-                        onClick={() => fileInputRef.current?.click()}
-                        disabled={uploading}
-                        data-testid="button-attach-file"
-                      >
-                        {uploading ? (
-                          <Loader2 className="w-3 h-3 animate-spin" />
-                        ) : (
-                          <Paperclip className="w-3 h-3" />
-                        )}
-                      </Button>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => {
-                          setShowCommentBox(false);
-                          setComment("");
-                          setAttachments([]);
-                        }}
-                      >
-                        Cancel
-                      </Button>
-                      <Button
-                        size="sm"
-                        onClick={() => addCommentMutation.mutate()}
-                        disabled={!comment.trim() || addCommentMutation.isPending || uploading}
-                        data-testid="button-submit-comment"
-                      >
-                        {addCommentMutation.isPending && (
-                          <Loader2 className="w-3 h-3 mr-1 animate-spin" />
-                        )}
-                        Add Comment
-                      </Button>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {existingComments.length === 0 && !showCommentBox ? (
-                <div className="text-center py-8 text-sm text-muted-foreground">
-                  No feedback yet. Click "Add" to leave a comment.
-                </div>
-              ) : (
-                <>
-                  {pendingComments.map((c) => (
-                    <div
-                      key={c.id}
-                      className="p-2 rounded-md bg-muted/30 border-l-2 border-amber-500"
-                      data-testid={`comment-${c.id}`}
-                    >
-                      <p className="text-sm">{c.content}</p>
-                      {c.attachments && c.attachments.length > 0 && (
-                        <div className="flex flex-wrap gap-1 mt-2">
-                          {c.attachments.map((path, i) => (
-                            <a
-                              key={i}
-                              href={path}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="flex items-center gap-1 px-2 py-0.5 text-xs bg-background rounded border hover:bg-muted"
-                            >
-                              <Paperclip className="w-3 h-3" />
-                              Attachment {i + 1}
-                            </a>
-                          ))}
-                        </div>
-                      )}
-                      <p className="text-xs text-muted-foreground mt-1">
-                        {format(new Date(c.createdAt), "MMM d, h:mm a")}
-                      </p>
-                    </div>
-                  ))}
-
-                  {completedComments.length > 0 && (
-                    <div className="pt-2">
-                      <div className="text-xs font-medium text-muted-foreground mb-2 flex items-center gap-1">
-                        <CheckSquare className="w-3 h-3" />
-                        Resolved ({completedComments.length})
-                      </div>
-                      {completedComments.map((c) => (
-                        <div
-                          key={c.id}
-                          className="p-2 rounded-md bg-muted/20"
-                          data-testid={`comment-${c.id}`}
-                        >
-                          <p className="text-sm line-through text-muted-foreground">{c.content}</p>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </>
-              )}
-            </div>
-          </ScrollArea>
-        </div>
-
-        <div className="p-4 border-t space-y-3">
-          {pendingComments.length > 0 && (
-            <div className="text-xs text-muted-foreground text-center">
-              {pendingComments.length} pending change{pendingComments.length !== 1 ? "s" : ""} requested
-            </div>
-          )}
           <Button
-            size="lg"
             className="w-full"
             onClick={() => approveMutation.mutate()}
             disabled={approveMutation.isPending}

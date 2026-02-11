@@ -773,6 +773,10 @@ export async function registerRoutes(
           updateData.designJson = designJson;
         }
 
+        if (otherFields.status === "sent" && !updateData.sendDate) {
+          updateData.sendDate = new Date().toISOString().split("T")[0];
+        }
+
         const updated = await storage.updateNewsletter(req.params.id, updateData);
         return res.json(updated);
       }
@@ -785,6 +789,10 @@ export async function registerRoutes(
       
       if (designJson) {
         updateData.designJson = designJson;
+      }
+
+      if (otherFields.status === "sent" && !updateData.sendDate) {
+        updateData.sendDate = new Date().toISOString().split("T")[0];
       }
 
       const newsletter = await storage.updateNewsletter(req.params.id, updateData);
@@ -801,6 +809,58 @@ export async function registerRoutes(
       res.json({ success: true });
     } catch (error) {
       res.status(500).json({ error: "Failed to delete newsletter" });
+    }
+  });
+
+  app.post("/api/newsletters/:id/duplicate", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = (req as Request & { userId: string }).userId;
+      const original = await storage.getNewsletter(req.params.id);
+      if (!original) {
+        return res.status(404).json({ error: "Newsletter not found" });
+      }
+
+      const versions = await storage.getVersionsByNewsletter(original.id);
+      const currentVersion = versions.find((v) => v.id === original.currentVersionId);
+      const documentJson: NewsletterDocument = (currentVersion?.snapshotJson || original.documentJson || DEFAULT_NEWSLETTER_DOCUMENT) as NewsletterDocument;
+
+      let expectedSendDate: string;
+      if (original.subscriptionId) {
+        const subscription = await storage.getSubscription(original.subscriptionId);
+        if (subscription?.frequency && original.expectedSendDate) {
+          const dates = getNextSendDates(subscription.frequency, new Date(original.expectedSendDate), 1);
+          expectedSendDate = format(dates[0], "yyyy-MM-dd");
+        } else {
+          expectedSendDate = format(addDays(new Date(), 7), "yyyy-MM-dd");
+        }
+      } else {
+        expectedSendDate = format(addDays(new Date(), 7), "yyyy-MM-dd");
+      }
+
+      const newsletter = await storage.createNewsletter({
+        clientId: original.clientId,
+        subscriptionId: original.subscriptionId || null,
+        title: original.title + " (Copy)",
+        status: "not_started",
+        documentJson,
+        expectedSendDate,
+        createdById: userId,
+      });
+
+      const version = await storage.createVersion({
+        newsletterId: newsletter.id,
+        versionNumber: 1,
+        snapshotJson: documentJson,
+        createdById: userId,
+        changeSummary: "Initial version (duplicated)",
+      });
+
+      await storage.updateNewsletter(newsletter.id, { currentVersionId: version.id });
+
+      res.status(201).json({ ...newsletter, currentVersionId: version.id });
+    } catch (error) {
+      console.error("Duplicate newsletter error:", error);
+      res.status(500).json({ error: "Failed to duplicate newsletter" });
     }
   });
 
@@ -1032,11 +1092,27 @@ export async function registerRoutes(
       if (clientPrompt) systemParts.push(`CLIENT-SPECIFIC INSTRUCTIONS:\n${clientPrompt.prompt}`);
       if (brandingKit) {
         const brandParts: string[] = [];
-        if (brandingKit.title) brandParts.push(`Agent: ${brandingKit.title}`);
+        if (brandingKit.title) brandParts.push(`Agent Name/Title: ${brandingKit.title}`);
         if (brandingKit.companyName) brandParts.push(`Company: ${brandingKit.companyName}`);
         if (brandingKit.primaryColor) brandParts.push(`Primary Color: ${brandingKit.primaryColor}`);
-        if (brandingKit.tone) brandParts.push(`Tone: ${brandingKit.tone}`);
-        if (brandParts.length) systemParts.push(`BRANDING:\n${brandParts.join("\n")}`);
+        if (brandingKit.secondaryColor) brandParts.push(`Secondary Color: ${brandingKit.secondaryColor}`);
+        if (brandingKit.tone) brandParts.push(`Tone of Voice: ${brandingKit.tone}`);
+        if (brandingKit.logo) brandParts.push(`Logo URL: ${brandingKit.logo}`);
+        if (brandingKit.headshot) brandParts.push(`Headshot URL: ${brandingKit.headshot}`);
+        if (brandingKit.companyLogo) brandParts.push(`Company Logo URL: ${brandingKit.companyLogo}`);
+        if (brandingKit.phone) brandParts.push(`Phone: ${brandingKit.phone}`);
+        if (brandingKit.email) brandParts.push(`Email: ${brandingKit.email}`);
+        if (brandingKit.website) brandParts.push(`Website: ${brandingKit.website}`);
+        if (brandingKit.facebook) brandParts.push(`Facebook: ${brandingKit.facebook}`);
+        if (brandingKit.instagram) brandParts.push(`Instagram: ${brandingKit.instagram}`);
+        if (brandingKit.linkedin) brandParts.push(`LinkedIn: ${brandingKit.linkedin}`);
+        if (brandingKit.youtube) brandParts.push(`YouTube: ${brandingKit.youtube}`);
+        if (brandingKit.platform) brandParts.push(`Email Platform: ${brandingKit.platform}`);
+        if (brandingKit.mustInclude && brandingKit.mustInclude.length > 0) brandParts.push(`Must Include: ${brandingKit.mustInclude.join(", ")}`);
+        if (brandingKit.avoidTopics && brandingKit.avoidTopics.length > 0) brandParts.push(`Avoid Topics: ${brandingKit.avoidTopics.join(", ")}`);
+        if (brandingKit.localLandmarks && brandingKit.localLandmarks.length > 0) brandParts.push(`Local Landmarks: ${brandingKit.localLandmarks.join(", ")}`);
+        if (brandingKit.notes) brandParts.push(`Additional Notes: ${brandingKit.notes}`);
+        if (brandParts.length) systemParts.push(`CLIENT BRANDING KIT:\n${brandParts.join("\n")}`);
       }
 
       const systemInstruction = systemParts.length > 0 
