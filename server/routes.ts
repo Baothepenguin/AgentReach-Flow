@@ -1690,5 +1690,91 @@ export async function registerRoutes(
     }
   });
 
+  // ============================================================================
+  // STRIPE INTEGRATION
+  // ============================================================================
+
+  app.get("/api/stripe/publishable-key", requireAuth, async (_req: Request, res: Response) => {
+    try {
+      const { getStripePublishableKey } = await import("./stripeClient");
+      const publishableKey = await getStripePublishableKey();
+      res.json({ publishableKey });
+    } catch (error: any) {
+      console.error("Failed to get Stripe publishable key:", error);
+      res.status(500).json({ error: "Failed to get Stripe configuration" });
+    }
+  });
+
+  app.post("/api/stripe/checkout", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const { invoiceId } = req.body;
+      if (!invoiceId) {
+        return res.status(400).json({ error: "invoiceId is required" });
+      }
+
+      const invoice = await storage.getInvoice(invoiceId);
+      if (!invoice) {
+        return res.status(404).json({ error: "Invoice not found" });
+      }
+      if (invoice.status === "paid") {
+        return res.status(400).json({ error: "Invoice is already paid" });
+      }
+
+      const client = await storage.getClient(invoice.clientId);
+      if (!client) {
+        return res.status(404).json({ error: "Client not found" });
+      }
+
+      const { getUncachableStripeClient } = await import("./stripeClient");
+      const stripe = await getUncachableStripeClient();
+
+      const session = await stripe.checkout.sessions.create({
+        payment_method_types: ['card'],
+        customer_email: client.primaryEmail,
+        line_items: [{
+          price_data: {
+            currency: (invoice.currency || 'usd').toLowerCase(),
+            product_data: {
+              name: `Invoice #${invoice.id.slice(0, 8)} - ${client.name}`,
+            },
+            unit_amount: Math.round(Number(invoice.amount) * 100),
+          },
+          quantity: 1,
+        }],
+        mode: 'payment',
+        success_url: `${req.protocol}://${req.get('host')}/invoices?paid=${invoiceId}`,
+        cancel_url: `${req.protocol}://${req.get('host')}/invoices`,
+        metadata: {
+          invoiceId: invoice.id,
+          clientId: client.id,
+        },
+      });
+
+      res.json({ url: session.url });
+    } catch (error: any) {
+      console.error("Stripe checkout error:", error);
+      res.status(500).json({ error: "Failed to create checkout session" });
+    }
+  });
+
+  app.get("/api/stripe/products", requireAuth, async (_req: Request, res: Response) => {
+    try {
+      const { db } = await import("./db");
+      const { sql } = await import("drizzle-orm");
+      const result = await db.execute(
+        sql`SELECT p.id, p.name, p.description, p.metadata, p.active,
+            pr.id as price_id, pr.unit_amount, pr.currency, pr.recurring
+            FROM stripe.products p
+            LEFT JOIN stripe.prices pr ON pr.product = p.id AND pr.active = true
+            WHERE p.active = true
+            ORDER BY p.name`
+      );
+      res.json({ data: result.rows });
+    } catch (error: any) {
+      console.error("Failed to fetch Stripe products:", error);
+      res.json({ data: [] });
+    }
+  });
+
   return httpServer;
 }

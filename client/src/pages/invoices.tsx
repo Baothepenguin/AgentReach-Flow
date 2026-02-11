@@ -3,7 +3,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation, useSearch } from "wouter";
 import { TopNav } from "@/components/TopNav";
 import { Button } from "@/components/ui/button";
-import { Receipt, X, Mail, Plus, ExternalLink } from "lucide-react";
+import { Receipt, X, Mail, Plus, ExternalLink, CreditCard } from "lucide-react";
 import { format } from "date-fns";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -96,6 +96,40 @@ function getPaymentStatusIndicator(status: string) {
   }
 }
 
+function StripePaymentButton({ order }: { order: OrderWithRelations }) {
+  const { toast } = useToast();
+  const checkoutMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/stripe/checkout", {
+        invoiceId: order.id,
+      });
+      return await res.json();
+    },
+    onSuccess: (data: { url: string }) => {
+      if (data.url) {
+        window.open(data.url, '_blank');
+      }
+    },
+    onError: () => {
+      toast({ title: "Failed to create payment link", variant: "destructive" });
+    },
+  });
+
+  return (
+    <Button
+      variant="default"
+      size="sm"
+      className="w-full mt-3"
+      onClick={() => checkoutMutation.mutate()}
+      disabled={checkoutMutation.isPending}
+      data-testid="button-stripe-checkout"
+    >
+      <CreditCard className="w-3.5 h-3.5 mr-1.5" />
+      {checkoutMutation.isPending ? "Creating..." : "Send Payment Link"}
+    </Button>
+  );
+}
+
 function OrderPreview({ 
   order, 
   onClose,
@@ -137,6 +171,9 @@ function OrderPreview({
             <span className="text-muted-foreground">Payment</span>
             {getPaymentStatusIndicator(order.status)}
           </div>
+          {order.status !== "paid" && (
+            <StripePaymentButton order={order} />
+          )}
         </div>
         
         <div className="pt-4 border-t border-border/30">

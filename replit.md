@@ -16,6 +16,9 @@ AgentReach FLOW is a newsletter production system for real estate agents that en
 - Subscription auto-queue: Create newsletters automatically based on client subscription frequency
 - Internal notes (team-only, not visible to clients)
 - Invoice tracking linked to subscriptions and newsletters
+- Stripe integration for payment processing (checkout sessions, payment links)
+- CRUD for subscriptions and branding kits
+- Client subscription status auto-calculation (active/churned based on subscriptions)
 
 ## Architecture
 
@@ -55,6 +58,8 @@ AgentReach FLOW is a newsletter production system for real estate agents that en
 - `server/mjml-service.ts` - MJML rendering and validation
 - `server/email-compiler.ts` - Returns raw HTML from document
 - `server/postmark-service.ts` - Postmark sender signature management
+- `server/stripeClient.ts` - Stripe client with Replit connection API
+- `server/webhookHandlers.ts` - Stripe webhook processing
 
 ### Frontend
 - `client/src/App.tsx` - Root component with auth and routing
