@@ -15,6 +15,7 @@ import { LayoutGrid, List, Calendar, ChevronRight, Plus, Search, Loader2, Copy }
 import { format } from "date-fns";
 import { Link } from "wouter";
 import { queryClient, apiRequest } from "@/lib/queryClient";
+import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import {
   DndContext,
@@ -30,7 +31,7 @@ import { useDraggable } from "@dnd-kit/core";
 import type { Newsletter, Client, Subscription, Invoice } from "@shared/schema";
 
 const STATUS_DOT_COLORS: Record<string, string> = {
-  not_started: "bg-gray-300",
+  not_started: "bg-neutral-300",
   in_progress: "bg-blue-400",
   revisions: "bg-orange-400",
   internal_review: "bg-purple-400",
@@ -388,16 +389,18 @@ export default function NewslettersPage() {
           
           <div className="flex items-center gap-2">
             <Button
-              variant={view === "board" ? "secondary" : "ghost"}
+              variant="ghost"
               size="icon"
+              className={cn(view === "board" && "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400")}
               onClick={() => setView("board")}
               data-testid="button-view-board"
             >
               <LayoutGrid className="w-4 h-4" />
             </Button>
             <Button
-              variant={view === "table" ? "secondary" : "ghost"}
+              variant="ghost"
               size="icon"
+              className={cn(view === "table" && "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400")}
               onClick={() => setView("table")}
               data-testid="button-view-table"
             >

@@ -11,6 +11,7 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Plus, Search, Mail, MapPin, Users, LayoutGrid, List, Mail as MailIcon } from "lucide-react";
 import { CreateClientDialog } from "@/components/CreateClientDialog";
 import { queryClient, apiRequest } from "@/lib/queryClient";
+import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import type { Client } from "@shared/schema";
 
@@ -152,16 +153,18 @@ export default function ClientsListPage() {
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-1">
               <Button
-                variant={viewMode === "list" ? "secondary" : "ghost"}
+                variant="ghost"
                 size="sm"
+                className={cn(viewMode === "list" && "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400")}
                 onClick={() => setViewMode("list")}
                 data-testid="button-view-list"
               >
                 List
               </Button>
               <Button
-                variant={viewMode === "gallery" ? "secondary" : "ghost"}
+                variant="ghost"
                 size="sm"
+                className={cn(viewMode === "gallery" && "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400")}
                 onClick={() => setViewMode("gallery")}
                 data-testid="button-view-gallery"
               >

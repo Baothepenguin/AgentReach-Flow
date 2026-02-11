@@ -132,12 +132,12 @@ export function RightPanel({
           Team Member
         </label>
         {onAssignedToChange ? (
-          <Select value={assignedToId || ""} onValueChange={(value) => onAssignedToChange(value || null)}>
+          <Select value={assignedToId || "unassigned"} onValueChange={(value) => onAssignedToChange(value === "unassigned" ? null : value)}>
             <SelectTrigger className="w-full" data-testid="select-team-member-trigger">
               <SelectValue placeholder="Select team member" data-testid="select-team-member-value" />
             </SelectTrigger>
             <SelectContent align="start" data-testid="select-team-member-content">
-              <SelectItem value="" data-testid="team-member-option-unassigned">
+              <SelectItem value="unassigned" data-testid="team-member-option-unassigned">
                 Unassigned
               </SelectItem>
               {users.map((user) => (

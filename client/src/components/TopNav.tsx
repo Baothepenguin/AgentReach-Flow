@@ -8,10 +8,9 @@ import logoPath from "@assets/Logo_Colored_Trans_1770505643619.png";
 const navItems = [
   { path: "/", label: "Dashboard" },
   { path: "/clients", label: "Clients" },
-  { path: "/orders", label: "Orders" },
   { path: "/subscriptions", label: "Subscriptions" },
+  { path: "/orders", label: "Orders" },
   { path: "/newsletters", label: "Newsletters" },
-  { path: "/branding-kits", label: "Branding Kits" },
 ];
 
 export function TopNav() {
@@ -32,9 +31,11 @@ export function TopNav() {
               return (
                 <Link key={item.path} href={item.path}>
                   <Button
-                    variant={isActive ? "secondary" : "ghost"}
+                    variant="ghost"
                     size="sm"
-                    className={cn(!isActive && "text-muted-foreground")}
+                    className={cn(
+                      isActive ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400" : "text-muted-foreground"
+                    )}
                     data-testid={`nav-${item.label.toLowerCase()}`}
                   >
                     {item.label}
