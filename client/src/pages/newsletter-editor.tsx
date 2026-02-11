@@ -78,10 +78,20 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
   const newsletter = newsletterData?.newsletter;
   const client = newsletter?.client;
 
+  const minifyHtml = (html: string): string => {
+    return html
+      .replace(/<!--[\s\S]*?-->/g, '')
+      .replace(/\n\s*\n/g, '\n')
+      .replace(/>\s{2,}</g, '> <')
+      .replace(/\t/g, '')
+      .trim();
+  };
+
   const updateHtmlMutation = useMutation({
     mutationFn: async (html: string) => {
+      const minified = minifyHtml(html);
       const res = await apiRequest("PATCH", `/api/newsletters/${newsletterId}`, { 
-        documentJson: { html } 
+        documentJson: { html: minified } 
       });
       return res.json();
     },

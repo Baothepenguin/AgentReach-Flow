@@ -391,7 +391,7 @@ export default function NewslettersPage() {
             <Button
               variant="ghost"
               size="icon"
-              className={cn(view === "board" && "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400")}
+              className={cn(view === "board" && "bg-emerald-50 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300")}
               onClick={() => setView("board")}
               data-testid="button-view-board"
             >
@@ -400,7 +400,7 @@ export default function NewslettersPage() {
             <Button
               variant="ghost"
               size="icon"
-              className={cn(view === "table" && "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400")}
+              className={cn(view === "table" && "bg-emerald-50 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300")}
               onClick={() => setView("table")}
               data-testid="button-view-table"
             >

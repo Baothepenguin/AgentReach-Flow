@@ -34,7 +34,7 @@ export function TopNav() {
                     variant="ghost"
                     size="sm"
                     className={cn(
-                      isActive ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400" : "text-muted-foreground"
+                      isActive ? "bg-emerald-50 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300" : "text-muted-foreground"
                     )}
                     data-testid={`nav-${item.label.toLowerCase()}`}
                   >

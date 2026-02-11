@@ -155,7 +155,7 @@ export default function ClientsListPage() {
               <Button
                 variant="ghost"
                 size="sm"
-                className={cn(viewMode === "list" && "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400")}
+                className={cn(viewMode === "list" && "bg-emerald-50 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300")}
                 onClick={() => setViewMode("list")}
                 data-testid="button-view-list"
               >
@@ -164,7 +164,7 @@ export default function ClientsListPage() {
               <Button
                 variant="ghost"
                 size="sm"
-                className={cn(viewMode === "gallery" && "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400")}
+                className={cn(viewMode === "gallery" && "bg-emerald-50 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300")}
                 onClick={() => setViewMode("gallery")}
                 data-testid="button-view-gallery"
               >
