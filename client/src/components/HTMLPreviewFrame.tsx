@@ -55,26 +55,47 @@ export function HTMLPreviewFrame({
     const iframe = iframeRef.current;
     if (!iframe || !html) return;
 
+    let mutationObserver: MutationObserver | null = null;
+    let resizeTimeout: ReturnType<typeof setTimeout> | null = null;
+
+    const syncHeight = () => {
+      const doc = iframe.contentDocument;
+      if (!doc) return;
+      const bodyHeight = doc.body?.scrollHeight || 0;
+      const htmlHeight = doc.documentElement?.scrollHeight || 0;
+      const nextHeight = Math.max(bodyHeight, htmlHeight, 640);
+      iframe.style.height = `${nextHeight}px`;
+    };
+
     const handleLoad = () => {
       const doc = iframe.contentDocument;
       if (!doc) return;
 
       doc.body.contentEditable = "true";
       doc.body.style.cursor = "text";
-      
+      doc.body.style.margin = doc.body.style.margin || "0";
+      doc.body.style.background = "#ffffff";
+
       const style = doc.createElement("style");
       style.textContent = `
         *:focus { outline: 2px solid hsl(15 64% 60% / 0.5); outline-offset: 2px; }
         *:hover { outline: 1px dashed hsl(15 64% 60% / 0.3); }
+        body { -webkit-font-smoothing: antialiased; }
       `;
       doc.head.appendChild(style);
 
-      doc.body.addEventListener("input", () => {
-        if (onHtmlChange) {
-          const fullHtml = `<!DOCTYPE html>${doc.documentElement.outerHTML}`;
-          onHtmlChange(fullHtml);
-        }
-      });
+      const handleInput = () => {
+        syncHeight();
+        if (resizeTimeout) clearTimeout(resizeTimeout);
+        resizeTimeout = setTimeout(() => {
+          if (onHtmlChange) {
+            const fullHtml = `<!DOCTYPE html>${doc.documentElement.outerHTML}`;
+            onHtmlChange(fullHtml);
+          }
+        }, 100);
+      };
+
+      doc.body.addEventListener("input", handleInput);
 
       doc.body.addEventListener("mouseup", () => {
         const selection = doc.getSelection();
@@ -90,10 +111,24 @@ export function HTMLPreviewFrame({
           setShowToolbar(false);
         }
       });
+
+      mutationObserver = new MutationObserver(() => syncHeight());
+      mutationObserver.observe(doc.body, { childList: true, subtree: true, attributes: true, characterData: true });
+
+      syncHeight();
+      setTimeout(syncHeight, 50);
+      setTimeout(syncHeight, 200);
     };
 
     iframe.addEventListener("load", handleLoad);
-    return () => iframe.removeEventListener("load", handleLoad);
+    window.addEventListener("resize", syncHeight);
+
+    return () => {
+      iframe.removeEventListener("load", handleLoad);
+      window.removeEventListener("resize", syncHeight);
+      if (mutationObserver) mutationObserver.disconnect();
+      if (resizeTimeout) clearTimeout(resizeTimeout);
+    };
   }, [html, onHtmlChange]);
 
   const getFullHtml = useCallback(() => {
@@ -133,7 +168,7 @@ export function HTMLPreviewFrame({
 
   return (
     <div className="flex flex-col h-full relative">
-      <div className={`flex-1 flex items-start justify-center overflow-auto ${fullWidth ? '' : 'p-4 bg-muted/20'}`}>
+      <div className={`flex-1 flex items-start justify-center overflow-auto bg-muted/20 ${fullWidth ? 'p-3' : 'p-4'}`}>
         {isLoading ? (
           <div
             className="bg-white rounded-lg shadow-lg overflow-hidden"
@@ -159,11 +194,8 @@ export function HTMLPreviewFrame({
               ref={iframeRef}
               srcDoc={html}
               title="Newsletter Preview"
-              className="w-full border-0"
-              style={{ 
-                minHeight: deviceMode === "mobile" ? "667px" : "600px", 
-                height: "auto" 
-              }}
+              className="w-full border-0 bg-white"
+              style={{ height: deviceMode === "mobile" ? "667px" : "680px" }}
               sandbox="allow-same-origin allow-scripts"
               data-testid="iframe-preview"
             />

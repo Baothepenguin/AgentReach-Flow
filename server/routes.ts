@@ -1126,26 +1126,47 @@ export async function registerRoutes(
           parts: [{ text: m.content }],
         }));
 
+      const geminiApiKey = process.env.AI_INTEGRATIONS_GEMINI_API_KEY || process.env.GEMINI_API_KEY;
+      if (!geminiApiKey) {
+        const assistantMsg = await storage.addChatMessage({
+          newsletterId: req.params.id,
+          role: "assistant",
+          content:
+            "Gemini is not configured yet. Add `AI_INTEGRATIONS_GEMINI_API_KEY` (or `GEMINI_API_KEY`) in environment variables, then try again.",
+        });
+        return res.json({ userMessage: userMsg, assistantMessage: assistantMsg });
+      }
+
       const { GoogleGenAI } = await import("@google/genai");
       const ai = new GoogleGenAI({
-        apiKey: process.env.AI_INTEGRATIONS_GEMINI_API_KEY,
-        httpOptions: {
-          apiVersion: "",
-          baseUrl: process.env.AI_INTEGRATIONS_GEMINI_BASE_URL,
-        },
+        apiKey: geminiApiKey,
+        ...(process.env.AI_INTEGRATIONS_GEMINI_BASE_URL
+          ? {
+              httpOptions: {
+                apiVersion: "",
+                baseUrl: process.env.AI_INTEGRATIONS_GEMINI_BASE_URL,
+              },
+            }
+          : {}),
       });
 
-      const response = await ai.models.generateContent({
-        model: "gemini-2.5-flash",
-        contents: conversationContents,
-        config: {
-          systemInstruction,
-          maxOutputTokens: 4096,
-          temperature: 0.7,
-        },
-      });
-
-      const assistantContent = response.text ?? "I'm sorry, I couldn't generate a response.";
+      let assistantContent = "I'm sorry, I couldn't generate a response.";
+      try {
+        const response = await ai.models.generateContent({
+          model: "gemini-2.5-flash",
+          contents: conversationContents,
+          config: {
+            systemInstruction,
+            maxOutputTokens: 4096,
+            temperature: 0.7,
+          },
+        });
+        assistantContent = response.text ?? assistantContent;
+      } catch (aiError) {
+        console.error("Gemini chat generation failed:", aiError);
+        assistantContent =
+          "I couldn't reach Gemini right now. Please retry in a moment, or check AI integration settings.";
+      }
 
       const assistantMsg = await storage.addChatMessage({
         newsletterId: req.params.id,
@@ -1733,7 +1754,7 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/gmail/status", requireAuth, async (req, res) => {
+  app.get("/api/gmail/status", requireAuth, async (_req, res) => {
     try {
       const { isGmailConnected } = await import("./gmail-service");
       const connected = await isGmailConnected();
@@ -1741,6 +1762,24 @@ export async function registerRoutes(
     } catch {
       res.json({ connected: false });
     }
+  });
+
+  app.get("/api/integrations/ai-status", requireAuth, async (_req, res) => {
+    const geminiConfigured = Boolean(
+      process.env.AI_INTEGRATIONS_GEMINI_API_KEY || process.env.GEMINI_API_KEY
+    );
+    const openaiConfigured = Boolean(
+      process.env.AI_INTEGRATIONS_OPENAI_API_KEY || process.env.OPENAI_API_KEY
+    );
+    const postmarkConfigured = Boolean(
+      process.env.POSTMARK_ACCOUNT_API_TOKEN || process.env.POSTMARK_SERVER_TOKEN
+    );
+
+    res.json({
+      geminiConfigured,
+      openaiConfigured,
+      postmarkConfigured,
+    });
   });
 
   app.get("/api/clients/:clientId/emails", requireAuth, async (req, res) => {

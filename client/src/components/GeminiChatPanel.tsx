@@ -4,6 +4,7 @@ import { queryClient, apiRequest } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
+import { useToast } from "@/hooks/use-toast";
 import {
   MessageSquare,
   Send,
@@ -14,6 +15,8 @@ import {
   Trash2,
   ChevronDown,
   ChevronUp,
+  AlertCircle,
+  CheckCircle2,
 } from "lucide-react";
 import type { NewsletterChatMessage, AiPrompt } from "@shared/schema";
 
@@ -38,6 +41,19 @@ export function GeminiChatPanel({
   const [clientPromptDraft, setClientPromptDraft] = useState("");
   const [promptsLoaded, setPromptsLoaded] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const { toast } = useToast();
+
+  const { data: aiStatus } = useQuery<{ geminiConfigured: boolean; openaiConfigured: boolean; postmarkConfigured: boolean }>({
+    queryKey: ["/api/integrations/ai-status"],
+    queryFn: async () => {
+      const res = await fetch("/api/integrations/ai-status", { credentials: "include" });
+      if (!res.ok) {
+        return { geminiConfigured: false, openaiConfigured: false, postmarkConfigured: false };
+      }
+      return res.json();
+    },
+    enabled: !collapsed,
+  });
 
   const { data: chatMessages = [], isLoading: loadingMessages } = useQuery<NewsletterChatMessage[]>({
     queryKey: ["/api/newsletters", newsletterId, "chat"],
@@ -85,6 +101,13 @@ export function GeminiChatPanel({
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/newsletters", newsletterId, "chat"] });
       setMessage("");
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "AI chat failed",
+        description: error.message || "Could not send message to AI. Check integrations and try again.",
+        variant: "destructive",
+      });
     },
   });
 
@@ -186,6 +209,22 @@ export function GeminiChatPanel({
           </Button>
         </div>
       </div>
+
+      {aiStatus && (
+        <div className="px-3 py-2 border-b text-xs flex items-center gap-1.5">
+          {aiStatus.geminiConfigured ? (
+            <>
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+              <span className="text-muted-foreground">Gemini connected</span>
+            </>
+          ) : (
+            <>
+              <AlertCircle className="w-3.5 h-3.5 text-amber-600" />
+              <span className="text-muted-foreground">Gemini not configured — chat replies will be limited.</span>
+            </>
+          )}
+        </div>
+      )}
 
       {showPromptEditor && (
         <div className="border-b overflow-auto max-h-64">

@@ -20,8 +20,13 @@ export async function generateImageBuffer(
     prompt,
     size,
   });
-  const base64 = response.data[0]?.b64_json ?? "";
-  return Buffer.from(base64, "base64");
+
+  const first = response.data?.[0];
+  if (!first?.b64_json) {
+    throw new Error("Image generation failed: no image payload returned");
+  }
+
+  return Buffer.from(first.b64_json, "base64");
 }
 
 /**
@@ -47,8 +52,12 @@ export async function editImages(
     prompt,
   });
 
-  const imageBase64 = response.data[0]?.b64_json ?? "";
-  const imageBytes = Buffer.from(imageBase64, "base64");
+  const first = response.data?.[0];
+  if (!first?.b64_json) {
+    throw new Error("Image edit failed: no image payload returned");
+  }
+
+  const imageBytes = Buffer.from(first.b64_json, "base64");
 
   if (outputPath) {
     fs.writeFileSync(outputPath, imageBytes);
