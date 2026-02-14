@@ -11,10 +11,14 @@ import {
   aiDrafts,
   tasksFlags,
   reviewTokens,
+  clientOnboardingTokens,
   reviewComments,
   integrationSettings,
   productionTasks,
   clientNotes,
+  contacts,
+  contactImportJobs,
+  contactSegments,
   type User,
   type InsertUser,
   type Client,
@@ -39,12 +43,20 @@ import {
   type InsertTasksFlags,
   type ReviewToken,
   type InsertReviewToken,
+  type ClientOnboardingToken,
+  type InsertClientOnboardingToken,
   type ReviewComment,
   type InsertReviewComment,
   type ProductionTask,
   type InsertProductionTask,
   type ClientNote,
   type InsertClientNote,
+  type Contact,
+  type InsertContact,
+  type ContactImportJob,
+  type InsertContactImportJob,
+  type ContactSegment,
+  type InsertContactSegment,
   type NewsletterDocument,
   type NewsletterStatus,
   NEWSLETTER_STATUSES,
@@ -134,6 +146,12 @@ export interface IStorage {
   createReviewToken(data: InsertReviewToken): Promise<ReviewToken>;
   markTokenUsed(id: string): Promise<void>;
 
+  // Onboarding Tokens
+  getOnboardingToken(token: string): Promise<ClientOnboardingToken | undefined>;
+  getValidOnboardingToken(token: string): Promise<ClientOnboardingToken | undefined>;
+  createOnboardingToken(data: InsertClientOnboardingToken): Promise<ClientOnboardingToken>;
+  markOnboardingTokenUsed(id: string): Promise<void>;
+
   // Review Comments
   getReviewCommentsByNewsletter(newsletterId: string): Promise<ReviewComment[]>;
   createReviewComment(comment: InsertReviewComment): Promise<ReviewComment>;
@@ -166,6 +184,17 @@ export interface IStorage {
   createClientNote(data: InsertClientNote): Promise<ClientNote>;
   updateClientNote(id: string, data: Partial<ClientNote>): Promise<ClientNote>;
   deleteClientNote(id: string): Promise<void>;
+
+  // Contacts / Audience
+  getContactsByClient(clientId: string): Promise<Contact[]>;
+  getContactByEmail(clientId: string, email: string): Promise<Contact | undefined>;
+  createContact(data: InsertContact): Promise<Contact>;
+  upsertContactByEmail(clientId: string, email: string, data: Partial<InsertContact>): Promise<{ contact: Contact; created: boolean }>;
+  getContactSegmentsByClient(clientId: string): Promise<ContactSegment[]>;
+  createContactSegment(data: InsertContactSegment): Promise<ContactSegment>;
+  getContactImportJobsByClient(clientId: string): Promise<ContactImportJob[]>;
+  createContactImportJob(data: InsertContactImportJob): Promise<ContactImportJob>;
+  updateContactImportJob(id: string, data: Partial<InsertContactImportJob>): Promise<ContactImportJob | undefined>;
 
   // Newsletter Chat Messages
   getChatMessages(newsletterId: string): Promise<NewsletterChatMessage[]>;
@@ -403,6 +432,9 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getNewslettersByStatus(statuses: NewsletterStatus[]): Promise<Newsletter[]> {
+    if (statuses.length === 0) {
+      return [];
+    }
     return db
       .select()
       .from(newsletters)
@@ -447,7 +479,7 @@ export class DatabaseStorage implements IStorage {
       .from(newsletters)
       .where(and(
         eq(newsletters.clientId, clientId),
-        ne(newsletters.status, "not_started")
+        ne(newsletters.status, "draft")
       ))
       .orderBy(desc(newsletters.createdAt))
       .limit(1);
@@ -549,6 +581,32 @@ export class DatabaseStorage implements IStorage {
 
   async markTokenUsed(id: string): Promise<void> {
     await db.update(reviewTokens).set({ usedAt: new Date() }).where(eq(reviewTokens.id, id));
+  }
+
+  // Onboarding Tokens
+  async getOnboardingToken(token: string): Promise<ClientOnboardingToken | undefined> {
+    const [ot] = await db.select().from(clientOnboardingTokens).where(eq(clientOnboardingTokens.token, token));
+    return ot;
+  }
+
+  async getValidOnboardingToken(token: string): Promise<ClientOnboardingToken | undefined> {
+    const [ot] = await db
+      .select()
+      .from(clientOnboardingTokens)
+      .where(and(
+        eq(clientOnboardingTokens.token, token),
+        sql`${clientOnboardingTokens.expiresAt} > NOW()`
+      ));
+    return ot;
+  }
+
+  async createOnboardingToken(data: InsertClientOnboardingToken): Promise<ClientOnboardingToken> {
+    const [ot] = await db.insert(clientOnboardingTokens).values(data).returning();
+    return ot;
+  }
+
+  async markOnboardingTokenUsed(id: string): Promise<void> {
+    await db.update(clientOnboardingTokens).set({ usedAt: new Date() }).where(eq(clientOnboardingTokens.id, id));
   }
 
   // Projects
@@ -700,6 +758,95 @@ export class DatabaseStorage implements IStorage {
 
   async deleteClientNote(id: string): Promise<void> {
     await db.delete(clientNotes).where(eq(clientNotes.id, id));
+  }
+
+  // Contacts / Audience
+  async getContactsByClient(clientId: string): Promise<Contact[]> {
+    return db
+      .select()
+      .from(contacts)
+      .where(eq(contacts.clientId, clientId))
+      .orderBy(desc(contacts.createdAt));
+  }
+
+  async getContactByEmail(clientId: string, email: string): Promise<Contact | undefined> {
+    const [contact] = await db
+      .select()
+      .from(contacts)
+      .where(and(
+        eq(contacts.clientId, clientId),
+        sql`lower(${contacts.email}) = lower(${email})`
+      ));
+    return contact;
+  }
+
+  async createContact(data: InsertContact): Promise<Contact> {
+    const [contact] = await db.insert(contacts).values(data).returning();
+    return contact;
+  }
+
+  async upsertContactByEmail(clientId: string, email: string, data: Partial<InsertContact>): Promise<{ contact: Contact; created: boolean }> {
+    const existing = await this.getContactByEmail(clientId, email);
+    if (existing) {
+      const [updated] = await db
+        .update(contacts)
+        .set({
+          ...data,
+          email: email.toLowerCase(),
+          updatedAt: new Date(),
+        })
+        .where(eq(contacts.id, existing.id))
+        .returning();
+      return { contact: updated, created: false };
+    }
+
+    const [created] = await db
+      .insert(contacts)
+      .values({
+        clientId,
+        email: email.toLowerCase(),
+        firstName: data.firstName || null,
+        lastName: data.lastName || null,
+        tags: data.tags || ["all"],
+        isActive: data.isActive ?? true,
+      })
+      .returning();
+    return { contact: created, created: true };
+  }
+
+  async getContactSegmentsByClient(clientId: string): Promise<ContactSegment[]> {
+    return db
+      .select()
+      .from(contactSegments)
+      .where(eq(contactSegments.clientId, clientId))
+      .orderBy(desc(contactSegments.isDefault), contactSegments.name);
+  }
+
+  async createContactSegment(data: InsertContactSegment): Promise<ContactSegment> {
+    const [segment] = await db.insert(contactSegments).values(data).returning();
+    return segment;
+  }
+
+  async getContactImportJobsByClient(clientId: string): Promise<ContactImportJob[]> {
+    return db
+      .select()
+      .from(contactImportJobs)
+      .where(eq(contactImportJobs.clientId, clientId))
+      .orderBy(desc(contactImportJobs.createdAt));
+  }
+
+  async createContactImportJob(data: InsertContactImportJob): Promise<ContactImportJob> {
+    const [job] = await db.insert(contactImportJobs).values(data).returning();
+    return job;
+  }
+
+  async updateContactImportJob(id: string, data: Partial<InsertContactImportJob>): Promise<ContactImportJob | undefined> {
+    const [job] = await db
+      .update(contactImportJobs)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(contactImportJobs.id, id))
+      .returning();
+    return job;
   }
 
   // Newsletter Chat Messages

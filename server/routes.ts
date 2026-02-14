@@ -7,7 +7,14 @@ import { generateEmailFromPrompt, editEmailWithAI, suggestSubjectLines } from ".
 import { renderMjml, validateMjml } from "./mjml-service";
 import { createSenderSignature, getSenderSignature } from "./postmark-service";
 import { registerObjectStorageRoutes } from "./replit_integrations/object_storage";
-import { DEFAULT_NEWSLETTER_DOCUMENT, type NewsletterDocument, type LegacyNewsletterDocument, type NewsletterStatus, NEWSLETTER_STATUSES } from "@shared/schema";
+import {
+  DEFAULT_NEWSLETTER_DOCUMENT,
+  createNewsletterDocumentFromHtml,
+  getNewsletterDocumentHtml,
+  type NewsletterDocument,
+  type LegacyNewsletterDocument,
+  type NewsletterStatus,
+} from "@shared/schema";
 import { randomUUID } from "crypto";
 import session from "express-session";
 import MemoryStore from "memorystore";
@@ -48,6 +55,312 @@ function getNewsletterCountByFrequency(frequency: string): number {
     case "monthly":
     default:
       return 1;
+  }
+}
+
+function cloneDefaultNewsletterDocument(): NewsletterDocument {
+  return {
+    ...DEFAULT_NEWSLETTER_DOCUMENT,
+    blocks: [...(DEFAULT_NEWSLETTER_DOCUMENT.blocks || [])],
+    meta: { ...(DEFAULT_NEWSLETTER_DOCUMENT.meta || {}) },
+  };
+}
+
+function normalizeNewsletterDocument(
+  document: NewsletterDocument | LegacyNewsletterDocument | null | undefined
+): NewsletterDocument {
+  if (!document) {
+    return cloneDefaultNewsletterDocument();
+  }
+
+  const modernDoc = document as NewsletterDocument;
+  const normalized = cloneDefaultNewsletterDocument();
+  const html = getNewsletterDocumentHtml(document);
+
+  return {
+    ...normalized,
+    ...modernDoc,
+    blocks: Array.isArray(modernDoc.blocks) ? modernDoc.blocks : normalized.blocks,
+    meta: {
+      ...normalized.meta,
+      ...(modernDoc.meta || {}),
+    },
+    html: typeof modernDoc.html === "string" ? modernDoc.html : html,
+  };
+}
+
+function mergeNewsletterDocument(
+  existingDocument: NewsletterDocument,
+  patchDocument: Partial<NewsletterDocument>
+): NewsletterDocument {
+  return {
+    ...existingDocument,
+    ...patchDocument,
+    blocks: Array.isArray(patchDocument.blocks) ? patchDocument.blocks : existingDocument.blocks,
+    meta: {
+      ...(existingDocument.meta || {}),
+      ...(patchDocument.meta || {}),
+    },
+  };
+}
+
+function normalizeNewsletterStatus(status: unknown): NewsletterStatus | undefined {
+  if (typeof status !== "string") return undefined;
+
+  const normalized = status.trim();
+  const map: Record<string, NewsletterStatus> = {
+    draft: "draft",
+    in_review: "in_review",
+    changes_requested: "changes_requested",
+    approved: "approved",
+    scheduled: "scheduled",
+    sent: "sent",
+    not_started: "draft",
+    in_progress: "draft",
+    internal_review: "in_review",
+    client_review: "in_review",
+    revisions: "changes_requested",
+  };
+
+  return map[normalized];
+}
+
+function normalizeSendMode(mode: unknown): "fixed_time" | "immediate_after_approval" | "ai_recommended" | undefined {
+  if (typeof mode !== "string") return undefined;
+  if (mode === "fixed_time" || mode === "immediate_after_approval" || mode === "ai_recommended") {
+    return mode;
+  }
+  return undefined;
+}
+
+function applyNewsletterStatusSideEffects(
+  status: NewsletterStatus | undefined,
+  updateData: Record<string, unknown>,
+  expectedSendDate?: string | null
+): void {
+  if (!status) return;
+
+  if (status === "scheduled" && !updateData.scheduledAt) {
+    if (expectedSendDate) {
+      updateData.scheduledAt = new Date(`${expectedSendDate}T09:00:00`);
+    } else {
+      updateData.scheduledAt = new Date();
+    }
+  }
+
+  if (status === "sent") {
+    if (!updateData.sentAt) {
+      updateData.sentAt = new Date();
+    }
+    if (!updateData.sendDate) {
+      updateData.sendDate = new Date().toISOString().split("T")[0];
+    }
+  }
+}
+
+function isLikelyValidUrl(url: string): boolean {
+  if (!url) return false;
+  if (url.startsWith("#")) return true;
+  if (url.startsWith("mailto:")) return true;
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function extractUrlsFromHtml(html: string): string[] {
+  return Array.from(html.matchAll(/(?:href|src)\s*=\s*["']([^"']+)["']/gi))
+    .map((match) => match[1]?.trim() || "")
+    .filter((url) => !!url);
+}
+
+function parseCsvLine(line: string): string[] {
+  const cells: string[] = [];
+  let current = "";
+  let inQuotes = false;
+
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i];
+    const next = line[i + 1];
+    if (char === '"' && inQuotes && next === '"') {
+      current += '"';
+      i += 1;
+      continue;
+    }
+    if (char === '"') {
+      inQuotes = !inQuotes;
+      continue;
+    }
+    if (char === "," && !inQuotes) {
+      cells.push(current.trim());
+      current = "";
+      continue;
+    }
+    current += char;
+  }
+  cells.push(current.trim());
+  return cells;
+}
+
+function parseCsvContent(csvContent: string): { headers: string[]; rows: string[][] } {
+  const lines = csvContent
+    .replace(/\r/g, "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  if (lines.length === 0) {
+    return { headers: [], rows: [] };
+  }
+
+  const headers = parseCsvLine(lines[0]).map((header) => header.trim());
+  const rows = lines.slice(1).map((line) => parseCsvLine(line));
+  return { headers, rows };
+}
+
+function suggestCsvMapping(headers: string[]): {
+  email?: string;
+  firstName?: string;
+  lastName?: string;
+  tags?: string;
+} {
+  const normalized = headers.map((header) => ({
+    original: header,
+    key: header.toLowerCase().replace(/[^a-z0-9]/g, ""),
+  }));
+
+  const pick = (keys: string[]) => normalized.find((item) => keys.includes(item.key))?.original;
+  return {
+    email: pick(["email", "emailaddress", "eaddress"]),
+    firstName: pick(["firstname", "fname", "first"]),
+    lastName: pick(["lastname", "lname", "last"]),
+    tags: pick(["tags", "tag", "segment", "segments", "group", "groups"]),
+  };
+}
+
+function normalizeTags(raw: string | undefined): string[] {
+  if (!raw || !raw.trim()) return ["all"];
+  const tokens = raw
+    .split(/[;,|]/g)
+    .map((token) => token.trim().toLowerCase())
+    .filter(Boolean);
+  return tokens.length > 0 ? Array.from(new Set(tokens)) : ["all"];
+}
+
+async function importContactsFromCsv(
+  clientId: string,
+  csvContent: string,
+  requestedMapping: Record<string, unknown>
+) {
+  const { headers, rows } = parseCsvContent(csvContent);
+  if (headers.length === 0) {
+    throw new Error("CSV appears empty");
+  }
+
+  const suggestedMapping = suggestCsvMapping(headers);
+  const mapping = {
+    email: typeof requestedMapping.email === "string" ? requestedMapping.email : suggestedMapping.email,
+    firstName: typeof requestedMapping.firstName === "string" ? requestedMapping.firstName : suggestedMapping.firstName,
+    lastName: typeof requestedMapping.lastName === "string" ? requestedMapping.lastName : suggestedMapping.lastName,
+    tags: typeof requestedMapping.tags === "string" ? requestedMapping.tags : suggestedMapping.tags,
+  };
+
+  if (!mapping.email || !headers.includes(mapping.email)) {
+    const error = new Error("Email column is required");
+    (error as Error & { meta?: unknown }).meta = { suggestedMapping, headers };
+    throw error;
+  }
+
+  const importJob = await storage.createContactImportJob({
+    clientId,
+    status: "running",
+    totalRows: rows.length,
+    importedCount: 0,
+    updatedCount: 0,
+    skippedCount: 0,
+    errors: [],
+    mapping: mapping as Record<string, string>,
+  });
+
+  const indexByHeader = new Map(headers.map((header, index) => [header, index]));
+  const errors: string[] = [];
+  let importedCount = 0;
+  let updatedCount = 0;
+  let skippedCount = 0;
+  try {
+    for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
+      const row = rows[rowIndex];
+      const emailIndex = indexByHeader.get(mapping.email);
+      const firstNameIndex = mapping.firstName ? indexByHeader.get(mapping.firstName) : undefined;
+      const lastNameIndex = mapping.lastName ? indexByHeader.get(mapping.lastName) : undefined;
+      const tagsIndex = mapping.tags ? indexByHeader.get(mapping.tags) : undefined;
+
+      const rawEmail = emailIndex !== undefined ? (row[emailIndex] || "") : "";
+      const email = rawEmail.trim().toLowerCase();
+      if (!email || !email.includes("@")) {
+        skippedCount += 1;
+        errors.push(`Row ${rowIndex + 2}: invalid email`);
+        continue;
+      }
+
+      const firstName = firstNameIndex !== undefined ? (row[firstNameIndex] || "").trim() : "";
+      const lastName = lastNameIndex !== undefined ? (row[lastNameIndex] || "").trim() : "";
+      const rawTags = tagsIndex !== undefined ? (row[tagsIndex] || "").trim() : "";
+      const tags = normalizeTags(rawTags);
+
+      const upsert = await storage.upsertContactByEmail(clientId, email, {
+        firstName: firstName || null,
+        lastName: lastName || null,
+        tags,
+        isActive: true,
+      });
+
+      if (upsert.created) {
+        importedCount += 1;
+      } else {
+        updatedCount += 1;
+      }
+    }
+
+    const existingSegments = await storage.getContactSegmentsByClient(clientId);
+    if (existingSegments.length === 0) {
+      await storage.createContactSegment({
+        clientId,
+        name: "all",
+        tags: ["all"],
+        isDefault: true,
+      });
+    }
+
+    const updatedJob = await storage.updateContactImportJob(importJob.id, {
+      status: "completed",
+      importedCount,
+      updatedCount,
+      skippedCount,
+      errors,
+    });
+
+    return {
+      job: updatedJob,
+      summary: {
+        totalRows: rows.length,
+        importedCount,
+        updatedCount,
+        skippedCount,
+        errorCount: errors.length,
+      },
+      mapping,
+      suggestedMapping,
+      headers,
+    };
+  } catch (error) {
+    await storage.updateContactImportJob(importJob.id, {
+      status: "failed",
+      errors: [error instanceof Error ? error.message : "Import failed unexpectedly"],
+    });
+    throw error;
   }
 }
 
@@ -206,6 +519,91 @@ export async function registerRoutes(
       res.json(data);
     } catch (error) {
       res.status(500).json({ error: "Failed to fetch client" });
+    }
+  });
+
+  app.get("/api/clients/:id/contacts", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const client = await storage.getClient(req.params.id);
+      if (!client) {
+        return res.status(404).json({ error: "Client not found" });
+      }
+      const contacts = await storage.getContactsByClient(client.id);
+      res.json(contacts);
+    } catch (error) {
+      console.error("Get contacts error:", error);
+      res.status(500).json({ error: "Failed to fetch contacts" });
+    }
+  });
+
+  app.get("/api/clients/:id/segments", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const client = await storage.getClient(req.params.id);
+      if (!client) {
+        return res.status(404).json({ error: "Client not found" });
+      }
+
+      const [segments, contacts] = await Promise.all([
+        storage.getContactSegmentsByClient(client.id),
+        storage.getContactsByClient(client.id),
+      ]);
+
+      const allTagSet = new Set<string>(["all"]);
+      for (const contact of contacts) {
+        for (const tag of contact.tags || []) {
+          if (tag) allTagSet.add(tag.toLowerCase());
+        }
+      }
+
+      const existingSegmentNames = new Set(segments.map((segment) => segment.name.toLowerCase()));
+      const derivedSegments = Array.from(allTagSet)
+        .filter((tag) => !existingSegmentNames.has(tag))
+        .map((tag) => ({
+          id: `derived-${tag}`,
+          clientId: client.id,
+          name: tag,
+          tags: [tag],
+          isDefault: tag === "all",
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        }));
+
+      res.json([
+        ...segments,
+        ...derivedSegments,
+      ]);
+    } catch (error) {
+      console.error("Get segments error:", error);
+      res.status(500).json({ error: "Failed to fetch segments" });
+    }
+  });
+
+  app.post("/api/clients/:id/contacts/import-csv", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const client = await storage.getClient(req.params.id);
+      if (!client) {
+        return res.status(404).json({ error: "Client not found" });
+      }
+
+      const csvContent = typeof req.body.csvContent === "string" ? req.body.csvContent : "";
+      if (!csvContent.trim()) {
+        return res.status(400).json({ error: "csvContent is required" });
+      }
+
+      const requestedMapping = req.body.mapping && typeof req.body.mapping === "object" ? req.body.mapping : {};
+      const result = await importContactsFromCsv(client.id, csvContent, requestedMapping);
+      res.json(result);
+    } catch (error) {
+      console.error("Import CSV error:", error);
+      const errorWithMeta = error as Error & { meta?: { suggestedMapping?: unknown; headers?: string[] } };
+      if (errorWithMeta.message === "Email column is required") {
+        return res.status(400).json({
+          error: errorWithMeta.message,
+          suggestedMapping: errorWithMeta.meta?.suggestedMapping,
+          headers: errorWithMeta.meta?.headers || [],
+        });
+      }
+      res.status(500).json({ error: "Failed to import CSV" });
     }
   });
 
@@ -422,15 +820,16 @@ export async function registerRoutes(
               subscriptionId: subscription.id,
               title,
               expectedSendDate: format(sendDate, "yyyy-MM-dd"),
-              status: "not_started",
-              documentJson: { html: "" },
+              status: "draft",
+              documentJson: cloneDefaultNewsletterDocument(),
               createdById: userId,
+              fromEmail: client.primaryEmail,
             });
             
             const version = await storage.createVersion({
               newsletterId: newsletter.id,
               versionNumber: 1,
-              snapshotJson: { html: "" },
+              snapshotJson: cloneDefaultNewsletterDocument(),
               createdById: userId,
               changeSummary: "Initial version",
             });
@@ -562,10 +961,10 @@ export async function registerRoutes(
       const latestNewsletter = await storage.getLatestClientNewsletter(client.id);
       let documentJson: NewsletterDocument;
 
-      if (latestNewsletter?.documentJson?.html) {
-        documentJson = { html: latestNewsletter.documentJson.html };
+      if (latestNewsletter?.documentJson) {
+        documentJson = normalizeNewsletterDocument(latestNewsletter.documentJson as NewsletterDocument);
       } else {
-        documentJson = { html: "" };
+        documentJson = cloneDefaultNewsletterDocument();
       }
 
       const newsletter = await storage.createNewsletter({
@@ -574,9 +973,10 @@ export async function registerRoutes(
         subscriptionId: linkedSubscriptionId || null,
         title,
         expectedSendDate: expectedSendDate,
-        status: "not_started",
+        status: "draft",
         documentJson,
         createdById: userId,
+        fromEmail: client.primaryEmail,
       });
 
       const version = await storage.createVersion({
@@ -614,8 +1014,11 @@ export async function registerRoutes(
       let newsletters;
       
       if (status && typeof status === "string") {
-        const statuses = status.split(",") as NewsletterStatus[];
-        newsletters = await storage.getNewslettersByStatus(statuses);
+        const statuses = status
+          .split(",")
+          .map((s) => normalizeNewsletterStatus(s))
+          .filter((s): s is NewsletterStatus => !!s);
+        newsletters = statuses.length > 0 ? await storage.getNewslettersByStatus(statuses) : [];
       } else {
         newsletters = await storage.getAllNewsletters();
       }
@@ -662,20 +1065,23 @@ export async function registerRoutes(
       let documentJson: NewsletterDocument;
 
       if (importedHtml && importedHtml.trim()) {
-        documentJson = { html: importedHtml.trim() };
+        documentJson = createNewsletterDocumentFromHtml(importedHtml.trim());
       } else {
         const latestNewsletter = await storage.getLatestClientNewsletter(client.id);
-        const latestHtml = (latestNewsletter?.documentJson as NewsletterDocument | LegacyNewsletterDocument | null)?.html;
-        documentJson = { html: latestHtml || "" };
+        documentJson = normalizeNewsletterDocument(
+          (latestNewsletter?.documentJson as NewsletterDocument | LegacyNewsletterDocument | null) ||
+            DEFAULT_NEWSLETTER_DOCUMENT
+        );
       }
 
       const newsletter = await storage.createNewsletter({
         clientId: req.params.clientId,
         title,
         expectedSendDate,
-        status: "not_started",
+        status: "draft",
         documentJson,
         createdById: userId,
+        fromEmail: client.primaryEmail,
       });
 
       const version = await storage.createVersion({
@@ -707,13 +1113,24 @@ export async function registerRoutes(
       const flags = await storage.getFlagsByNewsletter(newsletter.id);
       const aiDrafts = await storage.getAiDraftsByNewsletter(newsletter.id);
 
-      let document: NewsletterDocument = newsletter.documentJson || DEFAULT_NEWSLETTER_DOCUMENT;
+      let document: NewsletterDocument = normalizeNewsletterDocument(
+        newsletter.documentJson as NewsletterDocument | LegacyNewsletterDocument | null | undefined
+      );
       if (newsletter.currentVersionId) {
         const currentVersion = versions.find((v) => v.id === newsletter.currentVersionId);
         if (currentVersion) {
-          document = currentVersion.snapshotJson as NewsletterDocument;
+          document = normalizeNewsletterDocument(currentVersion.snapshotJson as NewsletterDocument);
         }
       }
+      document = mergeNewsletterDocument(document, {
+        meta: {
+          subject: newsletter.subject || document.meta?.subject || undefined,
+          previewText: newsletter.previewText || document.meta?.previewText || undefined,
+          fromEmail: newsletter.fromEmail || document.meta?.fromEmail || undefined,
+          sendMode: newsletter.sendMode || document.meta?.sendMode || undefined,
+          timezone: newsletter.timezone || document.meta?.timezone || undefined,
+        },
+      });
 
       const html = compileNewsletterToHtml(document);
       const invoice = newsletter.invoiceId ? await storage.getInvoice(newsletter.invoiceId) : null;
@@ -739,6 +1156,13 @@ export async function registerRoutes(
     try {
       const userId = (req as Request & { userId: string }).userId;
       const { documentJson, designJson, ...otherFields } = req.body;
+      const normalizedStatus = normalizeNewsletterStatus(otherFields.status);
+      if (otherFields.status && !normalizedStatus) {
+        return res.status(400).json({ error: "Invalid newsletter status" });
+      }
+      if (normalizedStatus) {
+        otherFields.status = normalizedStatus;
+      }
 
       if (documentJson) {
         const newsletter = await storage.getNewsletter(req.params.id);
@@ -748,9 +1172,11 @@ export async function registerRoutes(
 
         const versions = await storage.getVersionsByNewsletter(newsletter.id);
         const currentVersion = versions.find((v) => v.id === newsletter.currentVersionId);
-        const existingDoc = (currentVersion?.snapshotJson || newsletter.documentJson || DEFAULT_NEWSLETTER_DOCUMENT) as NewsletterDocument;
+        const existingDoc = normalizeNewsletterDocument(
+          (currentVersion?.snapshotJson || newsletter.documentJson || DEFAULT_NEWSLETTER_DOCUMENT) as NewsletterDocument
+        );
         
-        const newDoc = { ...existingDoc, ...documentJson };
+        const newDoc = mergeNewsletterDocument(existingDoc, documentJson as Partial<NewsletterDocument>);
         const latestNum = await storage.getLatestVersionNumber(newsletter.id);
 
         const newVersion = await storage.createVersion({
@@ -772,13 +1198,31 @@ export async function registerRoutes(
         if (designJson) {
           updateData.designJson = designJson;
         }
-
-        if (otherFields.status === "sent" && !updateData.sendDate) {
-          updateData.sendDate = new Date().toISOString().split("T")[0];
+        if (!updateData.subject && newDoc.meta?.subject) {
+          updateData.subject = newDoc.meta.subject;
         }
+        if (!updateData.previewText && newDoc.meta?.previewText) {
+          updateData.previewText = newDoc.meta.previewText;
+        }
+        if (!updateData.fromEmail && newDoc.meta?.fromEmail) {
+          updateData.fromEmail = newDoc.meta.fromEmail;
+        }
+        if (!updateData.sendMode && newDoc.meta?.sendMode) {
+          updateData.sendMode = newDoc.meta.sendMode;
+        }
+        if (!updateData.timezone && newDoc.meta?.timezone) {
+          updateData.timezone = newDoc.meta.timezone;
+        }
+
+        applyNewsletterStatusSideEffects(normalizedStatus, updateData, newsletter.expectedSendDate);
 
         const updated = await storage.updateNewsletter(req.params.id, updateData);
         return res.json(updated);
+      }
+
+      const existingNewsletter = await storage.getNewsletter(req.params.id);
+      if (!existingNewsletter) {
+        return res.status(404).json({ error: "Newsletter not found" });
       }
 
       const updateData: any = {
@@ -791,9 +1235,7 @@ export async function registerRoutes(
         updateData.designJson = designJson;
       }
 
-      if (otherFields.status === "sent" && !updateData.sendDate) {
-        updateData.sendDate = new Date().toISOString().split("T")[0];
-      }
+      applyNewsletterStatusSideEffects(normalizedStatus, updateData, existingNewsletter.expectedSendDate);
 
       const newsletter = await storage.updateNewsletter(req.params.id, updateData);
       res.json(newsletter);
@@ -822,7 +1264,9 @@ export async function registerRoutes(
 
       const versions = await storage.getVersionsByNewsletter(original.id);
       const currentVersion = versions.find((v) => v.id === original.currentVersionId);
-      const documentJson: NewsletterDocument = (currentVersion?.snapshotJson || original.documentJson || DEFAULT_NEWSLETTER_DOCUMENT) as NewsletterDocument;
+      const documentJson: NewsletterDocument = normalizeNewsletterDocument(
+        (currentVersion?.snapshotJson || original.documentJson || DEFAULT_NEWSLETTER_DOCUMENT) as NewsletterDocument
+      );
 
       let expectedSendDate: string;
       if (original.subscriptionId) {
@@ -841,16 +1285,21 @@ export async function registerRoutes(
         clientId: original.clientId,
         subscriptionId: original.subscriptionId || null,
         title: original.title + " (Copy)",
-        status: "not_started",
-        documentJson,
+        status: "draft",
+        documentJson: normalizeNewsletterDocument(documentJson),
         expectedSendDate,
         createdById: userId,
+        fromEmail: original.fromEmail,
+        subject: original.subject,
+        previewText: original.previewText,
+        sendMode: original.sendMode,
+        timezone: original.timezone,
       });
 
       const version = await storage.createVersion({
         newsletterId: newsletter.id,
         versionNumber: 1,
-        snapshotJson: documentJson,
+        snapshotJson: normalizeNewsletterDocument(documentJson),
         createdById: userId,
         changeSummary: "Initial version (duplicated)",
       });
@@ -879,13 +1328,16 @@ export async function registerRoutes(
 
       const versions = await storage.getVersionsByNewsletter(newsletter.id);
       const currentVersion = versions.find((v) => v.id === newsletter.currentVersionId);
-      const document = (currentVersion?.snapshotJson || newsletter.documentJson || DEFAULT_NEWSLETTER_DOCUMENT) as NewsletterDocument;
+      const document = normalizeNewsletterDocument(
+        (currentVersion?.snapshotJson || newsletter.documentJson || DEFAULT_NEWSLETTER_DOCUMENT) as NewsletterDocument
+      );
+      const currentHtml = compileNewsletterToHtml(document);
 
-      if (!document.html) {
+      if (!currentHtml) {
         return res.json({ type: "error", message: "No HTML content to edit" });
       }
 
-      const htmlResponse = await processHtmlCommand(command, document.html, brandingKit || null);
+      const htmlResponse = await processHtmlCommand(command, currentHtml, brandingKit || null);
       
       if (htmlResponse.type === "error") {
         return res.json({ type: "error", message: htmlResponse.message });
@@ -896,7 +1348,10 @@ export async function registerRoutes(
         return res.json({ type: "error", message: "AI returned invalid HTML. Please try a different command." });
       }
 
-      const newDoc: NewsletterDocument = { html: trimmedHtml };
+      const newDoc: NewsletterDocument = {
+        ...document,
+        html: trimmedHtml,
+      };
       const latestNum = await storage.getLatestVersionNumber(newsletter.id);
 
       const newVersion = await storage.createVersion({
@@ -940,7 +1395,7 @@ export async function registerRoutes(
 
       const result = await generateEmailFromPrompt(prompt, brandingKit || null);
 
-      const newDoc: NewsletterDocument = { html: result.html };
+      const newDoc: NewsletterDocument = createNewsletterDocumentFromHtml(result.html);
       const latestNum = await storage.getLatestVersionNumber(newsletter.id);
 
       const newVersion = await storage.createVersion({
@@ -955,6 +1410,7 @@ export async function registerRoutes(
         currentVersionId: newVersion.id,
         documentJson: newDoc,
         designJson: { mjml: result.mjml },
+        subject: result.subject || newsletter.subject,
         lastEditedById: userId,
         lastEditedAt: new Date(),
       });
@@ -968,6 +1424,162 @@ export async function registerRoutes(
     } catch (error) {
       console.error("AI generate error:", error);
       res.status(500).json({ error: error instanceof Error ? error.message : "AI generation failed" });
+    }
+  });
+
+  // Generate a block-document draft (used by the block editor) using master + client prompts.
+  app.post("/api/newsletters/:id/ai-generate-blocks", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = (req as Request & { userId: string }).userId;
+      const newsletter = await storage.getNewsletter(req.params.id);
+      if (!newsletter) {
+        return res.status(404).json({ error: "Newsletter not found" });
+      }
+
+      const client = await storage.getClient(newsletter.clientId);
+      const brandingKit = client ? await storage.getBrandingKit(newsletter.clientId) : null;
+      const masterPrompt = await storage.getMasterPrompt();
+      const clientPrompt = await storage.getClientPrompt(newsletter.clientId);
+
+      const geminiApiKey = process.env.AI_INTEGRATIONS_GEMINI_API_KEY || process.env.GEMINI_API_KEY;
+      if (!geminiApiKey) {
+        return res.status(400).json({
+          error: "Gemini is not configured. Add AI_INTEGRATIONS_GEMINI_API_KEY (or GEMINI_API_KEY).",
+        });
+      }
+
+      const systemParts: string[] = [];
+      if (masterPrompt?.prompt) systemParts.push(masterPrompt.prompt);
+      if (clientPrompt?.prompt) systemParts.push(`CLIENT-SPECIFIC INSTRUCTIONS:\n${clientPrompt.prompt}`);
+      if (brandingKit) {
+        const brandParts: string[] = [];
+        if (brandingKit.title) brandParts.push(`Agent Name/Title: ${brandingKit.title}`);
+        if (brandingKit.companyName) brandParts.push(`Company: ${brandingKit.companyName}`);
+        if (brandingKit.tone) brandParts.push(`Tone of Voice: ${brandingKit.tone}`);
+        if (brandingKit.mustInclude && brandingKit.mustInclude.length > 0) brandParts.push(`Must Include: ${brandingKit.mustInclude.join(", ")}`);
+        if (brandingKit.avoidTopics && brandingKit.avoidTopics.length > 0) brandParts.push(`Avoid Topics: ${brandingKit.avoidTopics.join(", ")}`);
+        if (brandingKit.localLandmarks && brandingKit.localLandmarks.length > 0) brandParts.push(`Local Landmarks: ${brandingKit.localLandmarks.join(", ")}`);
+        if (brandingKit.notes) brandParts.push(`Additional Notes: ${brandingKit.notes}`);
+        if (brandParts.length) systemParts.push(`CLIENT BRANDING KIT:\n${brandParts.join("\n")}`);
+      }
+
+      const systemInstruction =
+        systemParts.length > 0
+          ? systemParts.join("\n\n")
+          : "You create real estate email newsletters. Output must be structured JSON for a block-based editor.";
+
+      const userPrompt =
+        (typeof req.body?.prompt === "string" && req.body.prompt.trim()) ||
+        "Create a complete draft newsletter following the standard structure: header, welcome message, market update, one home tip, and a CTA.";
+
+      const jsonSpec = {
+        subject: "string",
+        previewText: "string",
+        blocks: [
+          {
+            type: "text|image|button|divider|socials|grid|image_button",
+            data: "object (type-specific)",
+          },
+        ],
+      };
+
+      const generationPrompt = [
+        `You must return ONLY valid JSON (no markdown, no code fences).`,
+        `Schema: ${JSON.stringify(jsonSpec)}`,
+        `Rules:`,
+        `- Use only these block types: text, image, button, divider, socials, grid, image_button.`,
+        `- For text blocks, set data.content to safe HTML (p, h2, h3, ul, li, strong, em, a).`,
+        `- For grid blocks, set data.items = [{ title, body, imageUrl }].`,
+        `- Keep it concise and ready for review.`,
+        `Context: Client name is "${client?.name || "Client"}". Expected send date is "${newsletter.expectedSendDate}".`,
+        `User request: ${userPrompt}`,
+      ].join("\n");
+
+      const { GoogleGenAI } = await import("@google/genai");
+      const ai = new GoogleGenAI({
+        apiKey: geminiApiKey,
+        ...(process.env.AI_INTEGRATIONS_GEMINI_BASE_URL
+          ? {
+              httpOptions: {
+                apiVersion: "",
+                baseUrl: process.env.AI_INTEGRATIONS_GEMINI_BASE_URL,
+              },
+            }
+          : {}),
+      });
+
+      const response = await ai.models.generateContent({
+        model: "gemini-2.5-flash",
+        contents: [{ role: "user", parts: [{ text: generationPrompt }] }],
+        config: {
+          systemInstruction,
+          maxOutputTokens: 4096,
+          temperature: 0.7,
+        },
+      });
+
+      const rawText = (response.text || "").trim();
+      const jsonText = rawText.startsWith("{") ? rawText : rawText.slice(rawText.indexOf("{"));
+      const parsed = JSON.parse(jsonText);
+
+      const allowedTypes = new Set(["text", "image", "button", "divider", "socials", "grid", "image_button"]);
+      const blocksIn = Array.isArray(parsed?.blocks) ? parsed.blocks : [];
+      const blocks = blocksIn
+        .filter((b: any) => b && typeof b === "object" && allowedTypes.has(String(b.type)))
+        .map((b: any) => ({
+          id: typeof b.id === "string" && b.id.trim() ? b.id.trim() : randomUUID(),
+          type: String(b.type),
+          data: b.data && typeof b.data === "object" ? b.data : {},
+        }));
+
+      const subject = typeof parsed?.subject === "string" ? parsed.subject.trim() : "";
+      const previewText = typeof parsed?.previewText === "string" ? parsed.previewText.trim() : "";
+
+      const previousDoc = normalizeNewsletterDocument(newsletter.documentJson as NewsletterDocument | null | undefined);
+      const fromEmail =
+        previousDoc.meta?.fromEmail ||
+        newsletter.fromEmail ||
+        brandingKit?.email ||
+        client?.primaryEmail ||
+        "";
+
+      const newDoc: NewsletterDocument = {
+        ...previousDoc,
+        version: "v1",
+        blocks,
+        meta: {
+          ...(previousDoc.meta || {}),
+          subject: subject || previousDoc.meta?.subject,
+          previewText: previewText || previousDoc.meta?.previewText,
+          fromEmail,
+          audienceTag: previousDoc.meta?.audienceTag || "all",
+        },
+      };
+
+      const latestNum = await storage.getLatestVersionNumber(newsletter.id);
+      const newVersion = await storage.createVersion({
+        newsletterId: newsletter.id,
+        versionNumber: latestNum + 1,
+        snapshotJson: newDoc,
+        createdById: userId,
+        changeSummary: `AI blocks: ${userPrompt.slice(0, 60)}`,
+      });
+
+      await storage.updateNewsletter(newsletter.id, {
+        currentVersionId: newVersion.id,
+        documentJson: newDoc,
+        subject: subject || newsletter.subject,
+        previewText: previewText || newsletter.previewText,
+        fromEmail: fromEmail || newsletter.fromEmail,
+        lastEditedById: userId,
+        lastEditedAt: new Date(),
+      });
+
+      const html = compileNewsletterToHtml(newDoc);
+      return res.json({ type: "success", document: newDoc, html, subject, previewText });
+    } catch (error: any) {
+      console.error("AI generate blocks error:", error);
+      res.status(500).json({ error: error?.message || "AI blocks generation failed" });
     }
   });
 
@@ -995,7 +1607,11 @@ export async function registerRoutes(
 
       const result = await editEmailWithAI(command, currentMjml, brandingKit || null);
 
-      const newDoc: NewsletterDocument = { html: result.html };
+      const previousDoc = normalizeNewsletterDocument(newsletter.documentJson as NewsletterDocument | null | undefined);
+      const newDoc: NewsletterDocument = {
+        ...previousDoc,
+        html: result.html,
+      };
       const latestNum = await storage.getLatestVersionNumber(newsletter.id);
 
       const newVersion = await storage.createVersion({
@@ -1034,13 +1650,16 @@ export async function registerRoutes(
 
       const versions = await storage.getVersionsByNewsletter(newsletter.id);
       const currentVersion = versions.find((v) => v.id === newsletter.currentVersionId);
-      const document = (currentVersion?.snapshotJson || newsletter.documentJson || DEFAULT_NEWSLETTER_DOCUMENT) as NewsletterDocument;
+      const document = normalizeNewsletterDocument(
+        (currentVersion?.snapshotJson || newsletter.documentJson || DEFAULT_NEWSLETTER_DOCUMENT) as NewsletterDocument
+      );
+      const html = compileNewsletterToHtml(document);
 
-      if (!document.html) {
+      if (!html) {
         return res.status(400).json({ error: "No content to analyze" });
       }
 
-      const subjects = await suggestSubjectLines(document.html);
+      const subjects = await suggestSubjectLines(html);
       return res.json({ subjects });
     } catch (error) {
       console.error("Subject suggest error:", error);
@@ -1303,6 +1922,109 @@ export async function registerRoutes(
     }
   });
 
+  // Generic Postmark event webhook (opens/clicks/bounces/unsubscribes).
+  // Configure Postmark to POST to this endpoint and set POSTMARK_WEBHOOK_SECRET.
+  app.post("/api/webhooks/postmark/events", async (req: Request, res: Response) => {
+    try {
+      const webhookSecret = req.headers["x-postmark-webhook-secret"] || req.query.secret;
+      const expectedSecret = process.env.POSTMARK_WEBHOOK_SECRET;
+      if (expectedSecret && webhookSecret !== expectedSecret) {
+        console.warn("Postmark events webhook: unauthorized request attempt");
+        return res.status(401).json({ error: "Unauthorized" });
+      }
+
+      const body = req.body || {};
+      const recordTypeRaw =
+        (typeof body.RecordType === "string" && body.RecordType) ||
+        (typeof body.Type === "string" && body.Type) ||
+        (typeof body.Event === "string" && body.Event) ||
+        "unknown";
+      const recordType = String(recordTypeRaw).trim().toLowerCase();
+
+      const messageId =
+        (typeof body.MessageID === "string" && body.MessageID) ||
+        (typeof body.MessageId === "string" && body.MessageId) ||
+        (typeof body.MessageID === "string" && body.MessageID) ||
+        null;
+
+      const recipientEmail =
+        (typeof body.Recipient === "string" && body.Recipient) ||
+        (typeof body.Email === "string" && body.Email) ||
+        (typeof body.OriginalRecipient === "string" && body.OriginalRecipient) ||
+        null;
+
+      const metadata = body.Metadata && typeof body.Metadata === "object" ? body.Metadata : {};
+      const newsletterId =
+        (typeof (metadata as any).newsletterId === "string" && (metadata as any).newsletterId) ||
+        (typeof body.Tag === "string" && body.Tag) ||
+        null;
+
+      const clientIdFromMeta = typeof (metadata as any).clientId === "string" ? (metadata as any).clientId : null;
+      const contactIdFromMeta = typeof (metadata as any).contactId === "string" ? (metadata as any).contactId : null;
+
+      if (!newsletterId) {
+        // Can't attribute; still acknowledge to avoid retries.
+        return res.json({ ok: true, ignored: true });
+      }
+
+      const { db } = await import("./db");
+      const { newsletterEvents, newsletterDeliveries } = await import("@shared/schema");
+      const { eq } = await import("drizzle-orm");
+
+      // If metadata didn't include clientId, derive it from the newsletter record.
+      let clientId = clientIdFromMeta;
+      if (!clientId) {
+        const nl = await storage.getNewsletter(newsletterId);
+        clientId = nl?.clientId || null;
+      }
+      if (!clientId) {
+        // Can't store without a valid FK; still acknowledge to avoid retries.
+        return res.json({ ok: true, ignored: true });
+      }
+
+      const occurredAtRaw =
+        (typeof body.ReceivedAt === "string" && body.ReceivedAt) ||
+        (typeof body.RecordedAt === "string" && body.RecordedAt) ||
+        (typeof body.Timestamp === "string" && body.Timestamp) ||
+        null;
+      const occurredAt = occurredAtRaw ? new Date(occurredAtRaw) : null;
+
+      await db.insert(newsletterEvents).values({
+        newsletterId,
+        clientId,
+        contactId: contactIdFromMeta,
+        email: recipientEmail,
+        postmarkMessageId: messageId,
+        eventType: recordType,
+        occurredAt: occurredAt && !Number.isNaN(occurredAt.getTime()) ? occurredAt : null,
+        payload: body,
+      } as any);
+
+      // Map a few key event types back onto deliveries/contacts.
+      const isBounce = recordType.includes("bounce");
+      const isUnsub =
+        recordType.includes("unsubscribe") ||
+        recordType.includes("subscriptionchange") ||
+        recordType.includes("subscription_change");
+
+      if (messageId && (isBounce || isUnsub)) {
+        await db
+          .update(newsletterDeliveries)
+          .set({ status: isBounce ? "bounced" : "unsubscribed" } as any)
+          .where(eq((newsletterDeliveries as any).postmarkMessageId, messageId));
+      }
+
+      if (isUnsub && clientId && recipientEmail) {
+        await storage.upsertContactByEmail(clientId, recipientEmail, { isActive: false });
+      }
+
+      res.json({ ok: true });
+    } catch (error) {
+      console.error("Postmark events webhook error:", error);
+      res.status(500).json({ error: "Webhook processing failed" });
+    }
+  });
+
   app.get("/api/clients/:clientId/verification-status", requireAuth, async (req: Request, res: Response) => {
     try {
       const client = await storage.getClient(req.params.clientId);
@@ -1329,6 +2051,153 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/clients/:id/onboarding-link", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const client = await storage.getClient(req.params.id);
+      if (!client) {
+        return res.status(404).json({ error: "Client not found" });
+      }
+
+      const token = randomUUID();
+      const expiresAt = new Date();
+      expiresAt.setDate(expiresAt.getDate() + 14);
+
+      await storage.createOnboardingToken({
+        clientId: client.id,
+        token,
+        expiresAt,
+      });
+
+      const onboardingUrl = `${req.protocol}://${req.get("host")}/onboarding/${token}`;
+      res.json({ token, onboardingUrl, expiresAt });
+    } catch (error) {
+      console.error("Create onboarding link error:", error);
+      res.status(500).json({ error: "Failed to create onboarding link" });
+    }
+  });
+
+  app.get("/api/onboarding/:token", async (req: Request, res: Response) => {
+    try {
+      const onboardingToken = await storage.getValidOnboardingToken(req.params.token);
+      if (!onboardingToken) {
+        return res.json({ expired: true });
+      }
+
+      const client = await storage.getClient(onboardingToken.clientId);
+      if (!client) {
+        return res.json({ expired: true });
+      }
+
+      const contacts = await storage.getContactsByClient(client.id);
+      const segments = await storage.getContactSegmentsByClient(client.id);
+
+      res.json({
+        expired: false,
+        client: {
+          id: client.id,
+          name: client.name,
+          primaryEmail: client.primaryEmail,
+          isVerified: client.isVerified,
+        },
+        onboarding: {
+          token: onboardingToken.token,
+          expiresAt: onboardingToken.expiresAt,
+        },
+        audience: {
+          contactsCount: contacts.length,
+          segmentsCount: segments.length,
+        },
+      });
+    } catch (error) {
+      console.error("Get onboarding payload error:", error);
+      res.status(500).json({ error: "Failed to load onboarding" });
+    }
+  });
+
+  app.post("/api/onboarding/:token/verify-sender/resend", async (req: Request, res: Response) => {
+    try {
+      const onboardingToken = await storage.getValidOnboardingToken(req.params.token);
+      if (!onboardingToken) {
+        return res.status(404).json({ error: "Invalid or expired token" });
+      }
+
+      const client = await storage.getClient(onboardingToken.clientId);
+      if (!client) {
+        return res.status(404).json({ error: "Client not found" });
+      }
+
+      if (client.isVerified) {
+        return res.json({ success: true, isVerified: true, message: "Sender already verified" });
+      }
+
+      if (client.postmarkSignatureId) {
+        const signature = await getSenderSignature(client.postmarkSignatureId);
+        if (signature?.Confirmed) {
+          await storage.updateClient(client.id, { isVerified: true });
+          return res.json({ success: true, isVerified: true, message: "Sender verified" });
+        }
+      }
+
+      if (!process.env.POSTMARK_ACCOUNT_API_TOKEN) {
+        return res.status(400).json({ error: "Postmark account API token is not configured" });
+      }
+
+      const signatureResult = await createSenderSignature(client.primaryEmail, client.name);
+      if (!signatureResult.success || !signatureResult.signatureId) {
+        return res.status(500).json({ error: signatureResult.error || "Failed to request verification email" });
+      }
+
+      await storage.updateClient(client.id, {
+        postmarkSignatureId: signatureResult.signatureId,
+        isVerified: false,
+      });
+
+      res.json({
+        success: true,
+        isVerified: false,
+        signatureId: signatureResult.signatureId,
+        message: "Verification email sent",
+      });
+    } catch (error) {
+      console.error("Onboarding sender verification error:", error);
+      res.status(500).json({ error: "Failed to send verification email" });
+    }
+  });
+
+  app.post("/api/onboarding/:token/contacts/import-csv", async (req: Request, res: Response) => {
+    try {
+      const onboardingToken = await storage.getValidOnboardingToken(req.params.token);
+      if (!onboardingToken) {
+        return res.status(404).json({ error: "Invalid or expired token" });
+      }
+
+      const client = await storage.getClient(onboardingToken.clientId);
+      if (!client) {
+        return res.status(404).json({ error: "Client not found" });
+      }
+
+      const csvContent = typeof req.body.csvContent === "string" ? req.body.csvContent : "";
+      if (!csvContent.trim()) {
+        return res.status(400).json({ error: "csvContent is required" });
+      }
+
+      const requestedMapping = req.body.mapping && typeof req.body.mapping === "object" ? req.body.mapping : {};
+      const result = await importContactsFromCsv(client.id, csvContent, requestedMapping);
+      res.json(result);
+    } catch (error) {
+      console.error("Onboarding CSV import error:", error);
+      const errorWithMeta = error as Error & { meta?: { suggestedMapping?: unknown; headers?: string[] } };
+      if (errorWithMeta.message === "Email column is required") {
+        return res.status(400).json({
+          error: errorWithMeta.message,
+          suggestedMapping: errorWithMeta.meta?.suggestedMapping,
+          headers: errorWithMeta.meta?.headers || [],
+        });
+      }
+      res.status(500).json({ error: "Failed to import CSV" });
+    }
+  });
+
   // ============================================================================
   // REVIEW TOKENS
   // ============================================================================
@@ -1347,7 +2216,9 @@ export async function registerRoutes(
       const client = await storage.getClient(newsletter.clientId);
       const versions = await storage.getVersionsByNewsletter(newsletter.id);
       const currentVersion = versions.find((v) => v.id === newsletter.currentVersionId);
-      const document = (currentVersion?.snapshotJson || newsletter.documentJson || DEFAULT_NEWSLETTER_DOCUMENT) as NewsletterDocument;
+      const document = normalizeNewsletterDocument(
+        (currentVersion?.snapshotJson || newsletter.documentJson || DEFAULT_NEWSLETTER_DOCUMENT) as NewsletterDocument
+      );
       const html = compileNewsletterToHtml(document);
 
       res.json({
@@ -1400,7 +2271,7 @@ export async function registerRoutes(
         attachments: [],
       });
 
-      await storage.updateNewsletter(reviewToken.newsletterId, { status: "revisions" });
+      await storage.updateNewsletter(reviewToken.newsletterId, { status: "changes_requested" });
 
       res.json({ success: true, comment: reviewComment });
     } catch (error) {
@@ -1439,7 +2310,7 @@ export async function registerRoutes(
         attachments: attachments || [],
       });
 
-      await storage.updateNewsletter(reviewToken.newsletterId, { status: "revisions" });
+      await storage.updateNewsletter(reviewToken.newsletterId, { status: "changes_requested" });
       res.status(201).json(comment);
     } catch (error) {
       res.status(500).json({ error: "Failed to create comment" });
@@ -1499,6 +2370,560 @@ export async function registerRoutes(
     }
   });
 
+  const buildNewsletterQaReport = async (newsletterId: string) => {
+    const newsletter = await storage.getNewsletter(newsletterId);
+    if (!newsletter) return null;
+
+    const client = await storage.getClient(newsletter.clientId);
+    const versions = await storage.getVersionsByNewsletter(newsletter.id);
+    const currentVersion = versions.find((v) => v.id === newsletter.currentVersionId);
+    const document = normalizeNewsletterDocument(
+      (currentVersion?.snapshotJson || newsletter.documentJson || DEFAULT_NEWSLETTER_DOCUMENT) as NewsletterDocument
+    );
+    const html = compileNewsletterToHtml(document);
+    const comments = await storage.getReviewCommentsByNewsletter(newsletter.id);
+
+    const resolvedSubject =
+      (newsletter.subject || document.meta?.subject || newsletter.title || "").trim();
+    const resolvedPreviewText =
+      (newsletter.previewText || document.meta?.previewText || "").trim();
+    const resolvedFromEmail =
+      (newsletter.fromEmail || document.meta?.fromEmail || client?.primaryEmail || "").trim();
+    const unresolvedClientChanges = comments.filter((c) => !c.isInternal && !c.isCompleted).length;
+
+    const blockers: Array<{ code: string; message: string }> = [];
+    const warnings: Array<{ code: string; message: string }> = [];
+
+    if (!client?.isVerified) {
+      blockers.push({
+        code: "sender_not_verified",
+        message: "Sender email is not verified in Postmark.",
+      });
+    }
+    if (!resolvedSubject) {
+      blockers.push({
+        code: "missing_subject",
+        message: "Subject line is required before send/schedule.",
+      });
+    }
+    if (!resolvedFromEmail) {
+      blockers.push({
+        code: "missing_from_email",
+        message: "From email is required before send/schedule.",
+      });
+    }
+    if (!html || html.trim().length < 50) {
+      blockers.push({
+        code: "missing_content",
+        message: "Newsletter content is empty.",
+      });
+    }
+    if (unresolvedClientChanges > 0) {
+      blockers.push({
+        code: "pending_change_requests",
+        message: `${unresolvedClientChanges} unresolved client change request(s) remain.`,
+      });
+    }
+
+    const urls = extractUrlsFromHtml(html);
+    const invalidUrls = urls.filter((url) => !isLikelyValidUrl(url));
+    if (invalidUrls.length > 0) {
+      blockers.push({
+        code: "malformed_urls",
+        message: `Found ${invalidUrls.length} malformed link or media URL(s).`,
+      });
+    }
+
+    if (!resolvedPreviewText) {
+      warnings.push({
+        code: "missing_preview_text",
+        message: "Preview text is missing.",
+      });
+    }
+    if (resolvedSubject.length > 78) {
+      warnings.push({
+        code: "subject_too_long",
+        message: "Subject line is likely too long for inbox display.",
+      });
+    }
+    if (/<img\b(?![^>]*\balt=)/i.test(html)) {
+      warnings.push({
+        code: "missing_alt_text",
+        message: "One or more images are missing alt text.",
+      });
+    }
+    if (!/{{\s*first_?name\s*}}|%FIRSTNAME%|\[\[\s*first_?name\s*\]\]/i.test(html)) {
+      warnings.push({
+        code: "low_personalization",
+        message: "No first-name personalization token detected.",
+      });
+    }
+
+    return {
+      newsletter,
+      document,
+      html,
+      subject: resolvedSubject,
+      previewText: resolvedPreviewText,
+      fromEmail: resolvedFromEmail,
+      blockers,
+      warnings,
+      canSend: blockers.length === 0,
+    };
+  };
+
+  const normalizeAudienceTag = (value: unknown): string => {
+    if (typeof value !== "string") return "";
+    const trimmed = value.trim();
+    return trimmed;
+  };
+
+  const personalizeNewsletterHtml = (html: string, contact: any): string => {
+    const firstName = typeof contact?.firstName === "string" ? contact.firstName : "";
+    const lastName = typeof contact?.lastName === "string" ? contact.lastName : "";
+
+    return html
+      .replace(/{{\s*first_?name\s*}}/gi, firstName)
+      .replace(/{{\s*last_?name\s*}}/gi, lastName)
+      .replace(/%FIRSTNAME%/gi, firstName)
+      .replace(/\[\[\s*first_?name\s*\]\]/gi, firstName);
+  };
+
+  const chunkArray = <T,>(items: T[], size: number): T[][] => {
+    const out: T[][] = [];
+    for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+    return out;
+  };
+
+  const sendNewsletterViaPostmark = async (qa: any, audienceTag: string) => {
+    const postmarkToken = process.env.POSTMARK_SERVER_TOKEN || "";
+    if (!postmarkToken) {
+      return {
+        ok: false,
+        error: "Postmark server token is not configured (POSTMARK_SERVER_TOKEN).",
+      };
+    }
+
+    const contacts = await storage.getContactsByClient(qa.newsletter.clientId);
+    const normalizedTag = audienceTag && audienceTag.trim() ? audienceTag.trim() : "all";
+    const recipients = contacts.filter((c: any) => {
+      if (!c?.isActive) return false;
+      if (normalizedTag === "all") return true;
+      const tags = Array.isArray(c?.tags) ? c.tags : [];
+      return tags.includes(normalizedTag);
+    });
+
+    if (recipients.length === 0) {
+      return {
+        ok: false,
+        error: `No active contacts found for tag "${normalizedTag}".`,
+      };
+    }
+
+    const { ServerClient } = await import("postmark");
+    const pm = new ServerClient(postmarkToken);
+    const messageStream = process.env.POSTMARK_MESSAGE_STREAM || "outbound";
+
+    const { db } = await import("./db");
+    const { newsletterDeliveries } = await import("@shared/schema");
+
+    const now = new Date();
+    let sentCount = 0;
+    let failedCount = 0;
+    const deliveryRows: any[] = [];
+
+    // Keep batches modest for serverless timeouts and Postmark API limits.
+    const batches = chunkArray(recipients, 400);
+    for (const batchRecipients of batches) {
+      const batchMessages = batchRecipients.map((contact: any) => ({
+        From: qa.fromEmail,
+        To: contact.email,
+        Subject: qa.subject,
+        HtmlBody: personalizeNewsletterHtml(qa.html, contact),
+        MessageStream: messageStream,
+        TrackOpens: true,
+        TrackLinks: "HtmlAndText",
+        Tag: qa.newsletter.id,
+        Metadata: {
+          newsletterId: qa.newsletter.id,
+          clientId: qa.newsletter.clientId,
+          contactId: contact.id,
+          audienceTag: normalizedTag,
+        },
+      }));
+
+      const results = await pm.sendEmailBatch(batchMessages as any);
+      for (let i = 0; i < batchRecipients.length; i++) {
+        const contact = batchRecipients[i];
+        const result = (results as any[])?.[i] || {};
+        const errorCode = typeof result?.ErrorCode === "number" ? result.ErrorCode : 0;
+        const isFailed = errorCode !== 0;
+        const postmarkMessageId = typeof result?.MessageID === "string" ? result.MessageID : null;
+        const message = typeof result?.Message === "string" ? result.Message : null;
+
+        if (isFailed) failedCount += 1;
+        else sentCount += 1;
+
+        deliveryRows.push({
+          newsletterId: qa.newsletter.id,
+          clientId: qa.newsletter.clientId,
+          contactId: contact.id,
+          email: contact.email,
+          audienceTag: normalizedTag,
+          postmarkMessageId,
+          status: isFailed ? "failed" : "sent",
+          error: isFailed ? message : null,
+          sentAt: isFailed ? null : now,
+        });
+      }
+    }
+
+    if (deliveryRows.length) {
+      await db.insert(newsletterDeliveries).values(deliveryRows);
+    }
+
+    return {
+      ok: true,
+      audienceTag: normalizedTag,
+      recipientsCount: recipients.length,
+      sentCount,
+      failedCount,
+    };
+  };
+
+  app.post("/api/newsletters/:id/qa-check", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const qa = await buildNewsletterQaReport(req.params.id);
+      if (!qa) {
+        return res.status(404).json({ error: "Newsletter not found" });
+      }
+      res.json({
+        blockers: qa.blockers,
+        warnings: qa.warnings,
+        canSend: qa.canSend,
+      });
+    } catch (error) {
+      console.error("QA check error:", error);
+      res.status(500).json({ error: "Failed to run QA check" });
+    }
+  });
+
+  app.post("/api/newsletters/:id/schedule", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = (req as Request & { userId: string }).userId;
+      const qa = await buildNewsletterQaReport(req.params.id);
+      if (!qa) {
+        return res.status(404).json({ error: "Newsletter not found" });
+      }
+      if (!qa.canSend) {
+        return res.status(400).json({
+          error: "Newsletter has blocking QA issues.",
+          blockers: qa.blockers,
+          warnings: qa.warnings,
+        });
+      }
+
+      const sendMode = normalizeSendMode(req.body.sendMode) || qa.newsletter.sendMode || "ai_recommended";
+      const timezone = typeof req.body.timezone === "string" && req.body.timezone.trim()
+        ? req.body.timezone.trim()
+        : qa.newsletter.timezone || "America/New_York";
+      const requestedDate = req.body.scheduledAt ? new Date(req.body.scheduledAt) : null;
+      const fallbackDate = qa.newsletter.expectedSendDate
+        ? new Date(`${qa.newsletter.expectedSendDate}T09:00:00`)
+        : new Date();
+      const scheduledAt = requestedDate && !Number.isNaN(requestedDate.getTime()) ? requestedDate : fallbackDate;
+
+      const requestedAudienceTag =
+        normalizeAudienceTag(req.body.audienceTag) ||
+        normalizeAudienceTag(req.body.segmentTag) ||
+        normalizeAudienceTag((qa.document as any)?.meta?.audienceTag);
+      const audienceTag = requestedAudienceTag || "all";
+
+      const nextDoc = {
+        ...qa.document,
+        meta: {
+          ...(qa.document.meta || {}),
+          subject: qa.subject,
+          previewText: qa.previewText || undefined,
+          fromEmail: qa.fromEmail,
+          sendMode,
+          timezone,
+          audienceTag,
+        },
+      };
+
+      const updated = await storage.updateNewsletter(req.params.id, {
+        status: "scheduled",
+        scheduledAt,
+        sendMode,
+        timezone,
+        subject: qa.subject,
+        previewText: qa.previewText || null,
+        fromEmail: qa.fromEmail,
+        documentJson: nextDoc,
+        lastEditedById: userId,
+        lastEditedAt: new Date(),
+      });
+
+      res.json({
+        newsletter: updated,
+        blockers: qa.blockers,
+        warnings: qa.warnings,
+        canSend: true,
+      });
+    } catch (error) {
+      console.error("Schedule newsletter error:", error);
+      res.status(500).json({ error: "Failed to schedule newsletter" });
+    }
+  });
+
+  app.post("/api/newsletters/:id/send-now", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = (req as Request & { userId: string }).userId;
+      const qa = await buildNewsletterQaReport(req.params.id);
+      if (!qa) {
+        return res.status(404).json({ error: "Newsletter not found" });
+      }
+      if (!qa.canSend) {
+        return res.status(400).json({
+          error: "Newsletter has blocking QA issues.",
+          blockers: qa.blockers,
+          warnings: qa.warnings,
+        });
+      }
+
+      const requestedAudienceTag =
+        normalizeAudienceTag(req.body.audienceTag) ||
+        normalizeAudienceTag(req.body.segmentTag) ||
+        normalizeAudienceTag((qa.document as any)?.meta?.audienceTag);
+      const audienceTag = requestedAudienceTag || "all";
+
+      const sendResult = await sendNewsletterViaPostmark(qa, audienceTag);
+      if (!sendResult.ok) {
+        return res.status(400).json({
+          error: sendResult.error || "Failed to send via Postmark",
+          blockers: qa.blockers,
+          warnings: qa.warnings,
+        });
+      }
+
+      const sendAt = new Date();
+      const nextDoc = {
+        ...qa.document,
+        meta: {
+          ...(qa.document.meta || {}),
+          subject: qa.subject,
+          previewText: qa.previewText || undefined,
+          fromEmail: qa.fromEmail,
+          sendMode: qa.newsletter.sendMode || "ai_recommended",
+          timezone: qa.newsletter.timezone || "America/New_York",
+          audienceTag: (sendResult as any).audienceTag || audienceTag,
+        },
+      };
+
+      const updated = await storage.updateNewsletter(req.params.id, {
+        status: "sent",
+        sentAt: sendAt,
+        sendDate: sendAt.toISOString().split("T")[0],
+        subject: qa.subject,
+        previewText: qa.previewText || null,
+        fromEmail: qa.fromEmail,
+        documentJson: nextDoc,
+        lastEditedById: userId,
+        lastEditedAt: sendAt,
+      });
+
+      res.json({
+        newsletter: updated,
+        blockers: qa.blockers,
+        warnings: qa.warnings,
+        canSend: true,
+        send: sendResult,
+      });
+    } catch (error) {
+      console.error("Send newsletter error:", error);
+      res.status(500).json({ error: "Failed to send newsletter" });
+    }
+  });
+
+  app.get("/api/newsletters/:id/analytics", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const { db } = await import("./db");
+      const { newsletterDeliveries, newsletterEvents } = await import("@shared/schema");
+      const { eq, desc } = await import("drizzle-orm");
+
+      const deliveries = await db
+        .select()
+        .from(newsletterDeliveries)
+        .where(eq((newsletterDeliveries as any).newsletterId, req.params.id))
+        .orderBy(desc((newsletterDeliveries as any).createdAt));
+
+      const events = await db
+        .select()
+        .from(newsletterEvents)
+        .where(eq((newsletterEvents as any).newsletterId, req.params.id))
+        .orderBy(desc((newsletterEvents as any).createdAt));
+
+      const countsByType: Record<string, number> = {};
+      const uniqueOpenMessageIds = new Set<string>();
+      const uniqueClickMessageIds = new Set<string>();
+      for (const ev of events as any[]) {
+        const t = typeof ev?.eventType === "string" ? ev.eventType : "unknown";
+        countsByType[t] = (countsByType[t] || 0) + 1;
+        const mid = typeof ev?.postmarkMessageId === "string" ? ev.postmarkMessageId : "";
+        if (mid) {
+          if (t.includes("open")) uniqueOpenMessageIds.add(mid);
+          if (t.includes("click")) uniqueClickMessageIds.add(mid);
+        }
+      }
+
+      const sentCount = (deliveries as any[]).filter((d) => d.status === "sent").length;
+      const failedCount = (deliveries as any[]).filter((d) => d.status === "failed").length;
+      const bouncedCount = (deliveries as any[]).filter((d) => d.status === "bounced").length;
+      const unsubCount = (deliveries as any[]).filter((d) => d.status === "unsubscribed").length;
+
+      res.json({
+        deliveriesCount: (deliveries as any[]).length,
+        sentCount,
+        failedCount,
+        bouncedCount,
+        unsubscribedCount: unsubCount,
+        eventsCount: (events as any[]).length,
+        countsByType,
+        uniqueOpens: uniqueOpenMessageIds.size,
+        uniqueClicks: uniqueClickMessageIds.size,
+        openRate: sentCount > 0 ? uniqueOpenMessageIds.size / sentCount : 0,
+        clickRate: sentCount > 0 ? uniqueClickMessageIds.size / sentCount : 0,
+        recentEvents: (events as any[]).slice(0, 50),
+      });
+    } catch (error) {
+      console.error("Analytics fetch error:", error);
+      res.status(500).json({ error: "Failed to fetch analytics" });
+    }
+  });
+
+  // Campaign + contact-level timeline (deliveries + events).
+  app.get("/api/newsletters/:id/timeline", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const { db } = await import("./db");
+      const { newsletterDeliveries, newsletterEvents } = await import("@shared/schema");
+      const { eq, asc } = await import("drizzle-orm");
+
+      const deliveries = await db
+        .select()
+        .from(newsletterDeliveries)
+        .where(eq((newsletterDeliveries as any).newsletterId, req.params.id))
+        .orderBy(asc((newsletterDeliveries as any).createdAt));
+
+      const events = await db
+        .select()
+        .from(newsletterEvents)
+        .where(eq((newsletterEvents as any).newsletterId, req.params.id))
+        .orderBy(asc((newsletterEvents as any).createdAt));
+
+      const byEmail = new Map<string, any>();
+      for (const d of deliveries as any[]) {
+        const key = String(d.email || "").toLowerCase();
+        if (!key) continue;
+        byEmail.set(key, {
+          contactId: d.contactId || null,
+          email: d.email,
+          status: d.status,
+          postmarkMessageId: d.postmarkMessageId || null,
+          audienceTag: d.audienceTag || "all",
+          sentAt: d.sentAt || null,
+          events: [],
+        });
+      }
+
+      for (const ev of events as any[]) {
+        const key = String(ev.email || "").toLowerCase();
+        if (!key) continue;
+        if (!byEmail.has(key)) {
+          byEmail.set(key, {
+            contactId: ev.contactId || null,
+            email: ev.email,
+            status: null,
+            postmarkMessageId: ev.postmarkMessageId || null,
+            audienceTag: "all",
+            sentAt: null,
+            events: [],
+          });
+        }
+        byEmail.get(key).events.push({
+          eventType: ev.eventType,
+          occurredAt: ev.occurredAt,
+          postmarkMessageId: ev.postmarkMessageId || null,
+        });
+      }
+
+      res.json({
+        newsletterId: req.params.id,
+        contacts: Array.from(byEmail.values()),
+      });
+    } catch (error) {
+      console.error("Timeline fetch error:", error);
+      res.status(500).json({ error: "Failed to fetch timeline" });
+    }
+  });
+
+  // Cron/automation hook to send scheduled newsletters. Configure this with Vercel Cron or an external scheduler.
+  app.post("/api/internal/cron/send-due-newsletters", async (req: Request, res: Response) => {
+    try {
+      const expected = process.env.CRON_SECRET;
+      const provided = (req.headers["x-cron-secret"] as string) || (req.query.secret as string);
+      if (expected && provided !== expected) {
+        return res.status(401).json({ error: "Unauthorized" });
+      }
+
+      const dueNewsletters = (await storage.getNewslettersByStatus(["scheduled"] as any)).filter((n: any) => {
+        if (!n?.scheduledAt) return false;
+        const when = new Date(n.scheduledAt);
+        return !Number.isNaN(when.getTime()) && when.getTime() <= Date.now();
+      });
+
+      let processed = 0;
+      const results: any[] = [];
+      for (const nl of dueNewsletters) {
+        const qa = await buildNewsletterQaReport(nl.id);
+        if (!qa || !qa.canSend) continue;
+        const audienceTag =
+          normalizeAudienceTag((qa.document as any)?.meta?.audienceTag) || "all";
+        const sendResult = await sendNewsletterViaPostmark(qa, audienceTag);
+        if (!sendResult.ok) continue;
+
+        const sendAt = new Date();
+        await storage.updateNewsletter(nl.id, {
+          status: "sent",
+          sentAt: sendAt,
+          sendDate: sendAt.toISOString().split("T")[0],
+          subject: qa.subject,
+          previewText: qa.previewText || null,
+          fromEmail: qa.fromEmail,
+          documentJson: {
+            ...qa.document,
+            meta: {
+              ...(qa.document.meta || {}),
+              subject: qa.subject,
+              previewText: qa.previewText || undefined,
+              fromEmail: qa.fromEmail,
+              audienceTag: (sendResult as any).audienceTag || audienceTag,
+            },
+          },
+          lastEditedAt: sendAt,
+        });
+
+        processed += 1;
+        results.push({ newsletterId: nl.id, send: sendResult });
+      }
+
+      res.json({ ok: true, dueCount: dueNewsletters.length, processed, results });
+    } catch (error) {
+      console.error("Cron send-due error:", error);
+      res.status(500).json({ error: "Failed to send due newsletters" });
+    }
+  });
+
   app.post("/api/newsletters/:id/send-for-review", requireAuth, async (req: Request, res: Response) => {
     try {
       const newsletter = await storage.getNewsletter(req.params.id);
@@ -1517,7 +2942,7 @@ export async function registerRoutes(
         singleUse: true,
       });
 
-      await storage.updateNewsletter(newsletter.id, { status: "client_review" });
+      await storage.updateNewsletter(newsletter.id, { status: "in_review" });
 
       const reviewUrl = `${req.protocol}://${req.get("host")}/review/${token}`;
 
@@ -1541,7 +2966,7 @@ export async function registerRoutes(
         return res.status(404).json({ error: "Version not found" });
       }
 
-      const restoredDoc = targetVersion.snapshotJson as NewsletterDocument;
+      const restoredDoc = normalizeNewsletterDocument(targetVersion.snapshotJson as NewsletterDocument);
       const latestNum = await storage.getLatestVersionNumber(newsletter.id);
 
       const newVersion = await storage.createVersion({
@@ -1576,7 +3001,9 @@ export async function registerRoutes(
 
       const versions = await storage.getVersionsByNewsletter(newsletter.id);
       const currentVersion = versions.find((v) => v.id === newsletter.currentVersionId);
-      const document = (currentVersion?.snapshotJson || newsletter.documentJson || DEFAULT_NEWSLETTER_DOCUMENT) as NewsletterDocument;
+      const document = normalizeNewsletterDocument(
+        (currentVersion?.snapshotJson || newsletter.documentJson || DEFAULT_NEWSLETTER_DOCUMENT) as NewsletterDocument
+      );
       const html = compileNewsletterToHtml(document);
       const format = req.query.format as string || "html";
       const safeTitle = newsletter.title.replace(/[^a-z0-9]/gi, '_');

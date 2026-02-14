@@ -6,6 +6,7 @@ import { TopNav } from "@/components/TopNav";
 import { RightPanel } from "@/components/RightPanel";
 import { HTMLPreviewFrame } from "@/components/HTMLPreviewFrame";
 import { CreateNewsletterDialog } from "@/components/CreateNewsletterDialog";
+import { ClientAudiencePanel } from "@/components/ClientAudiencePanel";
 import { StatusPill } from "@/components/StatusPill";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -39,6 +40,7 @@ import {
   ArrowDownLeft,
   ArrowUpRight,
   Trash2,
+  Loader2,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import type { Client, Newsletter, NewsletterVersion, NewsletterDocument, BrandingKit, Project, TasksFlags, Subscription, Invoice, ClientNote } from "@shared/schema";
@@ -371,6 +373,25 @@ export default function ClientProfilePage({ clientId }: ClientProfilePageProps) 
     },
   });
 
+  const createOnboardingLinkMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", `/api/clients/${clientId}/onboarding-link`, {});
+      return res.json() as Promise<{ onboardingUrl: string }>;
+    },
+    onSuccess: async (data) => {
+      if (data?.onboardingUrl) {
+        await navigator.clipboard.writeText(data.onboardingUrl);
+        window.open(data.onboardingUrl, "_blank");
+        toast({ title: "Onboarding link copied and opened" });
+      } else {
+        toast({ title: "Onboarding link created" });
+      }
+    },
+    onError: (error) => {
+      toast({ title: "Failed to create onboarding link", description: error.message, variant: "destructive" });
+    },
+  });
+
   const handleExportHtml = async () => {
     if (!selectedNewsletterId) return;
     try {
@@ -611,46 +632,61 @@ export default function ClientProfilePage({ clientId }: ClientProfilePageProps) 
               <div className="p-3 space-y-4">
                 <div className="flex items-center justify-between">
                   <span className="text-xs text-muted-foreground font-medium">Client Info</span>
-                  {!isEditingInfo ? (
+                  <div className="flex items-center gap-1">
                     <Button
                       variant="ghost"
                       size="sm"
-                      onClick={() => {
-                        setEditedClient({
-                          name: client.name,
-                          primaryEmail: client.primaryEmail,
-                          phone: client.phone || "",
-                          locationCity: client.locationCity || "",
-                          locationRegion: client.locationRegion || "",
-                          newsletterFrequency: client.newsletterFrequency || "monthly",
-                        });
-                        setIsEditingInfo(true);
-                      }}
-                      data-testid="button-edit-info"
+                      onClick={() => createOnboardingLinkMutation.mutate()}
+                      disabled={createOnboardingLinkMutation.isPending}
+                      data-testid="button-create-onboarding-link"
                     >
-                      <Edit2 className="w-3.5 h-3.5" />
+                      {createOnboardingLinkMutation.isPending ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <ExternalLink className="w-3.5 h-3.5" />
+                      )}
                     </Button>
-                  ) : (
-                    <div className="flex items-center gap-1">
+                    {!isEditingInfo ? (
                       <Button
                         variant="ghost"
-                        size="icon"
-                        onClick={() => updateClientMutation.mutate(editedClient)}
-                        disabled={updateClientMutation.isPending}
-                        data-testid="button-save-info"
+                        size="sm"
+                        onClick={() => {
+                          setEditedClient({
+                            name: client.name,
+                            primaryEmail: client.primaryEmail,
+                            phone: client.phone || "",
+                            locationCity: client.locationCity || "",
+                            locationRegion: client.locationRegion || "",
+                            newsletterFrequency: client.newsletterFrequency || "monthly",
+                          });
+                          setIsEditingInfo(true);
+                        }}
+                        data-testid="button-edit-info"
                       >
-                        <Check className="w-4 h-4 text-green-600" />
+                        <Edit2 className="w-3.5 h-3.5" />
                       </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => setIsEditingInfo(false)}
-                        data-testid="button-cancel-edit"
-                      >
-                        <X className="w-4 h-4" />
-                      </Button>
-                    </div>
-                  )}
+                    ) : (
+                      <div className="flex items-center gap-1">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => updateClientMutation.mutate(editedClient)}
+                          disabled={updateClientMutation.isPending}
+                          data-testid="button-save-info"
+                        >
+                          <Check className="w-4 h-4 text-green-600" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => setIsEditingInfo(false)}
+                          data-testid="button-cancel-edit"
+                        >
+                          <X className="w-4 h-4" />
+                        </Button>
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 {isEditingInfo ? (
@@ -743,6 +779,10 @@ export default function ClientProfilePage({ clientId }: ClientProfilePageProps) 
                     </div>
                   </div>
                 )}
+
+                <div className="pt-2 border-t">
+                  <ClientAudiencePanel clientId={clientId} />
+                </div>
               </div>
             </ScrollArea>
           </TabsContent>
@@ -812,7 +852,7 @@ export default function ClientProfilePage({ clientId }: ClientProfilePageProps) 
         <div className="w-56 flex-shrink-0 border-l">
           <RightPanel
             newsletterId={selectedNewsletterId}
-            status={newsletterData.newsletter?.status || "not_started"}
+            status={newsletterData.newsletter?.status || "draft"}
             onStatusChange={(status: string) => updateStatusMutation.mutate(status)}
           />
         </div>

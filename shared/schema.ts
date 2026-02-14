@@ -58,6 +58,10 @@ export const clientsRelations = relations(clients, ({ one, many }) => ({
   invoices: many(invoices),
   newsletters: many(newsletters),
   notes: many(clientNotes),
+  contacts: many(contacts),
+  contactImportJobs: many(contactImportJobs),
+  contactSegments: many(contactSegments),
+  onboardingTokens: many(clientOnboardingTokens),
 }));
 
 export const insertClientSchema = createInsertSchema(clients).omit({
@@ -256,16 +260,21 @@ export type Invoice = typeof invoices.$inferSelect;
 // NEWSLETTERS
 // ============================================================================
 export const NEWSLETTER_STATUSES = [
-  "not_started",
-  "in_progress", 
-  "internal_review",
-  "client_review",
-  "revisions",
+  "draft",
+  "in_review",
+  "changes_requested",
   "approved",
+  "scheduled",
   "sent"
 ] as const;
 
 export type NewsletterStatus = typeof NEWSLETTER_STATUSES[number];
+export const NEWSLETTER_SEND_MODES = [
+  "fixed_time",
+  "immediate_after_approval",
+  "ai_recommended",
+] as const;
+export type NewsletterSendMode = typeof NEWSLETTER_SEND_MODES[number];
 
 export const newsletters = pgTable("newsletters", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -277,7 +286,15 @@ export const newsletters = pgTable("newsletters", {
   expectedSendDate: date("expected_send_date").notNull(),
   status: text("status", { 
     enum: NEWSLETTER_STATUSES
-  }).notNull().default("not_started"),
+  }).notNull().default("draft"),
+  subject: text("subject"),
+  previewText: text("preview_text"),
+  fromEmail: text("from_email"),
+  sendMode: text("send_mode", { enum: NEWSLETTER_SEND_MODES }).default("ai_recommended"),
+  timezone: text("timezone").default("America/New_York"),
+  scheduledAt: timestamp("scheduled_at"),
+  sentAt: timestamp("sent_at"),
+  editorVersion: text("editor_version").default("v1"),
   currentVersionId: varchar("current_version_id"),
   documentJson: jsonb("document_json").$type<NewsletterDocument>(),
   designJson: jsonb("design_json"),
@@ -503,6 +520,32 @@ export type InsertReviewToken = z.infer<typeof insertReviewTokenSchema>;
 export type ReviewToken = typeof reviewTokens.$inferSelect;
 
 // ============================================================================
+// CLIENT ONBOARDING TOKENS - Secure onboarding links
+// ============================================================================
+export const clientOnboardingTokens = pgTable("client_onboarding_tokens", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  clientId: varchar("client_id").notNull().references(() => clients.id, { onDelete: "cascade" }),
+  token: text("token").notNull().unique(),
+  expiresAt: timestamp("expires_at").notNull(),
+  usedAt: timestamp("used_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const clientOnboardingTokensRelations = relations(clientOnboardingTokens, ({ one }) => ({
+  client: one(clients, {
+    fields: [clientOnboardingTokens.clientId],
+    references: [clients.id],
+  }),
+}));
+
+export const insertClientOnboardingTokenSchema = createInsertSchema(clientOnboardingTokens).omit({
+  id: true,
+  createdAt: true,
+});
+export type InsertClientOnboardingToken = z.infer<typeof insertClientOnboardingTokenSchema>;
+export type ClientOnboardingToken = typeof clientOnboardingTokens.$inferSelect;
+
+// ============================================================================
 // REVIEW COMMENTS - Client feedback on newsletters (to-do style)
 // ============================================================================
 export const reviewComments = pgTable("review_comments", {
@@ -579,6 +622,142 @@ export const insertClientNoteSchema = createInsertSchema(clientNotes).omit({
 });
 export type InsertClientNote = z.infer<typeof insertClientNoteSchema>;
 export type ClientNote = typeof clientNotes.$inferSelect;
+
+// ============================================================================
+// CONTACTS - Client audience records
+// ============================================================================
+export const contacts = pgTable("contacts", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  clientId: varchar("client_id").notNull().references(() => clients.id, { onDelete: "cascade" }),
+  email: text("email").notNull(),
+  firstName: text("first_name"),
+  lastName: text("last_name"),
+  tags: jsonb("tags").$type<string[]>().default(["all"]),
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const contactsRelations = relations(contacts, ({ one }) => ({
+  client: one(clients, {
+    fields: [contacts.clientId],
+    references: [clients.id],
+  }),
+}));
+
+export const insertContactSchema = createInsertSchema(contacts).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type InsertContact = z.infer<typeof insertContactSchema>;
+export type Contact = typeof contacts.$inferSelect;
+
+// ============================================================================
+// CONTACT IMPORT JOBS - CSV import audit trail
+// ============================================================================
+export const contactImportJobs = pgTable("contact_import_jobs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  clientId: varchar("client_id").notNull().references(() => clients.id, { onDelete: "cascade" }),
+  status: text("status", { enum: ["running", "completed", "failed"] }).notNull().default("running"),
+  totalRows: integer("total_rows").notNull().default(0),
+  importedCount: integer("imported_count").notNull().default(0),
+  updatedCount: integer("updated_count").notNull().default(0),
+  skippedCount: integer("skipped_count").notNull().default(0),
+  errors: jsonb("errors").$type<string[]>().default([]),
+  mapping: jsonb("mapping").$type<Record<string, string>>().default({}),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const contactImportJobsRelations = relations(contactImportJobs, ({ one }) => ({
+  client: one(clients, {
+    fields: [contactImportJobs.clientId],
+    references: [clients.id],
+  }),
+}));
+
+export const insertContactImportJobSchema = createInsertSchema(contactImportJobs).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type InsertContactImportJob = z.infer<typeof insertContactImportJobSchema>;
+export type ContactImportJob = typeof contactImportJobs.$inferSelect;
+
+// ============================================================================
+// CONTACT SEGMENTS - Tag-based audience groups
+// ============================================================================
+export const contactSegments = pgTable("contact_segments", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  clientId: varchar("client_id").notNull().references(() => clients.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  tags: jsonb("tags").$type<string[]>().default(["all"]),
+  isDefault: boolean("is_default").notNull().default(false),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const contactSegmentsRelations = relations(contactSegments, ({ one }) => ({
+  client: one(clients, {
+    fields: [contactSegments.clientId],
+    references: [clients.id],
+  }),
+}));
+
+export const insertContactSegmentSchema = createInsertSchema(contactSegments).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type InsertContactSegment = z.infer<typeof insertContactSegmentSchema>;
+export type ContactSegment = typeof contactSegments.$inferSelect;
+
+// ============================================================================
+// NEWSLETTER DELIVERIES / EVENTS - Postmark send + analytics
+// ============================================================================
+export const newsletterDeliveries = pgTable("newsletter_deliveries", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  newsletterId: varchar("newsletter_id").notNull().references(() => newsletters.id, { onDelete: "cascade" }),
+  clientId: varchar("client_id").notNull().references(() => clients.id, { onDelete: "cascade" }),
+  contactId: varchar("contact_id").references(() => contacts.id, { onDelete: "set null" }),
+  email: text("email").notNull(),
+  audienceTag: text("audience_tag").default("all"),
+  postmarkMessageId: text("postmark_message_id"),
+  status: text("status", { enum: ["queued", "sent", "failed", "bounced", "unsubscribed"] })
+    .notNull()
+    .default("queued"),
+  error: text("error"),
+  sentAt: timestamp("sent_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const newsletterEvents = pgTable("newsletter_events", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  newsletterId: varchar("newsletter_id").notNull().references(() => newsletters.id, { onDelete: "cascade" }),
+  clientId: varchar("client_id").notNull().references(() => clients.id, { onDelete: "cascade" }),
+  contactId: varchar("contact_id").references(() => contacts.id, { onDelete: "set null" }),
+  email: text("email"),
+  postmarkMessageId: text("postmark_message_id"),
+  eventType: text("event_type").notNull(),
+  occurredAt: timestamp("occurred_at"),
+  payload: jsonb("payload").$type<Record<string, unknown>>().notNull().default({}),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const insertNewsletterDeliverySchema = createInsertSchema(newsletterDeliveries).omit({
+  id: true,
+  createdAt: true,
+});
+export type InsertNewsletterDelivery = z.infer<typeof insertNewsletterDeliverySchema>;
+export type NewsletterDelivery = typeof newsletterDeliveries.$inferSelect;
+
+export const insertNewsletterEventSchema = createInsertSchema(newsletterEvents).omit({
+  id: true,
+  createdAt: true,
+});
+export type InsertNewsletterEvent = z.infer<typeof insertNewsletterEventSchema>;
+export type NewsletterEvent = typeof newsletterEvents.$inferSelect;
 
 // ============================================================================
 // SESSIONS - Persistent session store
@@ -778,9 +957,44 @@ export type NewsletterModule =
   | AgentBioModule
   | FooterComplianceModule;
 
-// Full newsletter document - simplified to just raw HTML
+export const NEWSLETTER_BLOCK_TYPES = [
+  "text",
+  "image",
+  "button",
+  "divider",
+  "socials",
+  "grid",
+  "image_button",
+] as const;
+
+export type NewsletterBlockType = typeof NEWSLETTER_BLOCK_TYPES[number];
+
+export interface NewsletterBlock {
+  id: string;
+  type: NewsletterBlockType;
+  data: Record<string, unknown>;
+  options?: Record<string, unknown>;
+}
+
+export interface NewsletterDocumentMeta {
+  subject?: string;
+  previewText?: string;
+  fromEmail?: string;
+  sendMode?: NewsletterSendMode;
+  timezone?: string;
+  // Tag-based segment selector (defaults to "all").
+  // Used by send/schedule to decide which contacts receive the campaign.
+  audienceTag?: string;
+}
+
+// V1 block editor document with HTML fallback for legacy compatibility
 export interface NewsletterDocument {
-  html: string;
+  version?: "v1";
+  templateId?: string;
+  theme?: Partial<NewsletterTheme>;
+  blocks?: NewsletterBlock[];
+  meta?: NewsletterDocumentMeta;
+  html?: string;
 }
 
 // Legacy module-based document (deprecated, kept for migration)
@@ -845,13 +1059,58 @@ export interface AIGeneratedContent {
 
 // Default empty newsletter document
 export const DEFAULT_NEWSLETTER_DOCUMENT: NewsletterDocument = {
+  version: "v1",
+  blocks: [],
+  meta: {
+    sendMode: "ai_recommended",
+    timezone: "America/New_York",
+  },
   html: "",
 };
 
 // Zod schemas for runtime validation
 export const newsletterDocumentSchema = z.object({
-  html: z.string(),
+  version: z.literal("v1").optional(),
+  templateId: z.string().optional(),
+  theme: z.record(z.unknown()).optional(),
+  blocks: z.array(
+    z.object({
+      id: z.string(),
+      type: z.enum(NEWSLETTER_BLOCK_TYPES),
+      data: z.record(z.unknown()),
+      options: z.record(z.unknown()).optional(),
+    })
+  ).optional(),
+  meta: z.object({
+    subject: z.string().optional(),
+    previewText: z.string().optional(),
+    fromEmail: z.string().optional(),
+    sendMode: z.enum(NEWSLETTER_SEND_MODES).optional(),
+    timezone: z.string().optional(),
+    audienceTag: z.string().optional(),
+  }).optional(),
+  html: z.string().optional(),
 });
+
+export function getNewsletterDocumentHtml(document: NewsletterDocument | LegacyNewsletterDocument | null | undefined): string {
+  if (!document) return "";
+  if (typeof (document as NewsletterDocument).html === "string") {
+    return (document as NewsletterDocument).html || "";
+  }
+  if (typeof (document as LegacyNewsletterDocument).html === "string") {
+    return (document as LegacyNewsletterDocument).html || "";
+  }
+  return "";
+}
+
+export function createNewsletterDocumentFromHtml(html: string): NewsletterDocument {
+  return {
+    ...DEFAULT_NEWSLETTER_DOCUMENT,
+    blocks: [...(DEFAULT_NEWSLETTER_DOCUMENT.blocks || [])],
+    meta: { ...(DEFAULT_NEWSLETTER_DOCUMENT.meta || {}) },
+    html: html.trim(),
+  };
+}
 
 // Legacy schemas kept for migration
 export const newsletterThemeSchema = z.object({

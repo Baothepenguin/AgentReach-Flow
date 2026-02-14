@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useParams } from "wouter";
 import { Button } from "@/components/ui/button";
@@ -50,7 +50,9 @@ export default function ReviewPage() {
   const [deviceMode, setDeviceMode] = useState<"desktop" | "mobile">("desktop");
   const [attachments, setAttachments] = useState<UploadedFile[]>([]);
   const [uploading, setUploading] = useState(false);
+  const [selectedSectionId, setSelectedSectionId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const iframeRef = useRef<HTMLIFrameElement>(null);
 
   const { data, isLoading, error } = useQuery<ReviewData>({
     queryKey: ["/api/review", token],
@@ -87,7 +89,8 @@ export default function ReviewPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ 
           content: comment,
-          commentType: "general",
+          sectionId: selectedSectionId || null,
+          commentType: selectedSectionId ? "content" : "general",
           attachments: attachments.map(a => a.objectPath),
         }),
       });
@@ -97,10 +100,71 @@ export default function ReviewPage() {
     onSuccess: () => {
       setComment("");
       setAttachments([]);
+      setSelectedSectionId(null);
       refetchComments();
       toast({ title: "Feedback submitted" });
     },
   });
+
+  useEffect(() => {
+    const iframe = iframeRef.current;
+    if (!iframe) return;
+
+    let clickHandler: ((event: MouseEvent) => void) | null = null;
+
+    const attachHandlers = () => {
+      const doc = iframe.contentDocument;
+      if (!doc) return;
+
+      if (!doc.getElementById("flow-review-inline-style")) {
+        const style = doc.createElement("style");
+        style.id = "flow-review-inline-style";
+        style.textContent = `
+          [data-block-id] { cursor: pointer; transition: box-shadow 120ms ease; }
+          [data-block-id].flow-inline-selected { box-shadow: 0 0 0 2px rgba(244, 114, 36, 0.85) inset; }
+        `;
+        doc.head.appendChild(style);
+      }
+
+      clickHandler = (event: MouseEvent) => {
+        const target = event.target as HTMLElement | null;
+        if (!target) return;
+        const block = target.closest("[data-block-id]") as HTMLElement | null;
+        if (!block) return;
+        event.preventDefault();
+        const blockId = block.getAttribute("data-block-id");
+        if (!blockId) return;
+        setSelectedSectionId(blockId);
+      };
+
+      doc.addEventListener("click", clickHandler);
+    };
+
+    iframe.addEventListener("load", attachHandlers);
+    if (iframe.contentDocument?.readyState === "complete") {
+      attachHandlers();
+    }
+
+    return () => {
+      iframe.removeEventListener("load", attachHandlers);
+      if (clickHandler && iframe.contentDocument) {
+        iframe.contentDocument.removeEventListener("click", clickHandler);
+      }
+    };
+  }, [data?.html]);
+
+  useEffect(() => {
+    const doc = iframeRef.current?.contentDocument;
+    if (!doc) return;
+    doc.querySelectorAll("[data-block-id]").forEach((node) => {
+      node.classList.remove("flow-inline-selected");
+    });
+    if (!selectedSectionId) return;
+    const selected = doc.querySelector(`[data-block-id="${selectedSectionId}"]`);
+    if (selected) {
+      selected.classList.add("flow-inline-selected");
+    }
+  }, [selectedSectionId, data?.html]);
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
@@ -215,6 +279,7 @@ export default function ReviewPage() {
           }}
         >
           <iframe
+            ref={iframeRef}
             srcDoc={data?.html}
             title="Newsletter Preview"
             className="w-full h-full border-0"
@@ -276,6 +341,9 @@ export default function ReviewPage() {
                     data-testid={`comment-${c.id}`}
                   >
                     <p className="text-sm">{c.content}</p>
+                    {c.sectionId && (
+                      <p className="text-xs text-amber-700 mt-1">Inline: {c.sectionId}</p>
+                    )}
                     {c.attachments && c.attachments.length > 0 && (
                       <div className="flex flex-wrap gap-1 mt-2">
                         {c.attachments.map((path, i) => (
@@ -313,6 +381,9 @@ export default function ReviewPage() {
                         data-testid={`comment-${c.id}`}
                       >
                         <p className="text-sm line-through text-muted-foreground">{c.content}</p>
+                        {c.sectionId && (
+                          <p className="text-xs text-muted-foreground mt-1">Inline: {c.sectionId}</p>
+                        )}
                         {c.attachments && c.attachments.length > 0 && (
                           <div className="flex flex-wrap gap-1 mt-2">
                             {c.attachments.map((path, i) => (
@@ -345,6 +416,23 @@ export default function ReviewPage() {
 
         <div className="border-t p-3 space-y-3">
           <div className="space-y-2">
+            {selectedSectionId && (
+              <div className="flex items-center justify-between rounded-md border border-amber-300 bg-amber-50 px-2 py-1.5">
+                <p className="text-xs text-amber-800" data-testid="text-selected-inline-section">
+                  Commenting on section: {selectedSectionId}
+                </p>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-6 w-6"
+                  onClick={() => setSelectedSectionId(null)}
+                  data-testid="button-clear-inline-section"
+                >
+                  <X className="w-3 h-3" />
+                </Button>
+              </div>
+            )}
             <Textarea
               value={comment}
               onChange={(e) => setComment(e.target.value)}

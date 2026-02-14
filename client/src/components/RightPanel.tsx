@@ -11,12 +11,11 @@ import type { ReviewComment } from "@shared/schema";
 import { format } from "date-fns";
 
 const NEWSLETTER_STATUSES = [
-  { value: "not_started", label: "Not Started" },
-  { value: "in_progress", label: "In Progress" },
-  { value: "internal_review", label: "Internal Review" },
-  { value: "client_review", label: "Client Review" },
-  { value: "revisions", label: "Revisions" },
+  { value: "draft", label: "Draft" },
+  { value: "in_review", label: "In Review" },
+  { value: "changes_requested", label: "Changes Requested" },
   { value: "approved", label: "Approved" },
+  { value: "scheduled", label: "Scheduled" },
   { value: "sent", label: "Sent" },
 ];
 
@@ -51,6 +50,16 @@ export function RightPanel({
       return response.json();
     },
     enabled: !!newsletterId,
+  });
+
+  const { data: analytics, isLoading: loadingAnalytics } = useQuery<any>({
+    queryKey: ["/api/newsletters", newsletterId, "analytics"],
+    queryFn: async () => {
+      const response = await fetch(`/api/newsletters/${newsletterId}/analytics`, { credentials: "include" });
+      if (!response.ok) return null;
+      return response.json();
+    },
+    enabled: !!newsletterId && status === "sent",
   });
 
   const toggleCompleteMutation = useMutation({
@@ -153,6 +162,38 @@ export function RightPanel({
           </div>
         )}
       </div>
+
+      {status === "sent" && (
+        <div className="p-3 border-b">
+          <div className="text-xs font-medium text-muted-foreground mb-2" data-testid="label-analytics">
+            Analytics
+          </div>
+          {loadingAnalytics ? (
+            <div className="text-xs text-muted-foreground">Loading...</div>
+          ) : !analytics ? (
+            <div className="text-xs text-muted-foreground">No analytics yet</div>
+          ) : (
+            <div className="grid grid-cols-2 gap-2">
+              <div className="rounded border p-2">
+                <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Sent</div>
+                <div className="text-sm font-semibold">{analytics.sentCount ?? 0}</div>
+              </div>
+              <div className="rounded border p-2">
+                <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Failed</div>
+                <div className="text-sm font-semibold">{analytics.failedCount ?? 0}</div>
+              </div>
+              <div className="rounded border p-2">
+                <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Bounced</div>
+                <div className="text-sm font-semibold">{analytics.bouncedCount ?? 0}</div>
+              </div>
+              <div className="rounded border p-2">
+                <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Unsub</div>
+                <div className="text-sm font-semibold">{analytics.unsubscribedCount ?? 0}</div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="p-2 border-b space-y-2">
         <div className="flex items-center gap-2">

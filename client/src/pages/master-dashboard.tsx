@@ -94,12 +94,11 @@ export default function MasterDashboard() {
 
   const getStatusLabel = (status: string) => {
     const labels: Record<string, string> = {
-      not_started: "Not Started",
-      in_progress: "In Progress",
-      internal_review: "Internal Review",
-      client_review: "Client Review",
-      revisions: "Revisions",
+      draft: "Draft",
+      in_review: "In Review",
+      changes_requested: "Changes Requested",
       approved: "Approved",
+      scheduled: "Scheduled",
       sent: "Sent",
     };
     return labels[status] || status;

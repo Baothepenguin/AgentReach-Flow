@@ -13,6 +13,7 @@ import SubscriptionsPage from "@/pages/subscriptions";
 import BrandingKitsPage from "@/pages/branding-kits";
 import NewsletterEditorPage from "@/pages/newsletter-editor";
 import ReviewPage from "@/pages/review";
+import OnboardingPage from "@/pages/onboarding";
 import NotFound from "@/pages/not-found";
 import { Loader2 } from "lucide-react";
 
@@ -73,6 +74,7 @@ function Router() {
         </ProtectedRoute>
       )} />
       <Route path="/review/:token" component={ReviewPage} />
+      <Route path="/onboarding/:token" component={OnboardingPage} />
       <Route component={NotFound} />
     </Switch>
   );

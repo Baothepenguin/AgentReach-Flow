@@ -31,22 +31,20 @@ import { useDraggable } from "@dnd-kit/core";
 import type { Newsletter, Client, Subscription, Invoice } from "@shared/schema";
 
 const STATUS_DOT_COLORS: Record<string, string> = {
-  not_started: "bg-neutral-300",
-  in_progress: "bg-blue-400",
-  revisions: "bg-orange-400",
-  internal_review: "bg-purple-400",
-  client_review: "bg-yellow-400",
+  draft: "bg-neutral-300",
+  in_review: "bg-blue-400",
+  changes_requested: "bg-orange-400",
   approved: "bg-green-400",
+  scheduled: "bg-indigo-500",
   sent: "bg-emerald-600",
 };
 
 const NEWSLETTER_STATUSES = [
-  { value: "not_started", label: "Not Started", color: "bg-muted text-muted-foreground" },
-  { value: "in_progress", label: "In Progress", color: "bg-blue-500/10 text-blue-600 dark:text-blue-400" },
-  { value: "revisions", label: "Revisions", color: "bg-orange-500/10 text-orange-600 dark:text-orange-400" },
-  { value: "internal_review", label: "Internal Review", color: "bg-purple-500/10 text-purple-600 dark:text-purple-400" },
-  { value: "client_review", label: "Client Review", color: "bg-yellow-500/10 text-yellow-600 dark:text-yellow-400" },
+  { value: "draft", label: "Draft", color: "bg-muted text-muted-foreground" },
+  { value: "in_review", label: "In Review", color: "bg-blue-500/10 text-blue-600 dark:text-blue-400" },
+  { value: "changes_requested", label: "Changes Requested", color: "bg-orange-500/10 text-orange-600 dark:text-orange-400" },
   { value: "approved", label: "Approved", color: "bg-green-500/10 text-green-600 dark:text-green-400" },
+  { value: "scheduled", label: "Scheduled", color: "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400" },
   { value: "sent", label: "Sent", color: "bg-primary/10 text-primary" },
 ] as const;
 
@@ -301,7 +299,7 @@ export default function NewslettersPage() {
         invoiceId: selectedInvoice?.id || null,
         isUnpaid: !selectedInvoice,
         expectedSendDate: new Date().toISOString().split("T")[0],
-        status: "not_started",
+        status: "draft",
         importedHtml: importedHtml.trim() || undefined,
       });
       

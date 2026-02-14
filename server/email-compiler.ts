@@ -1,6 +1,16 @@
-import type { NewsletterDocument, LegacyNewsletterDocument, NewsletterModule, NewsletterTheme } from "@shared/schema";
+import type {
+  NewsletterDocument,
+  LegacyNewsletterDocument,
+  NewsletterModule,
+  NewsletterTheme,
+  NewsletterBlock,
+} from "@shared/schema";
 
 export function compileNewsletterToHtml(doc: NewsletterDocument | LegacyNewsletterDocument): string {
+  if ((doc as NewsletterDocument).blocks && (doc as NewsletterDocument).blocks!.length > 0) {
+    return compileV1BlockDocument((doc as NewsletterDocument));
+  }
+
   if (doc.html) {
     return doc.html;
   }
@@ -85,6 +95,191 @@ export function compileNewsletterToHtml(doc: NewsletterDocument | LegacyNewslett
   </table>
 </body>
 </html>`;
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+function normalizeColor(value: unknown, fallback: string): string {
+  return typeof value === "string" && value.trim() ? value : fallback;
+}
+
+function compileV1BlockDocument(doc: NewsletterDocument): string {
+  const theme: NewsletterTheme = {
+    bg: normalizeColor(doc.theme?.bg, "#f6f7fb"),
+    text: normalizeColor(doc.theme?.text, "#1f2937"),
+    accent: normalizeColor(doc.theme?.accent, "#166534"),
+    muted: normalizeColor(doc.theme?.muted, "#6b7280"),
+    fontHeading: typeof doc.theme?.fontHeading === "string" ? doc.theme.fontHeading : "Georgia, serif",
+    fontBody: typeof doc.theme?.fontBody === "string" ? doc.theme.fontBody : "Arial, sans-serif",
+  };
+
+  const blocks = Array.isArray(doc.blocks) ? doc.blocks : [];
+  const blockHtml = blocks.map((block) => compileV1Block(block, theme)).join("\n");
+  const previewText = typeof doc.meta?.previewText === "string" ? doc.meta.previewText.trim() : "";
+  const previewSnippet = previewText
+    ? `<span style="display:none!important;visibility:hidden;opacity:0;color:transparent;height:0;width:0;overflow:hidden;">${escapeHtml(previewText)}</span>`
+    : "";
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <title>${escapeHtml(doc.meta?.subject || "Newsletter")}</title>
+  <style type="text/css">
+    body, table, td, p, a, li { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
+    table, td { mso-table-lspace: 0pt; mso-table-rspace: 0pt; }
+    img { border: 0; line-height: 100%; outline: none; text-decoration: none; max-width: 100%; }
+    body { margin: 0 !important; padding: 0 !important; width: 100% !important; background: ${theme.bg}; }
+    @media screen and (max-width: 600px) {
+      .container { width: 100% !important; }
+      .mobile-stack { display: block !important; width: 100% !important; }
+    }
+  </style>
+</head>
+<body style="margin:0;padding:0;background:${theme.bg};font-family:${theme.fontBody};color:${theme.text};">
+  ${previewSnippet}
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+    <tr>
+      <td align="center" style="padding:24px 0;">
+        <table role="presentation" class="container" width="680" cellpadding="0" cellspacing="0" border="0" style="max-width:680px;width:100%;background:#ffffff;">
+          ${blockHtml}
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+}
+
+function compileV1Block(block: NewsletterBlock, theme: NewsletterTheme): string {
+  const blockId = escapeHtml(block.id);
+  const blockType = block.type;
+  const data = block.data || {};
+
+  switch (blockType) {
+    case "text": {
+      const content = typeof data.content === "string" ? data.content : "";
+      const align = typeof data.align === "string" ? data.align : "left";
+      return `
+        <tr data-block-id="${blockId}" data-block-type="text">
+          <td style="padding:24px 28px;text-align:${align};font-size:16px;line-height:1.65;color:${theme.text};">
+            ${content || "<p style='margin:0;color:#9ca3af;'>Add text...</p>"}
+          </td>
+        </tr>
+      `;
+    }
+    case "image": {
+      const src = typeof data.src === "string" ? data.src : "";
+      const alt = typeof data.alt === "string" ? data.alt : "";
+      const href = typeof data.href === "string" ? data.href : "";
+      if (!src) return "";
+      const img = `<img src="${escapeHtml(src)}" alt="${escapeHtml(alt)}" style="display:block;width:100%;height:auto;">`;
+      return `
+        <tr data-block-id="${blockId}" data-block-type="image">
+          <td style="padding:0 0 16px;">
+            ${href ? `<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${img}</a>` : img}
+          </td>
+        </tr>
+      `;
+    }
+    case "button": {
+      const label = typeof data.label === "string" ? data.label : "Learn more";
+      const href = typeof data.href === "string" ? data.href : "#";
+      const align = typeof data.align === "string" ? data.align : "left";
+      return `
+        <tr data-block-id="${blockId}" data-block-type="button">
+          <td style="padding:18px 28px;text-align:${align};">
+            <a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer" style="display:inline-block;padding:12px 22px;background:${theme.accent};color:#ffffff;text-decoration:none;border-radius:6px;font-weight:600;">
+              ${escapeHtml(label)}
+            </a>
+          </td>
+        </tr>
+      `;
+    }
+    case "divider": {
+      const color = normalizeColor(data.color, "#e5e7eb");
+      return `
+        <tr data-block-id="${blockId}" data-block-type="divider">
+          <td style="padding:14px 28px;">
+            <hr style="border:0;border-top:1px solid ${color};margin:0;">
+          </td>
+        </tr>
+      `;
+    }
+    case "socials": {
+      const links = Array.isArray(data.links) ? data.links : [];
+      const linkHtml = links
+        .map((link) => {
+          const platform = typeof link?.platform === "string" ? link.platform : "Social";
+          const href = typeof link?.href === "string" ? link.href : "#";
+          return `<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer" style="margin:0 6px;color:${theme.accent};text-decoration:none;font-size:13px;">${escapeHtml(platform)}</a>`;
+        })
+        .join("");
+      return `
+        <tr data-block-id="${blockId}" data-block-type="socials">
+          <td style="padding:18px 28px;text-align:center;">
+            ${linkHtml || `<span style="color:${theme.muted};font-size:13px;">Add social links</span>`}
+          </td>
+        </tr>
+      `;
+    }
+    case "grid": {
+      const items = Array.isArray(data.items) ? data.items.slice(0, 3) : [];
+      if (!items.length) return "";
+      const cells = items
+        .map((item) => {
+          const title = typeof item?.title === "string" ? item.title : "";
+          const body = typeof item?.body === "string" ? item.body : "";
+          const imageUrl = typeof item?.imageUrl === "string" ? item.imageUrl : "";
+          return `
+            <td class="mobile-stack" width="${Math.round(100 / items.length)}%" style="vertical-align:top;padding:8px;">
+              ${imageUrl ? `<img src="${escapeHtml(imageUrl)}" alt="" style="display:block;width:100%;height:auto;border-radius:6px;">` : ""}
+              ${title ? `<h3 style="margin:10px 0 6px;font-size:18px;font-family:${theme.fontHeading};">${escapeHtml(title)}</h3>` : ""}
+              ${body ? `<p style="margin:0;font-size:14px;line-height:1.5;color:${theme.text};">${escapeHtml(body)}</p>` : ""}
+            </td>
+          `;
+        })
+        .join("");
+      return `
+        <tr data-block-id="${blockId}" data-block-type="grid">
+          <td style="padding:16px 20px;">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+              <tr>${cells}</tr>
+            </table>
+          </td>
+        </tr>
+      `;
+    }
+    case "image_button": {
+      const imageUrl = typeof data.imageUrl === "string" ? data.imageUrl : "";
+      const buttonLabel = typeof data.buttonLabel === "string" ? data.buttonLabel : "View";
+      const buttonHref = typeof data.buttonHref === "string" ? data.buttonHref : "#";
+      const alt = typeof data.alt === "string" ? data.alt : "";
+      return `
+        <tr data-block-id="${blockId}" data-block-type="image_button">
+          <td style="padding:0 0 20px;text-align:center;">
+            ${imageUrl ? `<img src="${escapeHtml(imageUrl)}" alt="${escapeHtml(alt)}" style="display:block;width:100%;height:auto;">` : ""}
+            <div style="padding-top:14px;">
+              <a href="${escapeHtml(buttonHref)}" target="_blank" rel="noopener noreferrer" style="display:inline-block;padding:12px 22px;background:${theme.accent};color:#ffffff;text-decoration:none;border-radius:6px;font-weight:600;">
+                ${escapeHtml(buttonLabel)}
+              </a>
+            </div>
+          </td>
+        </tr>
+      `;
+    }
+    default:
+      return "";
+  }
 }
 
 function compileModule(module: NewsletterModule, theme: NewsletterTheme): string {

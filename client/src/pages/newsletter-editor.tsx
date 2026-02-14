@@ -5,6 +5,7 @@ import { queryClient, apiRequest } from "@/lib/queryClient";
 import { TopNav } from "@/components/TopNav";
 import { RightPanel } from "@/components/RightPanel";
 import { HTMLPreviewFrame } from "@/components/HTMLPreviewFrame";
+import { BlockNewsletterEditor } from "@/components/BlockNewsletterEditor";
 import { ClientSidePanel } from "@/components/ClientSidePanel";
 import { GeminiChatPanel } from "@/components/GeminiChatPanel";
 import { Button } from "@/components/ui/button";
@@ -39,6 +40,9 @@ import {
   Upload,
   FileImage,
   FileText,
+  Clock3,
+  Send,
+  ShieldCheck,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import type { Newsletter, NewsletterVersion, NewsletterDocument, Client, TasksFlags } from "@shared/schema";
@@ -60,6 +64,7 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
   const [isGenerating, setIsGenerating] = useState(false);
   const [chatCollapsed, setChatCollapsed] = useState(true);
   const [editingHtml, setEditingHtml] = useState(false);
+  const [editorView, setEditorView] = useState<"blocks" | "preview">("blocks");
   const [htmlDraft, setHtmlDraft] = useState("");
   const [showImportDialog, setShowImportDialog] = useState(false);
   const [importHtml, setImportHtml] = useState("");
@@ -100,7 +105,16 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
       await queryClient.cancelQueries({ queryKey: ["/api/newsletters", newsletterId] });
       const previousData = queryClient.getQueryData(["/api/newsletters", newsletterId]);
       queryClient.setQueryData(["/api/newsletters", newsletterId], (old: typeof newsletterData) => 
-        old ? { ...old, html, document: { html } } : old
+        old
+          ? {
+              ...old,
+              html,
+              document: {
+                ...(old.document || {}),
+                html,
+              },
+            }
+          : old
       );
       return { previousData };
     },
@@ -114,6 +128,41 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
       }
       setSaveStatus("idle");
       toast({ title: "Failed to save", variant: "destructive" });
+    },
+  });
+
+  const updateDocumentMutation = useMutation({
+    mutationFn: async (document: NewsletterDocument) => {
+      const res = await apiRequest("PATCH", `/api/newsletters/${newsletterId}`, {
+        documentJson: document,
+      });
+      return res.json();
+    },
+    onMutate: async (document: NewsletterDocument) => {
+      setSaveStatus("saving");
+      await queryClient.cancelQueries({ queryKey: ["/api/newsletters", newsletterId] });
+      const previousData = queryClient.getQueryData(["/api/newsletters", newsletterId]);
+      queryClient.setQueryData(["/api/newsletters", newsletterId], (old: typeof newsletterData) =>
+        old
+          ? {
+              ...old,
+              document,
+            }
+          : old
+      );
+      return { previousData };
+    },
+    onSuccess: async () => {
+      await refetchNewsletter();
+      setSaveStatus("saved");
+      setTimeout(() => setSaveStatus("idle"), 2000);
+    },
+    onError: (_err, _document, context) => {
+      if (context?.previousData) {
+        queryClient.setQueryData(["/api/newsletters", newsletterId], context.previousData);
+      }
+      setSaveStatus("idle");
+      toast({ title: "Failed to save block changes", variant: "destructive" });
     },
   });
 
@@ -211,6 +260,82 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
   const hasMjml = !!(newsletter?.designJson as any)?.mjml;
   const hasContent = !!newsletterData?.html;
 
+  const qaCheckMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", `/api/newsletters/${newsletterId}/qa-check`);
+      return res.json() as Promise<{
+        blockers: Array<{ code: string; message: string }>;
+        warnings: Array<{ code: string; message: string }>;
+        canSend: boolean;
+      }>;
+    },
+    onSuccess: (data) => {
+      if (data.canSend) {
+        toast({
+          title: "QA passed",
+          description: data.warnings.length > 0
+            ? `${data.warnings.length} warning(s) to review`
+            : "No blockers found",
+        });
+        return;
+      }
+      toast({
+        title: "QA blockers found",
+        description: data.blockers[0]?.message || "Fix blockers before sending",
+        variant: "destructive",
+      });
+    },
+    onError: (error) => {
+      toast({ title: "QA check failed", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const scheduleMutation = useMutation({
+    mutationFn: async () => {
+      const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      const res = await apiRequest("POST", `/api/newsletters/${newsletterId}/schedule`, { timezone });
+      return res.json();
+    },
+    onSuccess: async (data: any) => {
+      await refetchNewsletter();
+      queryClient.invalidateQueries({ queryKey: ["/api/newsletters"] });
+      toast({
+        title: "Newsletter scheduled",
+        description: data?.warnings?.length
+          ? `${data.warnings.length} warning(s) noted`
+          : "Ready for delivery",
+      });
+    },
+    onError: (error) => {
+      toast({ title: "Scheduling failed", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const sendNowMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", `/api/newsletters/${newsletterId}/send-now`);
+      return res.json();
+    },
+    onSuccess: async (data: any) => {
+      await refetchNewsletter();
+      queryClient.invalidateQueries({ queryKey: ["/api/newsletters"] });
+      const sentCount = data?.send?.sentCount;
+      const recipientsCount = data?.send?.recipientsCount;
+      toast({
+        title: "Newsletter sent",
+        description:
+          typeof sentCount === "number" && typeof recipientsCount === "number"
+            ? `Sent ${sentCount}/${recipientsCount}`
+            : data?.warnings?.length
+              ? `${data.warnings.length} warning(s) were present`
+              : "Send workflow completed",
+      });
+    },
+    onError: (error) => {
+      toast({ title: "Send failed", description: error.message, variant: "destructive" });
+    },
+  });
+
   const aiGenerateMutation = useMutation({
     mutationFn: async (prompt: string) => {
       const res = await apiRequest("POST", `/api/newsletters/${newsletterId}/ai-generate`, { prompt });
@@ -227,6 +352,36 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
     onSettled: () => setIsGenerating(false),
     onError: (error) => {
       toast({ title: "AI generation failed", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const aiGenerateBlocksMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", `/api/newsletters/${newsletterId}/ai-generate-blocks`, {
+        prompt: aiPrompt,
+      });
+      return res.json();
+    },
+    onMutate: () => setIsGenerating(true),
+    onSuccess: async (data: any) => {
+      if (data?.html) {
+        queryClient.setQueryData(["/api/newsletters", newsletterId], (old: typeof newsletterData) =>
+          old
+            ? {
+                ...old,
+                html: data.html,
+                document: data.document || old.document,
+              }
+            : old
+        );
+      }
+      setAiPrompt("");
+      await refetchNewsletter();
+      toast({ title: "AI draft generated" });
+    },
+    onSettled: () => setIsGenerating(false),
+    onError: (error: any) => {
+      toast({ title: "AI draft failed", description: error.message, variant: "destructive" });
     },
   });
 
@@ -466,6 +621,28 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
                 </Link>
               )}
               <div className="w-px h-5 bg-border mx-1" />
+              <Button
+                variant={editorView === "blocks" && !editingHtml ? "secondary" : "ghost"}
+                size="sm"
+                onClick={() => {
+                  setEditingHtml(false);
+                  setEditorView("blocks");
+                }}
+                data-testid="button-editor-blocks"
+              >
+                Blocks
+              </Button>
+              <Button
+                variant={editorView === "preview" && !editingHtml ? "secondary" : "ghost"}
+                size="sm"
+                onClick={() => {
+                  setEditingHtml(false);
+                  setEditorView("preview");
+                }}
+                data-testid="button-editor-preview"
+              >
+                Preview
+              </Button>
               {hasContent && (
                 <Button
                   variant={editingHtml ? "secondary" : "ghost"}
@@ -475,6 +652,9 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
                       setHtmlDraft(newsletterData?.html || "");
                     }
                     setEditingHtml(!editingHtml);
+                    if (!editingHtml) {
+                      setEditorView("preview");
+                    }
                   }}
                   data-testid="button-edit-html"
                 >
@@ -517,6 +697,35 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
               <Button size="sm" onClick={handleGetReviewLink} data-testid="button-review-link">
                 <ExternalLink className="w-4 h-4 mr-1" />
                 Get Review Link
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => qaCheckMutation.mutate()}
+                disabled={qaCheckMutation.isPending}
+                data-testid="button-run-qa"
+              >
+                {qaCheckMutation.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <ShieldCheck className="w-4 h-4 mr-1" />}
+                QA
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => scheduleMutation.mutate()}
+                disabled={scheduleMutation.isPending}
+                data-testid="button-schedule"
+              >
+                {scheduleMutation.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Clock3 className="w-4 h-4 mr-1" />}
+                Schedule
+              </Button>
+              <Button
+                size="sm"
+                onClick={() => sendNowMutation.mutate()}
+                disabled={sendNowMutation.isPending}
+                data-testid="button-send-now"
+              >
+                {sendNowMutation.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Send className="w-4 h-4 mr-1" />}
+                Send Now
               </Button>
               <Button
                 variant="ghost"
@@ -565,6 +774,14 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
                   </Button>
                 </div>
               </div>
+            ) : editorView === "blocks" ? (
+              <BlockNewsletterEditor
+                document={newsletterData?.document}
+                isSaving={updateDocumentMutation.isPending}
+                onSave={(document) => updateDocumentMutation.mutate(document)}
+                onGenerateWithAi={() => aiGenerateBlocksMutation.mutate()}
+                isGeneratingAi={aiGenerateBlocksMutation.isPending || isGenerating}
+              />
             ) : (
               <>
                 {hasContent ? (

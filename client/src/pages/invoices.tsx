@@ -18,8 +18,8 @@ type OrderWithRelations = Invoice & {
 function getOrderStatus(order: OrderWithRelations): "new" | "in_progress" | "complete" {
   const newsletters = order.newsletters || [];
   if (newsletters.length === 0) return "new";
-  const allNotStarted = newsletters.every(nl => nl.status === "not_started");
-  if (allNotStarted) return "new";
+  const allDraft = newsletters.every(nl => nl.status === "draft");
+  if (allDraft) return "new";
   const allSent = newsletters.every(nl => nl.status === "sent");
   if (allSent) return "complete";
   return "in_progress";
@@ -264,7 +264,7 @@ export default function OrdersPage() {
         invoiceId: order.id,
         subscriptionId: order.subscriptionId,
         expectedSendDate: new Date().toISOString().split("T")[0],
-        status: "not_started",
+        status: "draft",
       });
       
       if (!res.ok) throw new Error("Failed to create newsletter");
