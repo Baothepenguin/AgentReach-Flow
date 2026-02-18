@@ -1,7 +1,9 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Bold, Trash2, Undo2, Redo2, Code, Plus, Monitor, Smartphone } from "lucide-react";
+import { Code, Plus, Monitor, Smartphone, Link2, Image as ImageIcon, Type, X } from "lucide-react";
 import { registerEditorPlugin, type EditorPluginProps } from "@/lib/editor-plugins";
 
 interface HTMLPreviewFrameProps extends EditorPluginProps {
@@ -9,111 +11,313 @@ interface HTMLPreviewFrameProps extends EditorPluginProps {
   onCreateCampaign?: () => void;
 }
 
-export function HTMLPreviewFrame({ 
-  html, 
-  isLoading, 
-  title,
+type DeviceMode = "desktop" | "mobile";
+
+type SelectedElementState = {
+  id: string;
+  tag: string;
+  text: string;
+  href: string;
+  src: string;
+  backgroundImage: string;
+  fontSize: string;
+  fontFamily: string;
+  canEditText: boolean;
+  canEditLink: boolean;
+  canEditImage: boolean;
+  canEditBackground: boolean;
+};
+
+const EDIT_ATTR = "data-flow-edit-id";
+
+function createEditId(): string {
+  return `flow-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function extractUrl(value: string): string {
+  if (!value || value === "none") return "";
+  const match = value.match(/url\(["']?(.*?)["']?\)/i);
+  return match?.[1] || "";
+}
+
+function toPixelValue(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+  return /^\d+$/.test(trimmed) ? `${trimmed}px` : trimmed;
+}
+
+function getEditableTarget(element: HTMLElement | null): HTMLElement | null {
+  if (!element) return null;
+  const candidate = element.closest<HTMLElement>(
+    "img,a,button,h1,h2,h3,h4,h5,h6,p,span,td,th,li,div"
+  );
+
+  if (!candidate) return null;
+  if (candidate.tagName === "BODY" || candidate.tagName === "HTML") return null;
+
+  if (candidate.tagName.toLowerCase() === "div") {
+    const hasText = (candidate.textContent || "").trim().length > 0;
+    const bg = candidate.style.backgroundImage;
+    if (!hasText && (!bg || bg === "none")) {
+      return null;
+    }
+  }
+
+  return candidate;
+}
+
+export function HTMLPreviewFrame({
+  html,
+  isLoading,
   onHtmlChange,
   onCreateCampaign,
-  fullWidth = false
+  fullWidth = false,
 }: HTMLPreviewFrameProps) {
-  const [showToolbar, setShowToolbar] = useState(false);
-  const [toolbarPosition, setToolbarPosition] = useState({ x: 0, y: 0 });
-  const [undoStack, setUndoStack] = useState<string[]>([]);
-  const [redoStack, setRedoStack] = useState<string[]>([]);
-  const [deviceMode, setDeviceMode] = useState<"desktop" | "mobile">("desktop");
+  const [deviceMode, setDeviceMode] = useState<DeviceMode>("desktop");
+  const [selectedElement, setSelectedElement] = useState<SelectedElementState | null>(null);
+  const selectedRef = useRef<SelectedElementState | null>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
-  const previewWidth = fullWidth ? "100%" : (deviceMode === "mobile" ? 375 : 680);
+  const previewWidth = fullWidth ? "100%" : deviceMode === "mobile" ? 375 : 680;
 
-  const saveToUndo = useCallback(() => {
-    if (html) {
-      setUndoStack(prev => [...prev.slice(-19), html]);
-      setRedoStack([]);
-    }
+  useEffect(() => {
+    selectedRef.current = selectedElement;
+  }, [selectedElement]);
+
+  const getFullHtml = useCallback((): string => {
+    const iframe = iframeRef.current;
+    if (!iframe?.contentDocument) return html;
+    return `<!DOCTYPE html>${iframe.contentDocument.documentElement.outerHTML}`;
   }, [html]);
 
-  const handleUndo = () => {
-    if (undoStack.length > 0 && onHtmlChange) {
-      const lastState = undoStack[undoStack.length - 1];
-      setUndoStack(prev => prev.slice(0, -1));
-      setRedoStack(prev => [...prev, html]);
-      onHtmlChange(lastState);
-    }
-  };
+  const emitHtmlChange = useCallback(() => {
+    if (!onHtmlChange) return;
+    onHtmlChange(getFullHtml());
+  }, [onHtmlChange, getFullHtml]);
 
-  const handleRedo = () => {
-    if (redoStack.length > 0 && onHtmlChange) {
-      const nextState = redoStack[redoStack.length - 1];
-      setRedoStack(prev => prev.slice(0, -1));
-      setUndoStack(prev => [...prev, html]);
-      onHtmlChange(nextState);
-    }
-  };
+  const syncHeight = useCallback(() => {
+    const iframe = iframeRef.current;
+    const doc = iframe?.contentDocument;
+    if (!iframe || !doc) return;
+    const bodyHeight = doc.body?.scrollHeight || 0;
+    const htmlHeight = doc.documentElement?.scrollHeight || 0;
+    const nextHeight = Math.max(bodyHeight, htmlHeight, 640);
+    iframe.style.height = `${nextHeight}px`;
+  }, []);
+
+  const describeElement = useCallback((element: HTMLElement): SelectedElementState => {
+    const id = element.getAttribute(EDIT_ATTR) || createEditId();
+    element.setAttribute(EDIT_ATTR, id);
+
+    const tag = element.tagName.toLowerCase();
+    const computed = element.ownerDocument.defaultView?.getComputedStyle(element);
+    const linkElement = tag === "a" ? element : element.closest("a");
+    const inlineBg = element.style.backgroundImage;
+    const backgroundImage = extractUrl(
+      inlineBg && inlineBg !== "none" ? inlineBg : computed?.backgroundImage || ""
+    );
+
+    return {
+      id,
+      tag,
+      text: tag === "img" ? "" : (element.textContent || ""),
+      href: linkElement?.getAttribute("href") || "",
+      src: tag === "img" ? ((element as HTMLImageElement).getAttribute("src") || "") : "",
+      backgroundImage,
+      fontSize: element.style.fontSize || computed?.fontSize || "",
+      fontFamily: element.style.fontFamily || computed?.fontFamily || "",
+      canEditText: tag !== "img",
+      canEditLink: Boolean(linkElement),
+      canEditImage: tag === "img",
+      canEditBackground: Boolean(backgroundImage) || ["td", "div", "section"].includes(tag),
+    };
+  }, []);
+
+  const applySelectedElementUpdate = useCallback(
+    (patch: Partial<SelectedElementState>) => {
+      if (!selectedRef.current) return;
+      const iframe = iframeRef.current;
+      const doc = iframe?.contentDocument;
+      if (!doc) return;
+
+      const element = doc.querySelector<HTMLElement>(`[${EDIT_ATTR}="${selectedRef.current.id}"]`);
+      if (!element) {
+        setSelectedElement(null);
+        return;
+      }
+
+      if (patch.text !== undefined && selectedRef.current.canEditText) {
+        element.textContent = patch.text;
+      }
+
+      if (patch.href !== undefined && selectedRef.current.canEditLink) {
+        const linkElement = (element.tagName.toLowerCase() === "a" ? element : element.closest("a")) as
+          | HTMLAnchorElement
+          | null;
+        if (linkElement) {
+          const nextHref = patch.href.trim();
+          if (nextHref) {
+            linkElement.setAttribute("href", nextHref);
+          } else {
+            linkElement.removeAttribute("href");
+          }
+        }
+      }
+
+      if (patch.src !== undefined && selectedRef.current.canEditImage) {
+        const image = element as HTMLImageElement;
+        const nextSrc = patch.src.trim();
+        if (nextSrc) {
+          image.setAttribute("src", nextSrc);
+        }
+      }
+
+      if (patch.backgroundImage !== undefined && selectedRef.current.canEditBackground) {
+        const nextBg = patch.backgroundImage.trim();
+        element.style.backgroundImage = nextBg ? `url("${nextBg}")` : "none";
+      }
+
+      if (patch.fontSize !== undefined) {
+        const nextSize = toPixelValue(patch.fontSize);
+        if (nextSize) {
+          element.style.fontSize = nextSize;
+        } else {
+          element.style.removeProperty("font-size");
+        }
+      }
+
+      if (patch.fontFamily !== undefined) {
+        const nextFamily = patch.fontFamily.trim();
+        if (nextFamily) {
+          element.style.fontFamily = nextFamily;
+        } else {
+          element.style.removeProperty("font-family");
+        }
+      }
+
+      const nextState = describeElement(element);
+      selectedRef.current = nextState;
+      setSelectedElement(nextState);
+      syncHeight();
+      emitHtmlChange();
+    },
+    [describeElement, emitHtmlChange, syncHeight]
+  );
 
   useEffect(() => {
     const iframe = iframeRef.current;
     if (!iframe || !html) return;
 
-    let mutationObserver: MutationObserver | null = null;
-    let resizeTimeout: ReturnType<typeof setTimeout> | null = null;
+    let observer: MutationObserver | null = null;
+    let saveTimer: ReturnType<typeof setTimeout> | null = null;
+    let mountedDoc: Document | null = null;
 
-    const syncHeight = () => {
+    const scheduleSave = () => {
+      if (!onHtmlChange) return;
+      if (saveTimer) clearTimeout(saveTimer);
+      saveTimer = setTimeout(() => {
+        emitHtmlChange();
+      }, 120);
+    };
+
+    const markEditableElements = (doc: Document) => {
+      doc
+        .querySelectorAll<HTMLElement>("img,a,button,h1,h2,h3,h4,h5,h6,p,span,td,th,li,div")
+        .forEach((node) => {
+          const tag = node.tagName.toLowerCase();
+          const hasText = (node.textContent || "").trim().length > 0;
+          const hasBg = Boolean(node.style.backgroundImage && node.style.backgroundImage !== "none");
+          const shouldMark = tag === "img" || hasText || hasBg || Boolean(node.closest("a"));
+          if (shouldMark) {
+            node.setAttribute("data-flow-editable", "true");
+          }
+        });
+    };
+
+    const handleDoubleClick = (event: MouseEvent) => {
       const doc = iframe.contentDocument;
       if (!doc) return;
-      const bodyHeight = doc.body?.scrollHeight || 0;
-      const htmlHeight = doc.documentElement?.scrollHeight || 0;
-      const nextHeight = Math.max(bodyHeight, htmlHeight, 640);
-      iframe.style.height = `${nextHeight}px`;
+      const target = event.target as HTMLElement | null;
+      const editable = getEditableTarget(target);
+      if (!editable) return;
+
+      const snapshot = describeElement(editable);
+      selectedRef.current = snapshot;
+      setSelectedElement(snapshot);
+
+      if (snapshot.canEditText) {
+        editable.setAttribute("contenteditable", "true");
+        editable.setAttribute("spellcheck", "true");
+        editable.focus();
+      }
+
+      event.preventDefault();
+      scheduleSave();
+    };
+
+    const handleInput = (event: Event) => {
+      const target = event.target as HTMLElement | null;
+      if (!target) return;
+      const current = selectedRef.current;
+      if (current) {
+        const active = target.closest<HTMLElement>(`[${EDIT_ATTR}="${current.id}"]`);
+        if (active) {
+          const snapshot = describeElement(active);
+          selectedRef.current = snapshot;
+          setSelectedElement(snapshot);
+        }
+      }
+      syncHeight();
+      scheduleSave();
+    };
+
+    const handleBlur = (event: FocusEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (!target) return;
+      if (target.getAttribute("contenteditable") === "true") {
+        target.removeAttribute("contenteditable");
+      }
+      scheduleSave();
+      syncHeight();
     };
 
     const handleLoad = () => {
       const doc = iframe.contentDocument;
       if (!doc) return;
+      mountedDoc = doc;
 
-      doc.body.contentEditable = "true";
-      doc.body.style.cursor = "text";
       doc.body.style.margin = doc.body.style.margin || "0";
       doc.body.style.background = "#ffffff";
 
       const style = doc.createElement("style");
       style.textContent = `
-        *:focus { outline: 2px solid hsl(15 64% 60% / 0.5); outline-offset: 2px; }
-        *:hover { outline: 1px dashed hsl(15 64% 60% / 0.3); }
-        body { -webkit-font-smoothing: antialiased; }
+        [data-flow-editable="true"]:hover {
+          outline: 1px dashed hsl(143 59% 33% / 0.55);
+          outline-offset: 1px;
+          cursor: text;
+        }
+        [${EDIT_ATTR}] {
+          scroll-margin-top: 80px;
+        }
       `;
       doc.head.appendChild(style);
 
-      const handleInput = () => {
+      markEditableElements(doc);
+
+      doc.addEventListener("dblclick", handleDoubleClick);
+      doc.addEventListener("input", handleInput, true);
+      doc.addEventListener("blur", handleBlur, true);
+
+      observer = new MutationObserver(() => {
+        markEditableElements(doc);
         syncHeight();
-        if (resizeTimeout) clearTimeout(resizeTimeout);
-        resizeTimeout = setTimeout(() => {
-          if (onHtmlChange) {
-            const fullHtml = `<!DOCTYPE html>${doc.documentElement.outerHTML}`;
-            onHtmlChange(fullHtml);
-          }
-        }, 100);
-      };
-
-      doc.body.addEventListener("input", handleInput);
-
-      doc.body.addEventListener("mouseup", () => {
-        const selection = doc.getSelection();
-        if (selection && selection.toString().length > 0) {
-          const range = selection.getRangeAt(0);
-          const rect = range.getBoundingClientRect();
-          setToolbarPosition({
-            x: rect.left + rect.width / 2,
-            y: rect.top - 50
-          });
-          setShowToolbar(true);
-        } else {
-          setShowToolbar(false);
-        }
       });
-
-      mutationObserver = new MutationObserver(() => syncHeight());
-      mutationObserver.observe(doc.body, { childList: true, subtree: true, attributes: true, characterData: true });
+      observer.observe(doc.body, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        characterData: true,
+      });
 
       syncHeight();
       setTimeout(syncHeight, 50);
@@ -126,54 +330,21 @@ export function HTMLPreviewFrame({
     return () => {
       iframe.removeEventListener("load", handleLoad);
       window.removeEventListener("resize", syncHeight);
-      if (mutationObserver) mutationObserver.disconnect();
-      if (resizeTimeout) clearTimeout(resizeTimeout);
-    };
-  }, [html, onHtmlChange]);
-
-  const getFullHtml = useCallback(() => {
-    const iframe = iframeRef.current;
-    if (!iframe?.contentDocument) return html;
-    const doc = iframe.contentDocument;
-    return `<!DOCTYPE html>${doc.documentElement.outerHTML}`;
-  }, [html]);
-
-  const execCommand = (command: string, value?: string) => {
-    const iframe = iframeRef.current;
-    if (!iframe?.contentDocument) return;
-    saveToUndo();
-    iframe.contentDocument.execCommand(command, false, value);
-    if (onHtmlChange) {
-      onHtmlChange(getFullHtml());
-    }
-  };
-
-  const handleDelete = () => {
-    const iframe = iframeRef.current;
-    if (!iframe?.contentDocument) return;
-    const selection = iframe.contentDocument.getSelection();
-    if (selection && selection.rangeCount > 0) {
-      saveToUndo();
-      const range = selection.getRangeAt(0);
-      const parentElement = range.commonAncestorContainer.parentElement;
-      if (parentElement && parentElement !== iframe.contentDocument.body) {
-        parentElement.remove();
-        if (onHtmlChange) {
-          onHtmlChange(getFullHtml());
-        }
+      if (mountedDoc) {
+        mountedDoc.removeEventListener("dblclick", handleDoubleClick);
+        mountedDoc.removeEventListener("input", handleInput, true);
+        mountedDoc.removeEventListener("blur", handleBlur, true);
       }
-    }
-    setShowToolbar(false);
-  };
+      if (observer) observer.disconnect();
+      if (saveTimer) clearTimeout(saveTimer);
+    };
+  }, [html, describeElement, emitHtmlChange, onHtmlChange, syncHeight]);
 
   return (
     <div className="flex flex-col h-full relative">
-      <div className={`flex-1 flex items-start justify-center overflow-auto bg-muted/20 ${fullWidth ? 'p-3' : 'p-4'}`}>
+      <div className={`flex-1 flex items-start justify-center overflow-auto bg-muted/20 ${fullWidth ? "p-3" : "p-4"}`}>
         {isLoading ? (
-          <div
-            className="bg-white rounded-lg shadow-lg overflow-hidden"
-            style={{ width: previewWidth }}
-          >
+          <div className="bg-white rounded-lg shadow-lg overflow-hidden" style={{ width: previewWidth }}>
             <Skeleton className="h-48 w-full" />
             <div className="p-4 space-y-3">
               <Skeleton className="h-6 w-3/4" />
@@ -183,10 +354,12 @@ export function HTMLPreviewFrame({
           </div>
         ) : html ? (
           <div
-            className={`bg-white overflow-hidden transition-all duration-300 ${
+            className={`relative bg-white overflow-hidden transition-all duration-300 ${
               deviceMode === "mobile" && !fullWidth
-                ? "rounded-3xl border-4 border-gray-700 shadow-lg" 
-                : fullWidth ? "" : "rounded-lg shadow-lg"
+                ? "rounded-3xl border-4 border-gray-700 shadow-lg"
+                : fullWidth
+                  ? ""
+                  : "rounded-lg shadow-lg"
             }`}
             style={{ width: previewWidth, maxWidth: fullWidth ? undefined : previewWidth }}
           >
@@ -199,9 +372,140 @@ export function HTMLPreviewFrame({
               sandbox="allow-same-origin allow-scripts"
               data-testid="iframe-preview"
             />
+
+            <div className="absolute left-3 top-3 z-20 flex items-center gap-1 bg-background/95 backdrop-blur-sm rounded-full p-1 shadow border">
+              <Button
+                size="icon"
+                variant={deviceMode === "desktop" ? "secondary" : "ghost"}
+                onClick={() => setDeviceMode("desktop")}
+                className="rounded-full"
+                data-testid="button-device-desktop"
+              >
+                <Monitor className="w-4 h-4" />
+              </Button>
+              <Button
+                size="icon"
+                variant={deviceMode === "mobile" ? "secondary" : "ghost"}
+                onClick={() => setDeviceMode("mobile")}
+                className="rounded-full"
+                data-testid="button-device-mobile"
+              >
+                <Smartphone className="w-4 h-4" />
+              </Button>
+            </div>
+
+            {selectedElement && (
+              <div className="absolute right-3 top-3 z-20 w-80 rounded-lg border bg-background/95 backdrop-blur-sm shadow-lg" data-testid="panel-element-inspector">
+                <div className="flex items-center justify-between border-b px-3 py-2">
+                  <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                    Edit {selectedElement.tag}
+                  </div>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    className="h-7 w-7"
+                    onClick={() => setSelectedElement(null)}
+                    data-testid="button-close-inspector"
+                  >
+                    <X className="w-4 h-4" />
+                  </Button>
+                </div>
+                <div className="space-y-3 p-3 max-h-[60vh] overflow-y-auto">
+                  {selectedElement.canEditText && (
+                    <div>
+                      <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
+                        <Type className="inline w-3 h-3 mr-1" />
+                        Text
+                      </label>
+                      <Textarea
+                        value={selectedElement.text}
+                        onChange={(event) => applySelectedElementUpdate({ text: event.target.value })}
+                        className="min-h-[90px] text-xs"
+                        data-testid="input-inspector-text"
+                      />
+                    </div>
+                  )}
+
+                  {selectedElement.canEditLink && (
+                    <div>
+                      <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
+                        <Link2 className="inline w-3 h-3 mr-1" />
+                        Link URL
+                      </label>
+                      <Input
+                        value={selectedElement.href}
+                        onChange={(event) => applySelectedElementUpdate({ href: event.target.value })}
+                        className="h-8 text-xs"
+                        placeholder="https://..."
+                        data-testid="input-inspector-link"
+                      />
+                    </div>
+                  )}
+
+                  {selectedElement.canEditImage && (
+                    <div>
+                      <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
+                        <ImageIcon className="inline w-3 h-3 mr-1" />
+                        Image URL
+                      </label>
+                      <Input
+                        value={selectedElement.src}
+                        onChange={(event) => applySelectedElementUpdate({ src: event.target.value })}
+                        className="h-8 text-xs"
+                        placeholder="https://..."
+                        data-testid="input-inspector-image"
+                      />
+                    </div>
+                  )}
+
+                  {selectedElement.canEditBackground && (
+                    <div>
+                      <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
+                        <ImageIcon className="inline w-3 h-3 mr-1" />
+                        Background image URL
+                      </label>
+                      <Input
+                        value={selectedElement.backgroundImage}
+                        onChange={(event) => applySelectedElementUpdate({ backgroundImage: event.target.value })}
+                        className="h-8 text-xs"
+                        placeholder="https://..."
+                        data-testid="input-inspector-background"
+                      />
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Font size</label>
+                      <Input
+                        value={selectedElement.fontSize}
+                        onChange={(event) => applySelectedElementUpdate({ fontSize: event.target.value })}
+                        className="h-8 text-xs"
+                        placeholder="16px"
+                        data-testid="input-inspector-font-size"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Font family</label>
+                      <Input
+                        value={selectedElement.fontFamily}
+                        onChange={(event) => applySelectedElementUpdate({ fontFamily: event.target.value })}
+                        className="h-8 text-xs"
+                        placeholder="Arial, sans-serif"
+                        data-testid="input-inspector-font-family"
+                      />
+                    </div>
+                  </div>
+
+                  <p className="text-[11px] text-muted-foreground">
+                    Double-click any text, link, button, or image in preview to switch editing target.
+                  </p>
+                </div>
+              </div>
+            )}
           </div>
         ) : (
-          <div 
+          <div
             className="flex flex-col items-center justify-center text-center p-12 rounded-lg border-2 border-dashed border-muted-foreground/20"
             style={{ width: previewWidth }}
           >
@@ -221,60 +525,6 @@ export function HTMLPreviewFrame({
           </div>
         )}
       </div>
-
-      {html && (
-        <div className="absolute bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-1 bg-background/95 backdrop-blur-sm rounded-full p-1 shadow-lg border z-10">
-          <Button
-            size="icon"
-            variant={deviceMode === "desktop" ? "secondary" : "ghost"}
-            onClick={() => setDeviceMode("desktop")}
-            className="rounded-full"
-            data-testid="button-device-desktop"
-          >
-            <Monitor className="w-4 h-4" />
-          </Button>
-          <Button
-            size="icon"
-            variant={deviceMode === "mobile" ? "secondary" : "ghost"}
-            onClick={() => setDeviceMode("mobile")}
-            className="rounded-full"
-            data-testid="button-device-mobile"
-          >
-            <Smartphone className="w-4 h-4" />
-          </Button>
-        </div>
-      )}
-
-      {showToolbar && (
-        <div 
-          className="fixed z-50 flex items-center gap-1 p-1.5 rounded-lg bg-popover border shadow-lg glass-card"
-          style={{ 
-            left: `${toolbarPosition.x}px`, 
-            top: `${toolbarPosition.y}px`,
-            transform: "translateX(-50%)"
-          }}
-        >
-          <Button size="icon" variant="ghost" onClick={() => execCommand("bold")} data-testid="toolbar-bold">
-            <Bold className="w-4 h-4" />
-          </Button>
-          <input
-            type="color"
-            className="w-8 h-8 rounded cursor-pointer border-0 p-0"
-            onChange={(e) => execCommand("foreColor", e.target.value)}
-            data-testid="toolbar-color"
-          />
-          <Button size="icon" variant="ghost" onClick={handleDelete} data-testid="toolbar-delete">
-            <Trash2 className="w-4 h-4" />
-          </Button>
-          <div className="w-px h-5 bg-border mx-0.5" />
-          <Button size="icon" variant="ghost" onClick={handleUndo} disabled={undoStack.length === 0} data-testid="toolbar-undo">
-            <Undo2 className="w-4 h-4" />
-          </Button>
-          <Button size="icon" variant="ghost" onClick={handleRedo} disabled={redoStack.length === 0} data-testid="toolbar-redo">
-            <Redo2 className="w-4 h-4" />
-          </Button>
-        </div>
-      )}
     </div>
   );
 }

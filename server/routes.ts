@@ -11,6 +11,7 @@ import {
   DEFAULT_NEWSLETTER_DOCUMENT,
   createNewsletterDocumentFromHtml,
   getNewsletterDocumentHtml,
+  insertClientSchema,
   type BlockEditOperation,
   type BlockEditSuggestion,
   type NewsletterBlock,
@@ -786,7 +787,41 @@ export async function registerRoutes(
 
   app.post("/api/clients", requireAuth, async (req: Request, res: Response) => {
     try {
-      const client = await storage.createClient(req.body);
+      const payload = (req.body && typeof req.body === "object" ? req.body : {}) as Record<string, unknown>;
+
+      const normalizedFrequency = (() => {
+        const raw = String(payload.newsletterFrequency || "").trim().toLowerCase();
+        if (raw === "weekly") return "weekly";
+        if (raw === "biweekly" || raw === "bi-weekly") return "biweekly";
+        return "monthly";
+      })();
+
+      const normalizedStatus = (() => {
+        const raw = String(payload.subscriptionStatus || payload.status || "").trim().toLowerCase();
+        if (raw === "active" || raw === "paused" || raw === "past_due" || raw === "canceled") return raw;
+        if (raw === "inactive" || raw === "churned") return "canceled";
+        return "active";
+      })();
+
+      const insertPayload = {
+        name: String(payload.name || payload.contactName || "").trim(),
+        primaryEmail: String(payload.primaryEmail || payload.email || "").trim(),
+        secondaryEmail: payload.secondaryEmail ? String(payload.secondaryEmail).trim() : undefined,
+        phone: payload.phone ? String(payload.phone).trim() : undefined,
+        locationCity: payload.locationCity ? String(payload.locationCity).trim() : undefined,
+        locationRegion: payload.locationRegion ? String(payload.locationRegion).trim() : undefined,
+        newsletterFrequency: normalizedFrequency,
+        subscriptionStatus: normalizedStatus,
+        isVerified: false,
+        assignedToId: payload.assignedToId ? String(payload.assignedToId).trim() : undefined,
+      };
+
+      const parsed = insertClientSchema.safeParse(insertPayload);
+      if (!parsed.success) {
+        return res.status(400).json({ error: "Invalid client payload" });
+      }
+
+      const client = await storage.createClient(parsed.data);
       await storage.upsertBrandingKit({ clientId: client.id });
       
       if (client.primaryEmail && process.env.POSTMARK_ACCOUNT_API_TOKEN) {

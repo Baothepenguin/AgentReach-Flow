@@ -1,17 +1,23 @@
-import { useState, useRef, useCallback, useEffect, lazy, Suspense } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation, Link } from "wouter";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { TopNav } from "@/components/TopNav";
 import { RightPanel } from "@/components/RightPanel";
 import { HTMLPreviewFrame } from "@/components/HTMLPreviewFrame";
-import { BlockNewsletterEditor } from "@/components/BlockNewsletterEditor";
 import { ClientSidePanel } from "@/components/ClientSidePanel";
 import { GeminiChatPanel } from "@/components/GeminiChatPanel";
 import { SendConfirmDialog } from "@/components/SendConfirmDialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -26,25 +32,20 @@ import {
 } from "@/components/ui/dialog";
 import {
   ArrowLeft,
-  ArrowUp,
   User,
-  Download,
+  ChevronDown,
   Copy,
-  Trash2,
   Calendar as CalendarIcon,
   ExternalLink,
   Pencil,
   Check,
   X,
-  Sparkles,
-  Loader2,
   Code,
   Upload,
   FileImage,
   FileText,
   Clock3,
   Send,
-  ShieldCheck,
   AlertTriangle,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
@@ -79,11 +80,6 @@ function cloneNewsletterDocument(document: NewsletterDocument): NewsletterDocume
   return JSON.parse(JSON.stringify(document));
 }
 
-const LazyGrapesNewsletterDesigner = lazy(async () => {
-  const mod = await import("@/components/GrapesNewsletterDesigner");
-  return { default: mod.GrapesNewsletterDesigner };
-});
-
 export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorPageProps) {
   const { toast } = useToast();
   const [, setLocation] = useLocation();
@@ -98,7 +94,7 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
   const [isGenerating, setIsGenerating] = useState(false);
   const [chatCollapsed, setChatCollapsed] = useState(true);
   const [editingHtml, setEditingHtml] = useState(false);
-  const [editorView, setEditorView] = useState<"blocks" | "preview" | "designer">("blocks");
+  const [editorView, setEditorView] = useState<"preview">("preview");
   const [htmlDraft, setHtmlDraft] = useState("");
   const [showImportDialog, setShowImportDialog] = useState(false);
   const [importHtml, setImportHtml] = useState("");
@@ -108,8 +104,6 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
     createdAt: number;
   } | null>(null);
   const saveTimerRef = useRef<NodeJS.Timeout | null>(null);
-  const autoViewAppliedRef = useRef(false);
-
   const { data: newsletterData, isLoading: loadingNewsletter, refetch: refetchNewsletter } = useQuery<{
     newsletter: Newsletter & { client?: Client };
     document: NewsletterDocument;
@@ -123,22 +117,6 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
   const newsletter = newsletterData?.newsletter;
   const client = newsletter?.client;
   const isDeliveryStage = newsletter?.status === "approved" || newsletter?.status === "scheduled";
-
-  useEffect(() => {
-    autoViewAppliedRef.current = false;
-  }, [newsletterId]);
-
-  useEffect(() => {
-    if (autoViewAppliedRef.current) return;
-    if (editingHtml) return;
-    if (!newsletterData) return;
-    const hasBlocks = Array.isArray(newsletterData.document?.blocks) && newsletterData.document.blocks.length > 0;
-    const hasHtml = typeof newsletterData.html === "string" && newsletterData.html.trim().length > 0;
-    if (!hasBlocks && hasHtml) {
-      setEditorView("designer");
-    }
-    autoViewAppliedRef.current = true;
-  }, [newsletterData, editingHtml]);
 
   // Keep HTML as-is. Email builders (e.g. Postcards) rely on conditional comments (Outlook),
   // and "minifying" by stripping comments can break rendering.
@@ -614,135 +592,102 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
       <TopNav />
       <div className="flex flex-1 overflow-hidden">
         <div className="flex-1 flex flex-col min-w-0">
-          <header className="flex items-center justify-between px-4 h-12 border-b bg-background">
-            <div className="flex items-center gap-3">
-              <Button variant="ghost" size="icon" onClick={() => setLocation("/newsletters")} data-testid="button-back">
-                <ArrowLeft className="w-5 h-5" />
-              </Button>
-              <div className="flex items-center gap-2">
-                {isEditingTitle ? (
-                  <div className="flex items-center gap-1">
-                    <Input
-                      value={editedTitle}
-                      onChange={(e) => setEditedTitle(e.target.value)}
-                      className="h-7 w-48"
-                      autoFocus
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" && editedTitle.trim()) {
-                          updateTitleMutation.mutate(editedTitle.trim());
-                        } else if (e.key === "Escape") {
-                          setIsEditingTitle(false);
-                        }
+          <header className="border-b bg-background px-4 py-2">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex min-w-0 items-center gap-3">
+                <Button variant="ghost" size="icon" onClick={() => setLocation("/newsletters")} data-testid="button-back">
+                  <ArrowLeft className="w-5 h-5" />
+                </Button>
+                <div className="flex min-w-0 flex-wrap items-center gap-2">
+                  {isEditingTitle ? (
+                    <div className="flex items-center gap-1">
+                      <Input
+                        value={editedTitle}
+                        onChange={(e) => setEditedTitle(e.target.value)}
+                        className="h-7 w-56"
+                        autoFocus
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && editedTitle.trim()) {
+                            updateTitleMutation.mutate(editedTitle.trim());
+                          } else if (e.key === "Escape") {
+                            setIsEditingTitle(false);
+                          }
+                        }}
+                        data-testid="input-edit-title"
+                      />
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7"
+                        onClick={() => editedTitle.trim() && updateTitleMutation.mutate(editedTitle.trim())}
+                        data-testid="button-save-title"
+                      >
+                        <Check className="w-4 h-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7"
+                        onClick={() => setIsEditingTitle(false)}
+                        data-testid="button-cancel-title"
+                      >
+                        <X className="w-4 h-4" />
+                      </Button>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => {
+                        setEditedTitle(newsletter.title);
+                        setIsEditingTitle(true);
                       }}
-                      data-testid="input-edit-title"
-                    />
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-7 w-7"
-                      onClick={() => editedTitle.trim() && updateTitleMutation.mutate(editedTitle.trim())}
-                      data-testid="button-save-title"
+                      className="font-medium truncate hover:underline cursor-pointer flex items-center gap-1.5 group"
+                      data-testid="button-edit-title"
                     >
-                      <Check className="w-4 h-4" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-7 w-7"
-                      onClick={() => setIsEditingTitle(false)}
-                      data-testid="button-cancel-title"
-                    >
-                      <X className="w-4 h-4" />
-                    </Button>
+                      {newsletter.title}
+                      <Pencil className="w-3 h-3 opacity-0 group-hover:opacity-50 transition-opacity" />
+                    </button>
+                  )}
+                  <div className="flex items-center gap-2">
+                    {saveStatus === "saving" && (
+                      <div className="w-2 h-2 rounded-full bg-yellow-500 animate-pulse" title="Saving..." data-testid="save-indicator-saving" />
+                    )}
+                    {saveStatus === "saved" && (
+                      <div className="w-2 h-2 rounded-full bg-green-500" title="Saved" data-testid="save-indicator-saved" />
+                    )}
                   </div>
-                ) : (
-                  <button
-                    onClick={() => {
-                      setEditedTitle(newsletter.title);
-                      setIsEditingTitle(true);
-                    }}
-                    className="font-medium truncate hover:underline cursor-pointer flex items-center gap-1.5 group"
-                    data-testid="button-edit-title"
-                  >
-                    {newsletter.title}
-                    <Pencil className="w-3 h-3 opacity-0 group-hover:opacity-50 transition-opacity" />
-                  </button>
-                )}
-                <div className="flex items-center gap-2">
-                  {saveStatus === "saving" && (
-                    <div className="w-2 h-2 rounded-full bg-yellow-500 animate-pulse" title="Saving..." data-testid="save-indicator-saving" />
-                  )}
-                  {saveStatus === "saved" && (
-                    <div className="w-2 h-2 rounded-full bg-green-500" title="Saved" data-testid="save-indicator-saved" />
-                  )}
+                  <Popover open={showDatePicker} onOpenChange={setShowDatePicker}>
+                    <PopoverTrigger asChild>
+                      <Button variant="ghost" size="sm" className="text-muted-foreground" data-testid="button-edit-date">
+                        <CalendarIcon className="w-3.5 h-3.5 mr-1.5" />
+                        {newsletter.expectedSendDate
+                          ? format(new Date(newsletter.expectedSendDate), "MMM d, yyyy")
+                          : "Set date"}
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-auto p-0" align="start">
+                      <Calendar
+                        mode="single"
+                        selected={newsletter.expectedSendDate ? new Date(newsletter.expectedSendDate) : undefined}
+                        onSelect={(date) => date && updateDateMutation.mutate(format(date, "yyyy-MM-dd"))}
+                        data-testid="calendar-send-date"
+                      />
+                    </PopoverContent>
+                  </Popover>
                 </div>
-                <Popover open={showDatePicker} onOpenChange={setShowDatePicker}>
-                  <PopoverTrigger asChild>
-                    <Button variant="ghost" size="sm" className="text-muted-foreground" data-testid="button-edit-date">
-                      <CalendarIcon className="w-3.5 h-3.5 mr-1.5" />
-                      {newsletter.expectedSendDate 
-                        ? format(new Date(newsletter.expectedSendDate), "MMM d, yyyy")
-                        : "Set date"
-                      }
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent className="w-auto p-0" align="start">
-                    <Calendar
-                      mode="single"
-                      selected={newsletter.expectedSendDate ? new Date(newsletter.expectedSendDate) : undefined}
-                      onSelect={(date) => date && updateDateMutation.mutate(format(date, "yyyy-MM-dd"))}
-                      data-testid="calendar-send-date"
-                    />
-                  </PopoverContent>
-                </Popover>
               </div>
-            </div>
-            <div className="flex items-center gap-2">
-              {client && (
-                <Link
-                  href={`/clients/${client.id}`}
-                  className="text-sm text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1"
-                  data-testid="link-client-name"
-                >
-                  <User className="w-3.5 h-3.5" />
-                  {client.name}
-                </Link>
-              )}
-              <div className="w-px h-5 bg-border mx-1" />
-              <Button
-                variant={editorView === "blocks" && !editingHtml ? "secondary" : "ghost"}
-                size="sm"
-                onClick={() => {
-                  setEditingHtml(false);
-                  setEditorView("blocks");
-                }}
-                data-testid="button-editor-blocks"
-              >
-                Blocks
-              </Button>
-              <Button
-                variant={editorView === "designer" && !editingHtml ? "secondary" : "ghost"}
-                size="sm"
-                onClick={() => {
-                  setEditingHtml(false);
-                  setEditorView("designer");
-                }}
-                data-testid="button-editor-designer"
-              >
-                Designer
-              </Button>
-              <Button
-                variant={editorView === "preview" && !editingHtml ? "secondary" : "ghost"}
-                size="sm"
-                onClick={() => {
-                  setEditingHtml(false);
-                  setEditorView("preview");
-                }}
-                data-testid="button-editor-preview"
-              >
-                Preview
-              </Button>
-              {hasContent && (
+
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                {client && (
+                  <Link
+                    href={`/clients/${client.id}`}
+                    className="text-sm text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1"
+                    data-testid="link-client-name"
+                  >
+                    <User className="w-3.5 h-3.5" />
+                    {client.name}
+                  </Link>
+                )}
+
                 <Button
                   variant={editingHtml ? "secondary" : "ghost"}
                   size="sm"
@@ -751,119 +696,86 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
                       setHtmlDraft(newsletterData?.html || "");
                     }
                     setEditingHtml(!editingHtml);
-                    if (!editingHtml) {
-                      setEditorView("preview");
-                    }
+                    setEditorView("preview");
                   }}
                   data-testid="button-edit-html"
                 >
                   <Code className="w-4 h-4 mr-1" />
                   {editingHtml ? "Preview" : "Edit HTML"}
                 </Button>
-              )}
-              {!hasContent && (
-                <Button variant="ghost" size="sm" onClick={() => setShowImportDialog(true)} data-testid="button-import-header">
-                  <Upload className="w-4 h-4 mr-1" />
-                  Import
-                </Button>
-              )}
-              <Button variant="ghost" size="sm" onClick={handleCopyHtml} disabled={!hasContent} data-testid="button-copy">
-                <Copy className="w-4 h-4 mr-1" />
-                Copy
-              </Button>
-              <Popover>
-                <PopoverTrigger asChild>
-                  <Button variant="ghost" size="sm" disabled={!hasContent} data-testid="button-export">
-                    <Download className="w-4 h-4 mr-1" />
-                    Export
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-40 p-1" align="end">
-                  <Button variant="ghost" size="sm" className="w-full justify-start" onClick={handleExportHtml} data-testid="button-export-html">
-                    <FileText className="w-4 h-4 mr-2" />
-                    HTML
-                  </Button>
-                  <Button variant="ghost" size="sm" className="w-full justify-start" onClick={handleExportPdf} data-testid="button-export-pdf">
-                    <FileText className="w-4 h-4 mr-2" />
-                    PDF
-                  </Button>
-                  <Button variant="ghost" size="sm" className="w-full justify-start" onClick={handleExportPng} data-testid="button-export-png">
-                    <FileImage className="w-4 h-4 mr-2" />
-                    PNG
-                  </Button>
-                </PopoverContent>
-              </Popover>
-              <Button size="sm" onClick={handleGetReviewLink} data-testid="button-review-link">
-                <ExternalLink className="w-4 h-4 mr-1" />
-                Get Review Link
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => qaCheckMutation.mutate()}
-                disabled={qaCheckMutation.isPending}
-                data-testid="button-run-qa"
-              >
-                {qaCheckMutation.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <ShieldCheck className="w-4 h-4 mr-1" />}
-                QA
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => {
-                  setSendDialogMode("schedule");
-                  setSendDialogOpen(true);
-                }}
-                data-testid="button-schedule"
-              >
-                <Clock3 className="w-4 h-4 mr-1" />
-                Schedule
-              </Button>
-              <Button
-                size="sm"
-                onClick={() => {
-                  setSendDialogMode("send_now");
-                  setSendDialogOpen(true);
-                }}
-                data-testid="button-send-now"
-              >
-                <Send className="w-4 h-4 mr-1" />
-                Send Now
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => duplicateNewsletterMutation.mutate()}
-                disabled={duplicateNewsletterMutation.isPending}
-                data-testid="button-duplicate-newsletter"
-              >
-                <Copy className="w-4 h-4 mr-1" />
-                Duplicate
-              </Button>
-              {lastAiApplyBackup && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => {
-                    updateDocumentMutation.mutate(lastAiApplyBackup.document, {
-                      onSuccess: () => {
-                        setLastAiApplyBackup(null);
-                        toast({ title: "AI edits reverted" });
-                      },
-                      onError: () => {
-                        toast({ title: "Failed to undo AI edits", variant: "destructive" });
-                      },
-                    });
-                  }}
-                  disabled={updateDocumentMutation.isPending}
-                  data-testid="button-undo-ai-edits"
-                >
-                  Undo AI
-                </Button>
-              )}
-              <Button variant="ghost" size="icon" className="text-destructive" onClick={handleDelete} data-testid="button-delete">
-                <Trash2 className="w-4 h-4" />
-              </Button>
+
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="ghost" size="sm" data-testid="button-file-menu">
+                      <Upload className="w-4 h-4 mr-1" />
+                      File
+                      <ChevronDown className="w-3.5 h-3.5 ml-1" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-52">
+                    <DropdownMenuItem onClick={() => setShowImportDialog(true)} data-testid="button-import-header">
+                      <Upload className="w-4 h-4 mr-2" />
+                      Import HTML
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem onClick={handleCopyHtml} disabled={!hasContent} data-testid="button-copy-html">
+                      <Copy className="w-4 h-4 mr-2" />
+                      Copy HTML
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={handleExportHtml} disabled={!hasContent} data-testid="button-export-html">
+                      <FileText className="w-4 h-4 mr-2" />
+                      Export HTML
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={handleExportPdf} disabled={!hasContent} data-testid="button-export-pdf">
+                      <FileText className="w-4 h-4 mr-2" />
+                      Export PDF
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={handleExportPng} disabled={!hasContent} data-testid="button-export-png">
+                      <FileImage className="w-4 h-4 mr-2" />
+                      Export PNG
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="default" size="sm" data-testid="button-delivery-menu">
+                      <Send className="w-4 h-4 mr-1" />
+                      Delivery
+                      <ChevronDown className="w-3.5 h-3.5 ml-1" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-56">
+                    <DropdownMenuItem onClick={handleGetReviewLink} disabled={!hasContent} data-testid="button-review-link">
+                      <ExternalLink className="w-4 h-4 mr-2" />
+                      Get review link
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      onClick={() => {
+                        setSendDialogMode("schedule");
+                        setSendDialogOpen(true);
+                      }}
+                      disabled={!hasContent}
+                      data-testid="button-schedule"
+                    >
+                      <Clock3 className="w-4 h-4 mr-2" />
+                      Schedule send
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onClick={() => {
+                        setSendDialogMode("send_now");
+                        setSendDialogOpen(true);
+                      }}
+                      disabled={!hasContent}
+                      data-testid="button-send-now"
+                    >
+                      <Send className="w-4 h-4 mr-2" />
+                      Send now
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
             </div>
           </header>
 
@@ -898,30 +810,8 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
                   )}
                 </div>
               </div>
-              <div className="flex items-center gap-2 flex-shrink-0">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    setSendDialogMode("schedule");
-                    setSendDialogOpen(true);
-                  }}
-                  data-testid="button-delivery-strip-schedule"
-                >
-                  <Clock3 className="w-4 h-4 mr-1" />
-                  Schedule
-                </Button>
-                <Button
-                  size="sm"
-                  onClick={() => {
-                    setSendDialogMode("send_now");
-                    setSendDialogOpen(true);
-                  }}
-                  data-testid="button-delivery-strip-send-now"
-                >
-                  <Send className="w-4 h-4 mr-1" />
-                  Send Now
-                </Button>
+              <div className="flex items-center gap-2 flex-shrink-0 text-xs text-muted-foreground">
+                Use Delivery menu for review link, schedule, and send now.
               </div>
             </div>
           )}
@@ -957,28 +847,6 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
                   </Button>
                 </div>
               </div>
-            ) : editorView === "blocks" ? (
-              <BlockNewsletterEditor
-                document={newsletterData?.document}
-                isSaving={updateDocumentMutation.isPending}
-                onSave={(document) => updateDocumentMutation.mutate(document)}
-                onGenerateWithAi={() => aiGenerateBlocksMutation.mutate()}
-                isGeneratingAi={aiGenerateBlocksMutation.isPending || isGenerating}
-              />
-            ) : editorView === "designer" ? (
-              <Suspense
-                fallback={
-                  <div className="h-full flex items-center justify-center text-sm text-muted-foreground">
-                    Loading designer…
-                  </div>
-                }
-              >
-                <LazyGrapesNewsletterDesigner
-                  newsletterId={newsletterId}
-                  initialHtml={newsletterData?.html || ""}
-                  designJson={newsletter?.designJson}
-                />
-              </Suspense>
             ) : (
               <>
                 {hasContent ? (
@@ -997,7 +865,7 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
                       </div>
                       <p className="text-lg font-medium mb-2">Get started</p>
                       <p className="text-sm text-muted-foreground mb-5">
-                        Import HTML from your email builder or use AI to generate a newsletter
+                        Import HTML from Postcards (or any builder), then make quick edits directly in preview.
                       </p>
                       <div className="flex items-center gap-3">
                         <Button onClick={() => setShowImportDialog(true)} data-testid="button-import-html">
@@ -1008,29 +876,6 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
                     </div>
                   </div>
                 )}
-                <div className="absolute bottom-4 left-1/2 -translate-x-1/2 w-full max-w-xl z-10 px-4">
-                  <div className="flex items-center gap-2 bg-background/95 backdrop-blur-sm rounded-full p-1.5 pl-4 shadow-lg border">
-                    <Sparkles className="w-4 h-4 text-primary/60 flex-shrink-0" />
-                    <input
-                      value={aiPrompt}
-                      onChange={(e) => setAiPrompt(e.target.value)}
-                      onKeyDown={(e) => e.key === "Enter" && handleAiSubmit()}
-                      placeholder={hasContent ? "Ask AI to edit..." : "Describe the newsletter you want to create..."}
-                      className="flex-1 bg-transparent border-0 outline-none text-sm placeholder:text-muted-foreground/60"
-                      disabled={isGenerating}
-                      data-testid="input-ai-prompt"
-                    />
-                    <Button
-                      size="icon"
-                      className="rounded-full"
-                      onClick={handleAiSubmit}
-                      disabled={!aiPrompt.trim() || isGenerating}
-                      data-testid="button-ai-submit"
-                    >
-                      {isGenerating ? <Loader2 className="w-4 h-4 animate-spin" /> : <ArrowUp className="w-4 h-4" />}
-                    </Button>
-                  </div>
-                </div>
               </>
             )}
           </div>
@@ -1053,8 +898,7 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
             clientName={client.name}
             collapsed={chatCollapsed}
             onToggleCollapse={() => setChatCollapsed(!chatCollapsed)}
-            enableBlockSuggestions={editorView === "blocks" && !editingHtml}
-            onApplyBlockEdits={applyAiBlockEdits}
+            enableBlockSuggestions={false}
           />
         )}
       </div>
