@@ -3,9 +3,11 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { Loader2, Calendar, Code, ChevronLeft, ChevronRight } from "lucide-react";
 import { format, addDays, startOfDay, addWeeks, startOfWeek, endOfWeek, isSameDay, isSameMonth } from "date-fns";
+import { NEWSLETTER_TEMPLATES, type NewsletterTemplateId } from "@/lib/newsletterTemplates";
 
 interface CreateNewsletterDialogProps {
   open: boolean;
@@ -45,7 +47,8 @@ export function CreateNewsletterDialog({
   const suggestedDate = getSuggestedDate(clientFrequency, lastSendDate);
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
   const [importedHtml, setImportedHtml] = useState("");
-  const [activeTab, setActiveTab] = useState<"blank" | "import">("blank");
+  const [activeTab, setActiveTab] = useState<"blank" | "templates" | "import">("blank");
+  const [selectedTemplateId, setSelectedTemplateId] = useState<NewsletterTemplateId | null>(null);
   const [calendarWeekOffset, setCalendarWeekOffset] = useState(0);
 
   const today = startOfDay(new Date());
@@ -57,13 +60,23 @@ export function CreateNewsletterDialog({
 
   const handleSubmit = async () => {
     if (!selectedDate) return;
+    const selectedTemplate = selectedTemplateId
+      ? NEWSLETTER_TEMPLATES.find((t) => t.id === selectedTemplateId)
+      : null;
+
     await onSubmit({
       expectedSendDate: format(selectedDate, "yyyy-MM-dd"),
-      importedHtml: activeTab === "import" && importedHtml.trim() ? importedHtml : undefined,
+      importedHtml:
+        activeTab === "import" && importedHtml.trim()
+          ? importedHtml
+          : activeTab === "templates" && selectedTemplate?.html
+            ? selectedTemplate.html
+            : undefined,
     });
     setSelectedDate(null);
     setImportedHtml("");
     setActiveTab("blank");
+    setSelectedTemplateId(null);
     setCalendarWeekOffset(0);
   };
 
@@ -71,6 +84,7 @@ export function CreateNewsletterDialog({
     setSelectedDate(null);
     setImportedHtml("");
     setActiveTab("blank");
+    setSelectedTemplateId(null);
     setCalendarWeekOffset(0);
     onClose();
   };
@@ -87,11 +101,15 @@ export function CreateNewsletterDialog({
           </DialogDescription>
         </DialogHeader>
         
-        <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as "blank" | "import")} className="mt-2">
+        <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as "blank" | "templates" | "import")} className="mt-2">
           <TabsList className="w-full">
             <TabsTrigger value="blank" className="flex-1 gap-2" data-testid="tab-blank-newsletter">
               <Calendar className="w-4 h-4" />
               Start Fresh
+            </TabsTrigger>
+            <TabsTrigger value="templates" className="flex-1 gap-2" data-testid="tab-templates">
+              <Calendar className="w-4 h-4" />
+              Templates
             </TabsTrigger>
             <TabsTrigger value="import" className="flex-1 gap-2" data-testid="tab-import-html">
               <Code className="w-4 h-4" />
@@ -113,6 +131,42 @@ export function CreateNewsletterDialog({
             <p className="text-sm text-muted-foreground mb-3">
               Start with a blank canvas or use your latest template.
             </p>
+          </TabsContent>
+
+          <TabsContent value="templates" className="mt-4">
+            <p className="text-sm text-muted-foreground mb-3">
+              Pick a city-style starter template. After issue #1, Flow will clone the client’s latest newsletter by default.
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {NEWSLETTER_TEMPLATES.map((t) => {
+                const selected = selectedTemplateId === t.id;
+                return (
+                  <Card
+                    key={t.id}
+                    className={cn(
+                      "p-3 cursor-pointer hover-elevate transition-colors",
+                      selected ? "border-primary" : "border-border"
+                    )}
+                    onClick={() => setSelectedTemplateId(t.id)}
+                    data-testid={`template-card-${t.id}`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="font-medium text-sm truncate">{t.name}</div>
+                        <div className="text-xs text-muted-foreground mt-1 line-clamp-2">{t.tagline}</div>
+                      </div>
+                      <div
+                        className={cn(
+                          "w-2.5 h-2.5 rounded-full mt-1 flex-shrink-0",
+                          selected ? "bg-primary" : "bg-muted-foreground/30"
+                        )}
+                        aria-hidden="true"
+                      />
+                    </div>
+                  </Card>
+                );
+              })}
+            </div>
           </TabsContent>
         </Tabs>
 

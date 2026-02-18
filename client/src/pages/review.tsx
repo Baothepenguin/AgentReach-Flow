@@ -54,6 +54,90 @@ export default function ReviewPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
+  const FLOWPATH_PREFIX = "flowpath:";
+
+  const getAttachmentUrl = (path: string) => {
+    if (!path) return "#";
+    const withoutQuery = path.split("?")[0] || path;
+
+    // Prefer the serverless-friendly /api/objects route on Vercel.
+    if (withoutQuery.startsWith("/api/objects/")) {
+      return token
+        ? `${withoutQuery}?reviewToken=${encodeURIComponent(token)}`
+        : withoutQuery;
+    }
+    if (withoutQuery.startsWith("/objects/")) {
+      const suffix = withoutQuery.slice("/objects/".length);
+      const apiPath = `/api/objects/${suffix}`;
+      return token
+        ? `${apiPath}?reviewToken=${encodeURIComponent(token)}`
+        : apiPath;
+    }
+
+    // Fallback for unexpected formats (absolute URLs, etc).
+    return withoutQuery;
+  };
+
+  const buildFlowInlinePath = (element: Element): string => {
+    const parts: string[] = [];
+    let current: Element | null = element;
+    while (current && current.tagName.toLowerCase() !== "html") {
+      const parentEl: HTMLElement | null = current.parentElement;
+      if (!parentEl) break;
+      const tag = current.tagName.toLowerCase();
+      const sameTagSiblings: Element[] = (Array.from(parentEl.children) as Element[]).filter(
+        (child: Element) => child.tagName.toLowerCase() === tag
+      );
+      const index = sameTagSiblings.indexOf(current);
+      if (index < 0) break;
+      parts.push(`${tag}[${index}]`);
+      current = parentEl;
+    }
+    parts.push("html[0]");
+    return parts.reverse().join("/");
+  };
+
+  const getElementByFlowInlinePath = (doc: Document, sectionId: string): HTMLElement | null => {
+    const rawPath = sectionId.startsWith(FLOWPATH_PREFIX)
+      ? sectionId.slice(FLOWPATH_PREFIX.length)
+      : sectionId;
+    const parts = rawPath.split("/").filter(Boolean);
+    if (parts.length === 0) return null;
+
+    let current: Element | null = doc.documentElement;
+    // First segment should be html[0]; skip it.
+    for (let i = 1; i < parts.length; i++) {
+      const match = parts[i].match(/^([a-z0-9]+)\[(\d+)\]$/i);
+      if (!match) return null;
+      const tag = match[1].toLowerCase();
+      const index = Number(match[2]);
+      if (!Number.isFinite(index) || index < 0) return null;
+      if (!current) return null;
+      const currentEl = current;
+      const sameTagChildren: Element[] = (Array.from(currentEl.children) as Element[]).filter(
+        (child: Element) => child.tagName.toLowerCase() === tag
+      );
+      const nextEl: Element | undefined = sameTagChildren[index];
+      if (!nextEl) return null;
+      current = nextEl;
+    }
+    return current as HTMLElement | null;
+  };
+
+  const applyInlineSelectedClass = (element: HTMLElement) => {
+    if (element.tagName.toLowerCase() === "tr") {
+      const cells = Array.from(element.children).filter((child) => {
+        const tag = child.tagName.toLowerCase();
+        return tag === "td" || tag === "th";
+      }) as HTMLElement[];
+      if (cells.length > 0) {
+        cells.forEach((cell) => cell.classList.add("flow-inline-selected"));
+        return;
+      }
+    }
+    element.classList.add("flow-inline-selected");
+  };
+
   const { data, isLoading, error } = useQuery<ReviewData>({
     queryKey: ["/api/review", token],
     enabled: !!token,
@@ -120,21 +204,40 @@ export default function ReviewPage() {
         const style = doc.createElement("style");
         style.id = "flow-review-inline-style";
         style.textContent = `
-          [data-block-id] { cursor: pointer; transition: box-shadow 120ms ease; }
-          [data-block-id].flow-inline-selected { box-shadow: 0 0 0 2px rgba(244, 114, 36, 0.85) inset; }
+          [data-block-id] { cursor: pointer; }
+          .flow-inline-selected { outline: 2px solid rgba(244, 114, 36, 0.85); outline-offset: -2px; }
         `;
         doc.head.appendChild(style);
+      }
+
+      if (clickHandler) {
+        doc.removeEventListener("click", clickHandler);
       }
 
       clickHandler = (event: MouseEvent) => {
         const target = event.target as HTMLElement | null;
         if (!target) return;
+
+        // Prefer stable block IDs when available (Flow block editor output).
         const block = target.closest("[data-block-id]") as HTMLElement | null;
-        if (!block) return;
+        if (block) {
+          const blockId = block.getAttribute("data-block-id");
+          if (!blockId) return;
+          event.preventDefault();
+          setSelectedSectionId(blockId);
+          return;
+        }
+
+        // Fallback for imported HTML: compute a deterministic DOM path.
+        const td = target.closest("td, th") as HTMLElement | null;
+        const tr = target.closest("tr") as HTMLElement | null;
+        const table = target.closest("table") as HTMLElement | null;
+        const anchor = td || tr || table;
+        if (!anchor || anchor === doc.body || anchor === doc.documentElement) return;
+        const path = buildFlowInlinePath(anchor);
+        if (!path) return;
         event.preventDefault();
-        const blockId = block.getAttribute("data-block-id");
-        if (!blockId) return;
-        setSelectedSectionId(blockId);
+        setSelectedSectionId(`${FLOWPATH_PREFIX}${path}`);
       };
 
       doc.addEventListener("click", clickHandler);
@@ -156,13 +259,27 @@ export default function ReviewPage() {
   useEffect(() => {
     const doc = iframeRef.current?.contentDocument;
     if (!doc) return;
-    doc.querySelectorAll("[data-block-id]").forEach((node) => {
+    doc.querySelectorAll(".flow-inline-selected").forEach((node) => {
       node.classList.remove("flow-inline-selected");
     });
     if (!selectedSectionId) return;
-    const selected = doc.querySelector(`[data-block-id="${selectedSectionId}"]`);
-    if (selected) {
-      selected.classList.add("flow-inline-selected");
+
+    let selectedElement: HTMLElement | null = null;
+    if (selectedSectionId.startsWith(FLOWPATH_PREFIX)) {
+      selectedElement = getElementByFlowInlinePath(doc, selectedSectionId);
+    } else {
+      try {
+        const escaped = typeof (globalThis as any).CSS?.escape === "function"
+          ? (globalThis as any).CSS.escape(selectedSectionId)
+          : selectedSectionId;
+        selectedElement = doc.querySelector(`[data-block-id="${escaped}"]`) as HTMLElement | null;
+      } catch {
+        selectedElement = doc.querySelector(`[data-block-id="${selectedSectionId}"]`) as HTMLElement | null;
+      }
+    }
+
+    if (selectedElement) {
+      applyInlineSelectedClass(selectedElement);
     }
   }, [selectedSectionId, data?.html]);
 
@@ -170,10 +287,15 @@ export default function ReviewPage() {
     const files = e.target.files;
     if (!files || files.length === 0) return;
 
+    if (!token) {
+      toast({ title: "Missing review token", variant: "destructive" });
+      return;
+    }
+
     setUploading(true);
     try {
       for (const file of Array.from(files)) {
-        const urlRes = await fetch("/api/uploads/request-url", {
+        const urlRes = await fetch(`/api/review/${token}/uploads/request-url`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -349,7 +471,7 @@ export default function ReviewPage() {
                         {c.attachments.map((path, i) => (
                           <a
                             key={i}
-                            href={path}
+                            href={getAttachmentUrl(path)}
                             target="_blank"
                             rel="noopener noreferrer"
                             download
@@ -389,7 +511,7 @@ export default function ReviewPage() {
                             {c.attachments.map((path, i) => (
                               <a
                                 key={i}
-                                href={path}
+                                href={getAttachmentUrl(path)}
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 download

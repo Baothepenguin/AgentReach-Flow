@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Paperclip, Plus, Trash2 } from "lucide-react";
+import { Download, Paperclip, Plus, Trash2 } from "lucide-react";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import type { ReviewComment } from "@shared/schema";
 import { format } from "date-fns";
@@ -108,6 +108,23 @@ export function RightPanel({
       case "links": return "Links";
       default: return type;
     }
+  };
+
+  const getAttachmentUrl = (path: string) => {
+    if (!path) return "#";
+    const withoutQuery = path.split("?")[0] || path;
+
+    // On Vercel, /objects/* is not routed to the serverless function. Use /api/objects/*.
+    if (withoutQuery.startsWith("/api/objects/")) return withoutQuery;
+    if (withoutQuery.startsWith("/objects/")) {
+      return `/api/objects/${withoutQuery.slice("/objects/".length)}`;
+    }
+    return withoutQuery;
+  };
+
+  const getAttachmentFileName = (path: string) => {
+    const parts = path.split("/");
+    return parts[parts.length - 1] || "Attachment";
   };
 
   return (
@@ -340,6 +357,24 @@ export function RightPanel({
                               </>
                             )}
                           </div>
+                          {comment.attachments && comment.attachments.length > 0 && (
+                            <div className="flex flex-wrap gap-1 mt-2">
+                              {comment.attachments.map((path, idx) => (
+                                <a
+                                  key={idx}
+                                  href={getAttachmentUrl(path)}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  download
+                                  className="flex items-center gap-1 px-2 py-0.5 text-xs bg-background rounded border"
+                                  data-testid={`review-comment-attachment-${comment.id}-${idx}`}
+                                >
+                                  <Download className="w-3 h-3" />
+                                  <span className="max-w-[140px] truncate">{getAttachmentFileName(path)}</span>
+                                </a>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -372,6 +407,24 @@ export function RightPanel({
                             <span>·</span>
                             <span>Completed {comment.completedAt && format(new Date(comment.completedAt), "MMM d")}</span>
                           </div>
+                          {comment.attachments && comment.attachments.length > 0 && (
+                            <div className="flex flex-wrap gap-1 mt-2">
+                              {comment.attachments.map((path, idx) => (
+                                <a
+                                  key={idx}
+                                  href={getAttachmentUrl(path)}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  download
+                                  className="flex items-center gap-1 px-2 py-0.5 text-xs bg-background rounded border"
+                                  data-testid={`review-comment-attachment-${comment.id}-${idx}`}
+                                >
+                                  <Download className="w-3 h-3" />
+                                  <span className="max-w-[140px] truncate">{getAttachmentFileName(path)}</span>
+                                </a>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       </div>
                     </div>

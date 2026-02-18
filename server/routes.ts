@@ -11,6 +11,10 @@ import {
   DEFAULT_NEWSLETTER_DOCUMENT,
   createNewsletterDocumentFromHtml,
   getNewsletterDocumentHtml,
+  type BlockEditOperation,
+  type BlockEditSuggestion,
+  type NewsletterBlock,
+  type NewsletterBlockType,
   type NewsletterDocument,
   type LegacyNewsletterDocument,
   type NewsletterStatus,
@@ -86,6 +90,150 @@ function normalizeNewsletterDocument(
       ...(modernDoc.meta || {}),
     },
     html: typeof modernDoc.html === "string" ? modernDoc.html : html,
+  };
+}
+
+const ALLOWED_BLOCK_TYPES: NewsletterBlockType[] = [
+  "text",
+  "image",
+  "button",
+  "divider",
+  "socials",
+  "grid",
+  "image_button",
+];
+
+function sanitizeBlockEditOperations(
+  operationsRaw: unknown,
+  existingBlocks: NewsletterBlock[]
+): BlockEditOperation[] {
+  if (!Array.isArray(operationsRaw)) return [];
+  const allowedBlockTypeSet = new Set<string>(ALLOWED_BLOCK_TYPES);
+  const existingIds = new Set(existingBlocks.map((b) => b.id));
+
+  const sanitized: BlockEditOperation[] = [];
+  for (const operation of operationsRaw.slice(0, 12)) {
+    if (!operation || typeof operation !== "object") continue;
+    const op = typeof (operation as any).op === "string" ? (operation as any).op.trim() : "";
+    const reason = typeof (operation as any).reason === "string" ? (operation as any).reason.trim() : undefined;
+
+    if (op === "update_block_data") {
+      const blockId = typeof (operation as any).blockId === "string" ? (operation as any).blockId.trim() : "";
+      const patch = (operation as any).patch;
+      if (!existingIds.has(blockId)) continue;
+      if (!patch || typeof patch !== "object" || Array.isArray(patch)) continue;
+      sanitized.push({ op: "update_block_data", blockId, patch, reason });
+      continue;
+    }
+
+    if (op === "insert_block_after") {
+      const afterBlockId =
+        typeof (operation as any).afterBlockId === "string" ? (operation as any).afterBlockId.trim() : "";
+      const blockType =
+        typeof (operation as any).blockType === "string" ? (operation as any).blockType.trim() : "";
+      const data = (operation as any).data;
+      if (!existingIds.has(afterBlockId)) continue;
+      if (!allowedBlockTypeSet.has(blockType)) continue;
+      if (!data || typeof data !== "object" || Array.isArray(data)) continue;
+      sanitized.push({
+        op: "insert_block_after",
+        afterBlockId,
+        blockType: blockType as NewsletterBlockType,
+        data,
+        reason,
+      });
+      continue;
+    }
+
+    if (op === "remove_block") {
+      const blockId = typeof (operation as any).blockId === "string" ? (operation as any).blockId.trim() : "";
+      if (!existingIds.has(blockId)) continue;
+      sanitized.push({ op: "remove_block", blockId, reason });
+      continue;
+    }
+
+    if (op === "move_block") {
+      const blockId = typeof (operation as any).blockId === "string" ? (operation as any).blockId.trim() : "";
+      const direction =
+        typeof (operation as any).direction === "string" ? (operation as any).direction.trim().toLowerCase() : "";
+      if (!existingIds.has(blockId)) continue;
+      if (direction !== "up" && direction !== "down") continue;
+      sanitized.push({ op: "move_block", blockId, direction: direction as "up" | "down", reason });
+    }
+  }
+
+  return sanitized;
+}
+
+function applyBlockEditOperations(
+  document: NewsletterDocument,
+  operations: BlockEditOperation[]
+): { document: NewsletterDocument; appliedCount: number } {
+  let blocks = [...(Array.isArray(document.blocks) ? document.blocks : [])];
+  let appliedCount = 0;
+
+  for (const operation of operations) {
+    if (operation.op === "update_block_data") {
+      const index = blocks.findIndex((b) => b.id === operation.blockId);
+      if (index < 0) continue;
+      const current = blocks[index];
+      const next = [...blocks];
+      next[index] = {
+        ...current,
+        data: {
+          ...(current.data || {}),
+          ...(operation.patch || {}),
+        },
+      };
+      blocks = next;
+      appliedCount += 1;
+      continue;
+    }
+
+    if (operation.op === "insert_block_after") {
+      const index = blocks.findIndex((b) => b.id === operation.afterBlockId);
+      if (index < 0) continue;
+      const next = [...blocks];
+      next.splice(index + 1, 0, {
+        id: randomUUID(),
+        type: operation.blockType,
+        data: operation.data || {},
+      });
+      blocks = next;
+      appliedCount += 1;
+      continue;
+    }
+
+    if (operation.op === "remove_block") {
+      const index = blocks.findIndex((b) => b.id === operation.blockId);
+      if (index < 0) continue;
+      const next = [...blocks];
+      next.splice(index, 1);
+      blocks = next;
+      appliedCount += 1;
+      continue;
+    }
+
+    if (operation.op === "move_block") {
+      const sourceIndex = blocks.findIndex((b) => b.id === operation.blockId);
+      if (sourceIndex < 0) continue;
+      const targetIndex = operation.direction === "up" ? sourceIndex - 1 : sourceIndex + 1;
+      if (targetIndex < 0 || targetIndex >= blocks.length) continue;
+      const next = [...blocks];
+      const [moved] = next.splice(sourceIndex, 1);
+      next.splice(targetIndex, 0, moved);
+      blocks = next;
+      appliedCount += 1;
+    }
+  }
+
+  return {
+    document: {
+      ...document,
+      version: "v1",
+      blocks,
+    },
+    appliedCount,
   };
 }
 
@@ -1468,30 +1616,61 @@ export async function registerRoutes(
           ? systemParts.join("\n\n")
           : "You create real estate email newsletters. Output must be structured JSON for a block-based editor.";
 
+      const city = client?.locationCity?.trim() || "";
+      const region = client?.locationRegion?.trim() || "";
+      const locationLabel = [city, region].filter(Boolean).join(", ") || "the client's local market";
+      const todayIsoDate = new Date().toISOString().slice(0, 10);
+
       const userPrompt =
         (typeof req.body?.prompt === "string" && req.body.prompt.trim()) ||
         "Create a complete draft newsletter following the standard structure: header, welcome message, market update, one home tip, and a CTA.";
 
-      const jsonSpec = {
-        subject: "string",
-        previewText: "string",
-        blocks: [
-          {
-            type: "text|image|button|divider|socials|grid|image_button",
-            data: "object (type-specific)",
+      const responseJsonSchema = {
+        type: "object",
+        required: ["subject", "previewText", "blocks"],
+        properties: {
+          subject: { type: "string" },
+          previewText: { type: "string" },
+          blocks: {
+            type: "array",
+            items: {
+              type: "object",
+              required: ["type", "data"],
+              properties: {
+                id: { type: "string" },
+                type: {
+                  type: "string",
+                  enum: ["text", "image", "button", "divider", "socials", "grid", "image_button"],
+                },
+                data: { type: "object" },
+              },
+              additionalProperties: true,
+            },
           },
-        ],
+        },
+        additionalProperties: false,
       };
 
       const generationPrompt = [
         `You must return ONLY valid JSON (no markdown, no code fences).`,
-        `Schema: ${JSON.stringify(jsonSpec)}`,
         `Rules:`,
         `- Use only these block types: text, image, button, divider, socials, grid, image_button.`,
         `- For text blocks, set data.content to safe HTML (p, h2, h3, ul, li, strong, em, a).`,
-        `- For grid blocks, set data.items = [{ title, body, imageUrl }].`,
+        `- For grid blocks, set data.style = "classic" | "minimal" | "spotlight" and data.items = [{ address, price, details, imageUrl, href }].`,
+        `- Include these core sections as blocks: Header, Welcome, Listings, Fun Things To Do, Market Update, CTA, Footer/Socials.`,
+        `- The "Fun Things To Do" and "Market Update" sections MUST be specific to ${locationLabel}.`,
+        `- Market update and market news facts must use sources published within the last 40 days.`,
+        `- Fun things/events may use older source pages only if the event date is in the future.`,
+        `- Never use paywalled sources.`,
+        `- Never cite competing real-estate agent/broker marketing blogs or promotional real-estate partner content.`,
+        `- Prefer local publications, city/county/state government pages, and major publications.`,
+        `- For market update and market news claims, include source links and publish dates in-line (for example in bullet points).`,
+        `- For fun/events content, source links are helpful but optional.`,
+        `- If no verifiable source is available, write "Source needed" instead of inventing facts.`,
         `- Keep it concise and ready for review.`,
-        `Context: Client name is "${client?.name || "Client"}". Expected send date is "${newsletter.expectedSendDate}".`,
+        `Context: Client name is "${client?.name || "Client"}".`,
+        `Location context: city="${city || "unknown"}", region="${region || "unknown"}".`,
+        `Expected send date is "${newsletter.expectedSendDate}". Today's date is "${todayIsoDate}".`,
         `User request: ${userPrompt}`,
       ].join("\n");
 
@@ -1514,11 +1693,17 @@ export async function registerRoutes(
         config: {
           systemInstruction,
           maxOutputTokens: 4096,
-          temperature: 0.7,
+          temperature: 0.5,
+          responseMimeType: "application/json",
+          responseJsonSchema,
+          tools: [{ googleSearch: {} }],
         },
       });
 
       const rawText = (response.text || "").trim();
+      if (!rawText) {
+        return res.status(500).json({ error: "AI returned an empty response." });
+      }
       const jsonText = rawText.startsWith("{") ? rawText : rawText.slice(rawText.indexOf("{"));
       const parsed = JSON.parse(jsonText);
 
@@ -1576,7 +1761,24 @@ export async function registerRoutes(
       });
 
       const html = compileNewsletterToHtml(newDoc);
-      return res.json({ type: "success", document: newDoc, html, subject, previewText });
+      const groundingChunks = Array.isArray(response.candidates?.[0]?.groundingMetadata?.groundingChunks)
+        ? response.candidates?.[0]?.groundingMetadata?.groundingChunks
+        : [];
+      const seenSourceUrls = new Set<string>();
+      const sources = groundingChunks
+        .map((chunk: any) => {
+          const uri = typeof chunk?.web?.uri === "string" ? chunk.web.uri : "";
+          const title = typeof chunk?.web?.title === "string" ? chunk.web.title : "";
+          return { url: uri, title };
+        })
+        .filter((source: any) => {
+          if (!source.url || seenSourceUrls.has(source.url)) return false;
+          seenSourceUrls.add(source.url);
+          return true;
+        })
+        .slice(0, 12);
+
+      return res.json({ type: "success", document: newDoc, html, subject, previewText, sources });
     } catch (error: any) {
       console.error("AI generate blocks error:", error);
       res.status(500).json({ error: error?.message || "AI blocks generation failed" });
@@ -1664,6 +1866,243 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Subject suggest error:", error);
       res.status(500).json({ error: "Failed to suggest subject lines" });
+    }
+  });
+
+  app.post("/api/newsletters/:id/ai-suggest-block-edits", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const newsletter = await storage.getNewsletter(req.params.id);
+      if (!newsletter) {
+        return res.status(404).json({ error: "Newsletter not found" });
+      }
+
+      const commandRaw = req.body?.message ?? req.body?.command;
+      const command = typeof commandRaw === "string" ? commandRaw.trim() : "";
+      if (!command) {
+        return res.status(400).json({ error: "Message is required" });
+      }
+
+      const versions = await storage.getVersionsByNewsletter(newsletter.id);
+      const currentVersion = versions.find((v) => v.id === newsletter.currentVersionId);
+      const document = normalizeNewsletterDocument(
+        (currentVersion?.snapshotJson || newsletter.documentJson || DEFAULT_NEWSLETTER_DOCUMENT) as NewsletterDocument
+      );
+
+      const blocks = Array.isArray(document.blocks) ? document.blocks : [];
+      if (blocks.length === 0) {
+        const emptySuggestion: BlockEditSuggestion = {
+          summary: "No block edits available yet because this newsletter has no blocks.",
+          operations: [],
+        };
+        return res.json({ ...emptySuggestion, operationCount: 0 });
+      }
+
+      const client = await storage.getClient(newsletter.clientId);
+      const brandingKit = client ? await storage.getBrandingKit(newsletter.clientId) : null;
+      const masterPrompt = await storage.getMasterPrompt();
+      const clientPrompt = await storage.getClientPrompt(newsletter.clientId);
+
+      const geminiApiKey = process.env.AI_INTEGRATIONS_GEMINI_API_KEY || process.env.GEMINI_API_KEY;
+      if (!geminiApiKey) {
+        return res.status(400).json({
+          error: "Gemini is not configured. Add AI_INTEGRATIONS_GEMINI_API_KEY (or GEMINI_API_KEY).",
+        });
+      }
+
+      const systemParts: string[] = [];
+      if (masterPrompt?.prompt) systemParts.push(masterPrompt.prompt);
+      if (clientPrompt?.prompt) systemParts.push(`CLIENT-SPECIFIC INSTRUCTIONS:\n${clientPrompt.prompt}`);
+      if (brandingKit) {
+        const brandParts: string[] = [];
+        if (brandingKit.title) brandParts.push(`Agent Name/Title: ${brandingKit.title}`);
+        if (brandingKit.companyName) brandParts.push(`Company: ${brandingKit.companyName}`);
+        if (brandingKit.tone) brandParts.push(`Tone of Voice: ${brandingKit.tone}`);
+        if (brandingKit.primaryColor) brandParts.push(`Primary Color: ${brandingKit.primaryColor}`);
+        if (brandingKit.secondaryColor) brandParts.push(`Secondary Color: ${brandingKit.secondaryColor}`);
+        if (brandingKit.mustInclude && brandingKit.mustInclude.length > 0) {
+          brandParts.push(`Must Include: ${brandingKit.mustInclude.join(", ")}`);
+        }
+        if (brandingKit.avoidTopics && brandingKit.avoidTopics.length > 0) {
+          brandParts.push(`Avoid Topics: ${brandingKit.avoidTopics.join(", ")}`);
+        }
+        if (brandingKit.notes) brandParts.push(`Additional Notes: ${brandingKit.notes}`);
+        if (brandParts.length > 0) systemParts.push(`CLIENT BRANDING KIT:\n${brandParts.join("\n")}`);
+      }
+
+      const systemInstruction =
+        systemParts.length > 0
+          ? systemParts.join("\n\n")
+          : "You suggest concise, actionable edits for block-based real estate newsletters.";
+
+      const blockCatalog = blocks
+        .map((block, index) => {
+          const dataPreview = JSON.stringify(block.data || {}).replace(/\s+/g, " ").slice(0, 320);
+          return `${index + 1}. id=${block.id}; type=${block.type}; data=${dataPreview}`;
+        })
+        .join("\n");
+
+      const responseJsonSchema = {
+        type: "object",
+        required: ["summary", "operations"],
+        properties: {
+          summary: { type: "string" },
+          operations: {
+            type: "array",
+            items: {
+              type: "object",
+              required: ["op"],
+              properties: {
+                op: {
+                  type: "string",
+                  enum: ["update_block_data", "insert_block_after", "remove_block", "move_block"],
+                },
+                blockId: { type: "string" },
+                patch: { type: "object" },
+                afterBlockId: { type: "string" },
+                blockType: { type: "string", enum: ALLOWED_BLOCK_TYPES },
+                data: { type: "object" },
+                direction: { type: "string", enum: ["up", "down"] },
+                reason: { type: "string" },
+              },
+              additionalProperties: true,
+            },
+          },
+        },
+        additionalProperties: false,
+      };
+
+      const city = client?.locationCity?.trim() || "";
+      const region = client?.locationRegion?.trim() || "";
+      const locationLabel = [city, region].filter(Boolean).join(", ") || "the client's local market";
+
+      const generationPrompt = [
+        "Return ONLY JSON.",
+        "You are editing an existing block newsletter. Suggest exact block operations that satisfy the user request.",
+        "Rules:",
+        "- Do not invent block IDs. Use IDs from the current block list only.",
+        "- Prefer update_block_data operations when possible.",
+        "- Use insert_block_after only when new content is required.",
+        "- For move_block, use direction \"up\" or \"down\" only.",
+        "- Keep operations minimal and practical (max 8).",
+        "- For text block HTML use safe tags only: p, h2, h3, ul, li, strong, em, a.",
+        "- Respect source policy: market/news within 40 days, no paywalls, no competing real-estate promo blogs.",
+        `- Source context applies to sections about market news and local events for ${locationLabel}.`,
+        "If no changes are needed, return operations as an empty array and explain why in summary.",
+        "",
+        `Client: ${client?.name || "Client"}`,
+        `Current block list:\n${blockCatalog}`,
+        `User request: ${command}`,
+      ].join("\n");
+
+      const { GoogleGenAI } = await import("@google/genai");
+      const ai = new GoogleGenAI({
+        apiKey: geminiApiKey,
+        ...(process.env.AI_INTEGRATIONS_GEMINI_BASE_URL
+          ? {
+              httpOptions: {
+                apiVersion: "",
+                baseUrl: process.env.AI_INTEGRATIONS_GEMINI_BASE_URL,
+              },
+            }
+          : {}),
+      });
+
+      const response = await ai.models.generateContent({
+        model: "gemini-2.5-flash",
+        contents: [{ role: "user", parts: [{ text: generationPrompt }] }],
+        config: {
+          systemInstruction,
+          maxOutputTokens: 4096,
+          temperature: 0.4,
+          responseMimeType: "application/json",
+          responseJsonSchema,
+          tools: [{ googleSearch: {} }],
+        },
+      });
+
+      const rawText = (response.text || "").trim();
+      if (!rawText) {
+        return res.status(500).json({ error: "AI returned an empty response." });
+      }
+
+      const jsonText = rawText.startsWith("{") ? rawText : rawText.slice(rawText.indexOf("{"));
+      const parsed = JSON.parse(jsonText);
+      const summary =
+        typeof parsed?.summary === "string" && parsed.summary.trim().length > 0
+          ? parsed.summary.trim()
+          : "AI prepared block edit suggestions.";
+      const operations = sanitizeBlockEditOperations(parsed?.operations, blocks);
+      const preview = applyBlockEditOperations(document, operations);
+
+      return res.json({
+        summary,
+        operations,
+        operationCount: operations.length,
+        previewAppliedCount: preview.appliedCount,
+      } as BlockEditSuggestion & { operationCount: number });
+    } catch (error: any) {
+      console.error("AI suggest block edits error:", error);
+      res.status(500).json({ error: error?.message || "AI block edit suggestion failed" });
+    }
+  });
+
+  app.post("/api/newsletters/:id/ai-apply-block-edits", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = (req as Request & { userId: string }).userId;
+      const newsletter = await storage.getNewsletter(req.params.id);
+      if (!newsletter) {
+        return res.status(404).json({ error: "Newsletter not found" });
+      }
+
+      const versions = await storage.getVersionsByNewsletter(newsletter.id);
+      const currentVersion = versions.find((v) => v.id === newsletter.currentVersionId);
+      const previousDoc = normalizeNewsletterDocument(
+        (currentVersion?.snapshotJson || newsletter.documentJson || DEFAULT_NEWSLETTER_DOCUMENT) as NewsletterDocument
+      );
+      const blocks = Array.isArray(previousDoc.blocks) ? previousDoc.blocks : [];
+
+      const operations = sanitizeBlockEditOperations(req.body?.operations, blocks);
+      if (operations.length === 0) {
+        return res.status(400).json({ error: "No valid operations to apply." });
+      }
+
+      const applied = applyBlockEditOperations(previousDoc, operations);
+      if (applied.appliedCount === 0) {
+        return res.status(400).json({ error: "Operations did not affect current blocks." });
+      }
+
+      const summaryRaw = typeof req.body?.summary === "string" ? req.body.summary.trim() : "";
+      const summary = summaryRaw || `Applied ${applied.appliedCount} AI block edit(s)`;
+
+      const latestNum = await storage.getLatestVersionNumber(newsletter.id);
+      const newVersion = await storage.createVersion({
+        newsletterId: newsletter.id,
+        versionNumber: latestNum + 1,
+        snapshotJson: applied.document,
+        createdById: userId,
+        changeSummary: `AI apply: ${summary.slice(0, 140)}`,
+      });
+
+      await storage.updateNewsletter(newsletter.id, {
+        currentVersionId: newVersion.id,
+        documentJson: applied.document,
+        subject: applied.document.meta?.subject || newsletter.subject,
+        previewText: applied.document.meta?.previewText || newsletter.previewText,
+        fromEmail: applied.document.meta?.fromEmail || newsletter.fromEmail,
+        lastEditedById: userId,
+        lastEditedAt: new Date(),
+      });
+
+      const html = compileNewsletterToHtml(applied.document);
+      return res.json({
+        type: "success",
+        document: applied.document,
+        html,
+        appliedCount: applied.appliedCount,
+      });
+    } catch (error: any) {
+      console.error("AI apply block edits error:", error);
+      res.status(500).json({ error: error?.message || "Failed to apply AI block edits" });
     }
   });
 
@@ -2419,7 +2858,7 @@ export async function registerRoutes(
       });
     }
     if (unresolvedClientChanges > 0) {
-      blockers.push({
+      warnings.push({
         code: "pending_change_requests",
         message: `${unresolvedClientChanges} unresolved client change request(s) remain.`,
       });
@@ -2608,12 +3047,59 @@ export async function registerRoutes(
     }
   });
 
+  // Used by the send/schedule confirmation UI to show QA results and recipient count before sending.
+  app.post("/api/newsletters/:id/send-preview", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const qa = await buildNewsletterQaReport(req.params.id);
+      if (!qa) {
+        return res.status(404).json({ error: "Newsletter not found" });
+      }
+
+      const requestedAudienceTag =
+        normalizeAudienceTag(req.body.audienceTag) ||
+        normalizeAudienceTag(req.body.segmentTag) ||
+        normalizeAudienceTag((qa.document as any)?.meta?.audienceTag);
+      const audienceTag = requestedAudienceTag || "all";
+
+      const contacts = await storage.getContactsByClient(qa.newsletter.clientId);
+      const normalizedTag = audienceTag && audienceTag.trim() ? audienceTag.trim() : "all";
+      const recipients = contacts.filter((c: any) => {
+        if (!c?.isActive) return false;
+        if (normalizedTag === "all") return true;
+        const tags = Array.isArray(c?.tags) ? c.tags : [];
+        return tags.includes(normalizedTag);
+      });
+
+      res.json({
+        newsletterId: qa.newsletter.id,
+        status: qa.newsletter.status,
+        audienceTag: normalizedTag,
+        recipientsCount: recipients.length,
+        blockers: qa.blockers,
+        warnings: qa.warnings,
+        canSend: qa.canSend,
+        subject: qa.subject,
+        previewText: qa.previewText,
+        fromEmail: qa.fromEmail,
+      });
+    } catch (error) {
+      console.error("Send preview error:", error);
+      res.status(500).json({ error: "Failed to build send preview" });
+    }
+  });
+
   app.post("/api/newsletters/:id/schedule", requireAuth, async (req: Request, res: Response) => {
     try {
       const userId = (req as Request & { userId: string }).userId;
       const qa = await buildNewsletterQaReport(req.params.id);
       if (!qa) {
         return res.status(404).json({ error: "Newsletter not found" });
+      }
+      if (qa.newsletter.status !== "approved" && qa.newsletter.status !== "scheduled") {
+        return res.status(400).json({
+          error: "Newsletter must be approved before scheduling.",
+          status: qa.newsletter.status,
+        });
       }
       if (!qa.canSend) {
         return res.status(400).json({
@@ -2638,6 +3124,23 @@ export async function registerRoutes(
         normalizeAudienceTag(req.body.segmentTag) ||
         normalizeAudienceTag((qa.document as any)?.meta?.audienceTag);
       const audienceTag = requestedAudienceTag || "all";
+
+      // Validate audience has recipients at schedule time to avoid "scheduled but can't send" surprises.
+      const contacts = await storage.getContactsByClient(qa.newsletter.clientId);
+      const normalizedTag = audienceTag && audienceTag.trim() ? audienceTag.trim() : "all";
+      const recipients = contacts.filter((c: any) => {
+        if (!c?.isActive) return false;
+        if (normalizedTag === "all") return true;
+        const tags = Array.isArray(c?.tags) ? c.tags : [];
+        return tags.includes(normalizedTag);
+      });
+      if (recipients.length === 0) {
+        return res.status(400).json({
+          error: `No active contacts found for tag "${normalizedTag}".`,
+          blockers: qa.blockers,
+          warnings: qa.warnings,
+        });
+      }
 
       const nextDoc = {
         ...qa.document,
@@ -2683,6 +3186,12 @@ export async function registerRoutes(
       const qa = await buildNewsletterQaReport(req.params.id);
       if (!qa) {
         return res.status(404).json({ error: "Newsletter not found" });
+      }
+      if (qa.newsletter.status !== "approved" && qa.newsletter.status !== "scheduled") {
+        return res.status(400).json({
+          error: "Newsletter must be approved before sending.",
+          status: qa.newsletter.status,
+        });
       }
       if (!qa.canSend) {
         return res.status(400).json({
@@ -2868,12 +3377,21 @@ export async function registerRoutes(
   });
 
   // Cron/automation hook to send scheduled newsletters. Configure this with Vercel Cron or an external scheduler.
-  app.post("/api/internal/cron/send-due-newsletters", async (req: Request, res: Response) => {
+  // Vercel Cron invokes this endpoint via HTTP GET and will automatically include:
+  // Authorization: Bearer ${CRON_SECRET}
+  const sendDueNewslettersCronHandler = async (req: Request, res: Response) => {
     try {
       const expected = process.env.CRON_SECRET;
-      const provided = (req.headers["x-cron-secret"] as string) || (req.query.secret as string);
-      if (expected && provided !== expected) {
-        return res.status(401).json({ error: "Unauthorized" });
+      const authorization = (req.headers["authorization"] as string) || "";
+      // Never allow this endpoint unauthenticated in production; it can trigger sends.
+      if (!expected && process.env.NODE_ENV === "production") {
+        return res.status(500).json({ error: "CRON_SECRET is not configured." });
+      }
+      if (expected) {
+        const expectedHeader = `Bearer ${expected}`;
+        if (authorization !== expectedHeader) {
+          return res.status(401).json({ error: "Unauthorized" });
+        }
       }
 
       const dueNewsletters = (await storage.getNewslettersByStatus(["scheduled"] as any)).filter((n: any) => {
@@ -2920,9 +3438,14 @@ export async function registerRoutes(
       res.json({ ok: true, dueCount: dueNewsletters.length, processed, results });
     } catch (error) {
       console.error("Cron send-due error:", error);
-      res.status(500).json({ error: "Failed to send due newsletters" });
+      const detail = error instanceof Error ? error.message : String(error);
+      res.status(500).json({ error: "Failed to send due newsletters", detail });
     }
-  });
+  };
+
+  app.get("/api/internal/cron/send-due-newsletters", sendDueNewslettersCronHandler);
+  // Keep POST for internal/manual triggers.
+  app.post("/api/internal/cron/send-due-newsletters", sendDueNewslettersCronHandler);
 
   app.post("/api/newsletters/:id/send-for-review", requireAuth, async (req: Request, res: Response) => {
     try {

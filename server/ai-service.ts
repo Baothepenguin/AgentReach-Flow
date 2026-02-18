@@ -7,16 +7,42 @@ export interface AIHtmlEditResponse {
   message: string;
 }
 
-const openai = new OpenAI({
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-});
+let cachedClient: OpenAI | null | undefined;
+
+function getOpenAIClient(): OpenAI | null {
+  if (cachedClient !== undefined) return cachedClient;
+
+  const apiKey =
+    process.env.AI_INTEGRATIONS_OPENAI_API_KEY || process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    cachedClient = null;
+    return cachedClient;
+  }
+
+  const baseURL =
+    process.env.AI_INTEGRATIONS_OPENAI_BASE_URL || process.env.OPENAI_BASE_URL;
+
+  cachedClient = new OpenAI({
+    apiKey,
+    ...(baseURL ? { baseURL } : {}),
+  });
+  return cachedClient;
+}
 
 export async function processHtmlCommand(
   command: string,
   html: string,
   brandingKit: BrandingKit | null
 ): Promise<AIHtmlEditResponse> {
+  const openai = getOpenAIClient();
+  if (!openai) {
+    return {
+      type: "error",
+      message:
+        "OpenAI is not configured. Set AI_INTEGRATIONS_OPENAI_API_KEY (or OPENAI_API_KEY) to enable AI HTML editing.",
+    };
+  }
+
   const systemPrompt = `You are an AI assistant that edits HTML email newsletters. 
 Your role is to modify the provided HTML based on the user's command.
 

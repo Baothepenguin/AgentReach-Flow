@@ -62,7 +62,8 @@ export function log(message: string, source = "express") {
     const message = err.message || "Internal Server Error";
 
     res.status(status).json({ message });
-    throw err;
+    // Do not rethrow after responding; it can crash the process.
+    console.error("Unhandled error:", err);
   });
 
   if (process.env.NODE_ENV === "production") {
@@ -73,11 +74,15 @@ export function log(message: string, source = "express") {
   }
 
   const port = parseInt(process.env.PORT || "5000", 10);
+  const reusePort =
+    process.env.REUSE_PORT === "1" ||
+    process.env.REPLIT_DEPLOYMENT === "1" ||
+    Boolean(process.env.REPLIT_DOMAINS);
   httpServer.listen(
     {
       port,
       host: "0.0.0.0",
-      reusePort: true,
+      ...(reusePort ? { reusePort: true } : {}),
     },
     () => {
       log(`serving on port ${port}`);

@@ -2,13 +2,33 @@ import { GoogleGenAI } from "@google/genai";
 import mjml2html from "mjml";
 import type { BrandingKit } from "@shared/schema";
 
-const ai = new GoogleGenAI({
-  apiKey: process.env.AI_INTEGRATIONS_GEMINI_API_KEY,
-  httpOptions: {
-    apiVersion: "",
-    baseUrl: process.env.AI_INTEGRATIONS_GEMINI_BASE_URL,
-  },
-});
+let cachedClient: GoogleGenAI | null | undefined;
+
+function getGeminiClient(): GoogleGenAI | null {
+  if (cachedClient !== undefined) return cachedClient;
+
+  const apiKey =
+    process.env.AI_INTEGRATIONS_GEMINI_API_KEY || process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    cachedClient = null;
+    return cachedClient;
+  }
+
+  const baseUrl = process.env.AI_INTEGRATIONS_GEMINI_BASE_URL;
+  cachedClient = new GoogleGenAI({
+    apiKey,
+    ...(baseUrl
+      ? {
+          httpOptions: {
+            apiVersion: "",
+            baseUrl,
+          },
+        }
+      : {}),
+  });
+
+  return cachedClient;
+}
 
 function buildBrandingContext(brandingKit: BrandingKit | null): string {
   if (!brandingKit) return "No branding kit provided. Use a clean, professional default style with navy (#1a2b4a) as primary color.";
@@ -90,6 +110,13 @@ export async function generateEmailFromPrompt(
   prompt: string,
   brandingKit: BrandingKit | null
 ): Promise<{ mjml: string; html: string; subject?: string }> {
+  const ai = getGeminiClient();
+  if (!ai) {
+    throw new Error(
+      "Gemini is not configured. Set AI_INTEGRATIONS_GEMINI_API_KEY (or GEMINI_API_KEY).",
+    );
+  }
+
   const brandingContext = buildBrandingContext(brandingKit);
 
   const userPrompt = `${prompt}
@@ -136,6 +163,13 @@ export async function editEmailWithAI(
   currentMjml: string,
   brandingKit: BrandingKit | null
 ): Promise<{ mjml: string; html: string }> {
+  const ai = getGeminiClient();
+  if (!ai) {
+    throw new Error(
+      "Gemini is not configured. Set AI_INTEGRATIONS_GEMINI_API_KEY (or GEMINI_API_KEY).",
+    );
+  }
+
   const brandingContext = buildBrandingContext(brandingKit);
 
   const systemPrompt = `You are an expert MJML email editor. You modify existing MJML email markup based on user commands.
@@ -185,6 +219,13 @@ export async function suggestSubjectLines(
   html: string,
   count: number = 5
 ): Promise<string[]> {
+  const ai = getGeminiClient();
+  if (!ai) {
+    throw new Error(
+      "Gemini is not configured. Set AI_INTEGRATIONS_GEMINI_API_KEY (or GEMINI_API_KEY).",
+    );
+  }
+
   const systemPrompt = `You are an email marketing expert specializing in real estate newsletters. Analyze the newsletter content and suggest compelling email subject lines.
 
 RULES:

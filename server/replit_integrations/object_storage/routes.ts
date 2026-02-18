@@ -1,5 +1,110 @@
 import type { Express } from "express";
 import { ObjectStorageService, ObjectNotFoundError } from "./objectStorage";
+import { storage } from "../../storage";
+
+type UploadAuthContext =
+  | { type: "user"; userId: string }
+  | { type: "review"; reviewToken: string; newsletterId: string };
+
+const MAX_UPLOAD_BYTES = 10 * 1024 * 1024; // 10MB
+const PUBLIC_ALLOWED_TYPES = new Set([
+  "application/pdf",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+]);
+
+const rateLimitBuckets = new Map<string, { count: number; resetAt: number }>();
+
+function getClientIp(req: any): string {
+  const header = req.headers?.["x-forwarded-for"];
+  if (typeof header === "string" && header.trim()) {
+    return header.split(",")[0]?.trim() || "unknown";
+  }
+  return req.ip || req.connection?.remoteAddress || "unknown";
+}
+
+function checkRateLimit(key: string, windowMs: number, max: number): boolean {
+  const now = Date.now();
+  const existing = rateLimitBuckets.get(key);
+  if (!existing || existing.resetAt <= now) {
+    rateLimitBuckets.set(key, { count: 1, resetAt: now + windowMs });
+    return true;
+  }
+  if (existing.count >= max) return false;
+  existing.count += 1;
+  return true;
+}
+
+function isAllowedPublicContentType(type: string): boolean {
+  if (!type) return false;
+  if (type.startsWith("image/")) return true;
+  return PUBLIC_ALLOWED_TYPES.has(type);
+}
+
+function validateUploadMetadata(input: any, auth: UploadAuthContext): { name: string; size: number; contentType: string } {
+  const name = typeof input?.name === "string" ? input.name.trim() : "";
+  const size = typeof input?.size === "number" ? input.size : Number(input?.size);
+  const contentType = typeof input?.contentType === "string" ? input.contentType.trim() : "";
+
+  if (!name) {
+    throw new Error("Missing required field: name");
+  }
+  if (name.length > 200) {
+    throw new Error("Filename is too long");
+  }
+  if (!Number.isFinite(size) || size <= 0) {
+    throw new Error("Invalid file size");
+  }
+  if (size > MAX_UPLOAD_BYTES) {
+    throw new Error(`File too large (max ${MAX_UPLOAD_BYTES} bytes)`);
+  }
+  if (!contentType) {
+    throw new Error("Missing required field: contentType");
+  }
+
+  if (auth.type === "review" && !isAllowedPublicContentType(contentType)) {
+    throw new Error("Unsupported file type for public upload");
+  }
+
+  return { name, size, contentType };
+}
+
+async function getUploadAuthContext(req: any): Promise<UploadAuthContext | null> {
+  const userId = req.session?.userId;
+  if (typeof userId === "string" && userId) {
+    return { type: "user", userId };
+  }
+  const reviewToken = typeof req.params?.token === "string" ? req.params.token : "";
+  if (!reviewToken) return null;
+  const tokenRow = await storage.getValidReviewToken(reviewToken);
+  if (!tokenRow) return null;
+  return { type: "review", reviewToken, newsletterId: tokenRow.newsletterId };
+}
+
+async function canDownloadObject(req: any, objectPath: string): Promise<boolean> {
+  const userId = req.session?.userId;
+  if (typeof userId === "string" && userId) return true;
+
+  const reviewToken =
+    typeof req.query?.reviewToken === "string" ? req.query.reviewToken : "";
+  if (!reviewToken) return false;
+
+  const tokenRow = await storage.getValidReviewToken(reviewToken);
+  if (!tokenRow) return false;
+
+  // Only allow downloads of attachments actually referenced by this newsletter's review comments.
+  const comments = await storage.getReviewCommentsByNewsletter(tokenRow.newsletterId);
+  return comments.some((c: any) => Array.isArray(c.attachments) && c.attachments.includes(objectPath));
+}
+
+async function handleObjectDownload(objectStorageService: ObjectStorageService, req: any, res: any, objectPath: string) {
+  if (!(await canDownloadObject(req, objectPath))) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+
+  const objectFile = await objectStorageService.getObjectEntityFile(objectPath);
+  await objectStorageService.downloadObject(objectFile, res);
+}
 
 /**
  * Register object storage routes for file uploads.
@@ -37,15 +142,29 @@ export function registerObjectStorageRoutes(app: Express): void {
    */
   app.post("/api/uploads/request-url", async (req, res) => {
     try {
-      const { name, size, contentType } = req.body;
-
-      if (!name) {
-        return res.status(400).json({
-          error: "Missing required field: name",
-        });
+      const auth = await getUploadAuthContext(req);
+      if (!auth || auth.type !== "user") {
+        return res.status(401).json({ error: "Authentication required" });
       }
 
-      const uploadURL = await objectStorageService.getObjectEntityUploadURL();
+      const ip = getClientIp(req);
+      if (!checkRateLimit(`upload-url:user:${auth.userId}:${ip}`, 60_000, 60)) {
+        return res.status(429).json({ error: "Too many upload requests" });
+      }
+
+      const { name, size, contentType } = validateUploadMetadata(req.body, auth);
+
+      let uploadURL: string;
+      try {
+        uploadURL = await objectStorageService.getObjectEntityUploadURL();
+      } catch (e: any) {
+        return res.status(503).json({
+          error:
+            e instanceof Error
+              ? e.message
+              : "Uploads not configured (object storage unavailable)",
+        });
+      }
 
       // Extract object path from the presigned URL for later reference
       const objectPath = objectStorageService.normalizeObjectEntityPath(uploadURL);
@@ -58,7 +177,51 @@ export function registerObjectStorageRoutes(app: Express): void {
       });
     } catch (error) {
       console.error("Error generating upload URL:", error);
-      res.status(500).json({ error: "Failed to generate upload URL" });
+      res.status(400).json({
+        error: error instanceof Error ? error.message : "Failed to generate upload URL",
+      });
+    }
+  });
+
+  // Public review upload URL issuance. Requires a valid review token.
+  app.post("/api/review/:token/uploads/request-url", async (req, res) => {
+    try {
+      const auth = await getUploadAuthContext(req);
+      if (!auth || auth.type !== "review") {
+        return res.status(404).json({ error: "Invalid or expired token" });
+      }
+
+      const ip = getClientIp(req);
+      if (!checkRateLimit(`upload-url:review:${auth.reviewToken}:${ip}`, 60_000, 20)) {
+        return res.status(429).json({ error: "Too many upload requests" });
+      }
+
+      const { name, size, contentType } = validateUploadMetadata(req.body, auth);
+
+      let uploadURL: string;
+      try {
+        uploadURL = await objectStorageService.getObjectEntityUploadURL();
+      } catch (e: any) {
+        return res.status(503).json({
+          error:
+            e instanceof Error
+              ? e.message
+              : "Uploads not configured (object storage unavailable)",
+        });
+      }
+
+      const objectPath = objectStorageService.normalizeObjectEntityPath(uploadURL);
+
+      res.json({
+        uploadURL,
+        objectPath,
+        metadata: { name, size, contentType },
+      });
+    } catch (error) {
+      console.error("Error generating review upload URL:", error);
+      res.status(400).json({
+        error: error instanceof Error ? error.message : "Failed to generate upload URL",
+      });
     }
   });
 
@@ -72,8 +235,7 @@ export function registerObjectStorageRoutes(app: Express): void {
    */
   app.get("/objects/:objectPath(*)", async (req, res) => {
     try {
-      const objectFile = await objectStorageService.getObjectEntityFile(req.path);
-      await objectStorageService.downloadObject(objectFile, res);
+      await handleObjectDownload(objectStorageService, req, res, req.path);
     } catch (error) {
       console.error("Error serving object:", error);
       if (error instanceof ObjectNotFoundError) {
@@ -82,5 +244,18 @@ export function registerObjectStorageRoutes(app: Express): void {
       return res.status(500).json({ error: "Failed to serve object" });
     }
   });
-}
 
+  // Serverless-friendly alias (Vercel routes /api/* to the function).
+  app.get("/api/objects/:objectPath(*)", async (req, res) => {
+    try {
+      const objectPath = `/objects/${req.params.objectPath}`;
+      await handleObjectDownload(objectStorageService, req, res, objectPath);
+    } catch (error) {
+      console.error("Error serving api object:", error);
+      if (error instanceof ObjectNotFoundError) {
+        return res.status(404).json({ error: "Object not found" });
+      }
+      return res.status(500).json({ error: "Failed to serve object" });
+    }
+  });
+}

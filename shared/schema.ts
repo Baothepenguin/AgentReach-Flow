@@ -976,6 +976,45 @@ export interface NewsletterBlock {
   options?: Record<string, unknown>;
 }
 
+export const BLOCK_EDIT_OPERATION_TYPES = [
+  "update_block_data",
+  "insert_block_after",
+  "remove_block",
+  "move_block",
+] as const;
+export type BlockEditOperationType = typeof BLOCK_EDIT_OPERATION_TYPES[number];
+
+export type BlockEditOperation =
+  | {
+      op: "update_block_data";
+      blockId: string;
+      patch: Record<string, unknown>;
+      reason?: string;
+    }
+  | {
+      op: "insert_block_after";
+      afterBlockId: string;
+      blockType: NewsletterBlockType;
+      data: Record<string, unknown>;
+      reason?: string;
+    }
+  | {
+      op: "remove_block";
+      blockId: string;
+      reason?: string;
+    }
+  | {
+      op: "move_block";
+      blockId: string;
+      direction: "up" | "down";
+      reason?: string;
+    };
+
+export interface BlockEditSuggestion {
+  summary: string;
+  operations: BlockEditOperation[];
+}
+
 export interface NewsletterDocumentMeta {
   subject?: string;
   previewText?: string;

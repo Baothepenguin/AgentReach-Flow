@@ -19,6 +19,7 @@ import {
   CheckCircle2,
 } from "lucide-react";
 import type { NewsletterChatMessage, AiPrompt } from "@shared/schema";
+import type { BlockEditOperation } from "@shared/schema";
 
 interface GeminiChatPanelProps {
   newsletterId: string;
@@ -26,6 +27,23 @@ interface GeminiChatPanelProps {
   clientName: string;
   collapsed: boolean;
   onToggleCollapse: () => void;
+  enableBlockSuggestions?: boolean;
+  onApplyBlockEdits?: (operations: BlockEditOperation[], summary?: string) => Promise<{ appliedCount: number } | void>;
+}
+
+function describeOperation(operation: BlockEditOperation): string {
+  if (operation.op === "update_block_data") {
+    const keys = Object.keys(operation.patch || {});
+    const fields = keys.length > 0 ? keys.join(", ") : "block data";
+    return `Update block ${operation.blockId} (${fields})`;
+  }
+  if (operation.op === "insert_block_after") {
+    return `Insert ${operation.blockType} block after ${operation.afterBlockId}`;
+  }
+  if (operation.op === "remove_block") {
+    return `Remove block ${operation.blockId}`;
+  }
+  return `Move block ${operation.blockId} ${operation.direction}`;
 }
 
 export function GeminiChatPanel({
@@ -34,12 +52,21 @@ export function GeminiChatPanel({
   clientName,
   collapsed,
   onToggleCollapse,
+  enableBlockSuggestions = false,
+  onApplyBlockEdits,
 }: GeminiChatPanelProps) {
   const [message, setMessage] = useState("");
   const [showPromptEditor, setShowPromptEditor] = useState(false);
   const [masterPromptDraft, setMasterPromptDraft] = useState("");
   const [clientPromptDraft, setClientPromptDraft] = useState("");
   const [promptsLoaded, setPromptsLoaded] = useState(false);
+  const [pendingSuggestion, setPendingSuggestion] = useState<{
+    summary: string;
+    operations: BlockEditOperation[];
+    operationCount: number;
+    applicableCount?: number;
+  } | null>(null);
+  const [showSuggestionDetails, setShowSuggestionDetails] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
 
@@ -111,12 +138,70 @@ export function GeminiChatPanel({
     },
   });
 
+  const suggestBlockEditsMutation = useMutation({
+    mutationFn: async (msg: string) => {
+      const res = await apiRequest("POST", `/api/newsletters/${newsletterId}/ai-suggest-block-edits`, {
+        message: msg,
+      });
+      return res.json() as Promise<{
+        summary: string;
+        operations: BlockEditOperation[];
+        operationCount: number;
+        previewAppliedCount?: number;
+      }>;
+    },
+    onSuccess: (data) => {
+      if (Array.isArray(data.operations) && data.operations.length > 0) {
+        setPendingSuggestion({
+          summary: data.summary || "AI prepared direct block edits.",
+          operations: data.operations,
+          operationCount: data.operationCount || data.operations.length,
+          applicableCount: typeof data.previewAppliedCount === "number" ? data.previewAppliedCount : undefined,
+        });
+        setShowSuggestionDetails(true);
+      } else {
+        setPendingSuggestion(null);
+        setShowSuggestionDetails(false);
+      }
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "AI block suggestions failed",
+        description: error.message || "Could not generate block edit suggestions.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const applySuggestionMutation = useMutation({
+    mutationFn: async (suggestion: { summary: string; operations: BlockEditOperation[] }) => {
+      if (!onApplyBlockEdits) {
+        throw new Error("Apply handler is not configured.");
+      }
+      return onApplyBlockEdits(suggestion.operations, suggestion.summary);
+    },
+    onSuccess: () => {
+      setPendingSuggestion(null);
+      setShowSuggestionDetails(false);
+      queryClient.invalidateQueries({ queryKey: ["/api/newsletters", newsletterId] });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Failed to apply AI edits",
+        description: error.message || "Could not apply the proposed changes.",
+        variant: "destructive",
+      });
+    },
+  });
+
   const clearChatMutation = useMutation({
     mutationFn: async () => {
       await apiRequest("DELETE", `/api/newsletters/${newsletterId}/chat`);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/newsletters", newsletterId, "chat"] });
+      setPendingSuggestion(null);
+      setShowSuggestionDetails(false);
     },
   });
 
@@ -152,7 +237,13 @@ export function GeminiChatPanel({
 
   const handleSend = () => {
     if (!message.trim() || sendMessageMutation.isPending) return;
-    sendMessageMutation.mutate(message.trim());
+    const outgoing = message.trim();
+    setPendingSuggestion(null);
+    setShowSuggestionDetails(false);
+    sendMessageMutation.mutate(outgoing);
+    if (enableBlockSuggestions && onApplyBlockEdits) {
+      suggestBlockEditsMutation.mutate(outgoing);
+    }
   };
 
   if (collapsed) {
@@ -246,6 +337,85 @@ export function GeminiChatPanel({
             isSaving={saveClientPromptMutation.isPending}
             testId="client-prompt"
           />
+        </div>
+      )}
+
+      {(suggestBlockEditsMutation.isPending || pendingSuggestion) && (
+        <div className="px-3 py-2 border-b bg-muted/30">
+          {suggestBlockEditsMutation.isPending ? (
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              Generating direct block edits…
+            </div>
+          ) : pendingSuggestion ? (
+            <div className="space-y-2">
+              <div className="text-xs font-medium">
+                AI suggested {pendingSuggestion.operationCount} block edit{pendingSuggestion.operationCount === 1 ? "" : "s"}
+              </div>
+              {typeof pendingSuggestion.applicableCount === "number" ? (
+                <p className="text-[11px] text-muted-foreground">
+                  {pendingSuggestion.applicableCount} currently applicable to this version.
+                </p>
+              ) : null}
+              <p className="text-xs text-muted-foreground">{pendingSuggestion.summary}</p>
+              <div className="flex items-center gap-2">
+                <Button
+                  size="sm"
+                  className="h-7 text-xs"
+                  onClick={() =>
+                    applySuggestionMutation.mutate({
+                      summary: pendingSuggestion.summary,
+                      operations: pendingSuggestion.operations,
+                    })
+                  }
+                  disabled={applySuggestionMutation.isPending}
+                  data-testid="button-apply-ai-block-edits"
+                >
+                  {applySuggestionMutation.isPending ? (
+                    <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" />
+                  ) : null}
+                  Apply
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 text-xs"
+                  onClick={() => setShowSuggestionDetails((prev) => !prev)}
+                  disabled={applySuggestionMutation.isPending}
+                  data-testid="button-toggle-ai-block-edit-details"
+                >
+                  {showSuggestionDetails ? "Hide details" : "Show details"}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 text-xs"
+                  onClick={() => setPendingSuggestion(null)}
+                  disabled={applySuggestionMutation.isPending}
+                  data-testid="button-dismiss-ai-block-edits"
+                >
+                  Dismiss
+                </Button>
+              </div>
+              {showSuggestionDetails && (
+                <div className="border rounded-md bg-background/80 p-2">
+                  <div className="text-[11px] uppercase tracking-wide text-muted-foreground mb-1">
+                    Proposed operations
+                  </div>
+                  <div className="space-y-1">
+                    {pendingSuggestion.operations.map((operation, index) => (
+                      <div key={`ai-op-${index}`} className="text-xs">
+                        <div className="font-medium">{index + 1}. {describeOperation(operation)}</div>
+                        {operation.reason ? (
+                          <div className="text-muted-foreground">{operation.reason}</div>
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : null}
         </div>
       )}
 

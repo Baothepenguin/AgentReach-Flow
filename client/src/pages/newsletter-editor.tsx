@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect, lazy, Suspense } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation, Link } from "wouter";
 import { queryClient, apiRequest } from "@/lib/queryClient";
@@ -8,12 +8,14 @@ import { HTMLPreviewFrame } from "@/components/HTMLPreviewFrame";
 import { BlockNewsletterEditor } from "@/components/BlockNewsletterEditor";
 import { ClientSidePanel } from "@/components/ClientSidePanel";
 import { GeminiChatPanel } from "@/components/GeminiChatPanel";
+import { SendConfirmDialog } from "@/components/SendConfirmDialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
 import { Skeleton } from "@/components/ui/skeleton";
+import { ToastAction } from "@/components/ui/toast";
 import {
   Dialog,
   DialogContent,
@@ -43,20 +45,52 @@ import {
   Clock3,
   Send,
   ShieldCheck,
+  AlertTriangle,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import type { Newsletter, NewsletterVersion, NewsletterDocument, Client, TasksFlags } from "@shared/schema";
+import type {
+  BlockEditOperation,
+  Newsletter,
+  NewsletterVersion,
+  NewsletterDocument,
+  Client,
+  TasksFlags,
+} from "@shared/schema";
 import { format } from "date-fns";
 
 interface NewsletterEditorPageProps {
   newsletterId: string;
 }
 
+type SendReadinessPreview = {
+  newsletterId: string;
+  status: string;
+  audienceTag: string;
+  recipientsCount: number;
+  blockers: Array<{ code: string; message: string }>;
+  warnings: Array<{ code: string; message: string }>;
+  canSend: boolean;
+  subject: string;
+  previewText: string;
+  fromEmail: string;
+};
+
+function cloneNewsletterDocument(document: NewsletterDocument): NewsletterDocument {
+  return JSON.parse(JSON.stringify(document));
+}
+
+const LazyGrapesNewsletterDesigner = lazy(async () => {
+  const mod = await import("@/components/GrapesNewsletterDesigner");
+  return { default: mod.GrapesNewsletterDesigner };
+});
+
 export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorPageProps) {
   const { toast } = useToast();
   const [, setLocation] = useLocation();
   const [showClientPanel, setShowClientPanel] = useState(false);
   const [showDatePicker, setShowDatePicker] = useState(false);
+  const [sendDialogOpen, setSendDialogOpen] = useState(false);
+  const [sendDialogMode, setSendDialogMode] = useState<"schedule" | "send_now">("schedule");
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved">("idle");
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [editedTitle, setEditedTitle] = useState("");
@@ -64,11 +98,17 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
   const [isGenerating, setIsGenerating] = useState(false);
   const [chatCollapsed, setChatCollapsed] = useState(true);
   const [editingHtml, setEditingHtml] = useState(false);
-  const [editorView, setEditorView] = useState<"blocks" | "preview">("blocks");
+  const [editorView, setEditorView] = useState<"blocks" | "preview" | "designer">("blocks");
   const [htmlDraft, setHtmlDraft] = useState("");
   const [showImportDialog, setShowImportDialog] = useState(false);
   const [importHtml, setImportHtml] = useState("");
+  const [lastAiApplyBackup, setLastAiApplyBackup] = useState<{
+    document: NewsletterDocument;
+    summary?: string;
+    createdAt: number;
+  } | null>(null);
   const saveTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const autoViewAppliedRef = useRef(false);
 
   const { data: newsletterData, isLoading: loadingNewsletter, refetch: refetchNewsletter } = useQuery<{
     newsletter: Newsletter & { client?: Client };
@@ -82,21 +122,33 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
 
   const newsletter = newsletterData?.newsletter;
   const client = newsletter?.client;
+  const isDeliveryStage = newsletter?.status === "approved" || newsletter?.status === "scheduled";
 
-  const minifyHtml = (html: string): string => {
-    return html
-      .replace(/<!--[\s\S]*?-->/g, '')
-      .replace(/\n\s*\n/g, '\n')
-      .replace(/>\s{2,}</g, '> <')
-      .replace(/\t/g, '')
-      .trim();
-  };
+  useEffect(() => {
+    autoViewAppliedRef.current = false;
+  }, [newsletterId]);
+
+  useEffect(() => {
+    if (autoViewAppliedRef.current) return;
+    if (editingHtml) return;
+    if (!newsletterData) return;
+    const hasBlocks = Array.isArray(newsletterData.document?.blocks) && newsletterData.document.blocks.length > 0;
+    const hasHtml = typeof newsletterData.html === "string" && newsletterData.html.trim().length > 0;
+    if (!hasBlocks && hasHtml) {
+      setEditorView("designer");
+    }
+    autoViewAppliedRef.current = true;
+  }, [newsletterData, editingHtml]);
+
+  // Keep HTML as-is. Email builders (e.g. Postcards) rely on conditional comments (Outlook),
+  // and "minifying" by stripping comments can break rendering.
+  const normalizeHtmlForStorage = (html: string): string => html.trim();
 
   const updateHtmlMutation = useMutation({
     mutationFn: async (html: string) => {
-      const minified = minifyHtml(html);
+      const normalized = normalizeHtmlForStorage(html);
       const res = await apiRequest("PATCH", `/api/newsletters/${newsletterId}`, { 
-        documentJson: { html: minified } 
+        documentJson: { html: normalized } 
       });
       return res.json();
     },
@@ -165,6 +217,73 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
       toast({ title: "Failed to save block changes", variant: "destructive" });
     },
   });
+
+  const applyAiBlockEdits = useCallback(
+    async (operations: BlockEditOperation[], summary?: string) => {
+      const currentDocument = newsletterData?.document;
+      if (!currentDocument) {
+        throw new Error("Newsletter document is not loaded yet.");
+      }
+      if (!Array.isArray(operations) || operations.length === 0) {
+        throw new Error("No operations to apply.");
+      }
+
+      const backupDocument = cloneNewsletterDocument(currentDocument);
+      const response = await apiRequest("POST", `/api/newsletters/${newsletterId}/ai-apply-block-edits`, {
+        operations,
+        summary,
+      });
+      const payload = await response.json() as {
+        document: NewsletterDocument;
+        html?: string;
+        appliedCount: number;
+      };
+      const appliedCount = Number(payload?.appliedCount || 0);
+      if (appliedCount <= 0) {
+        throw new Error("AI suggestions did not match current blocks.");
+      }
+
+      queryClient.setQueryData(["/api/newsletters", newsletterId], (old: typeof newsletterData) =>
+        old
+          ? {
+              ...old,
+              document: payload.document || old.document,
+              html: payload.html || old.html,
+            }
+          : old
+      );
+      await refetchNewsletter();
+      setLastAiApplyBackup({
+        document: backupDocument,
+        summary,
+        createdAt: Date.now(),
+      });
+      toast({
+        title: `Applied ${appliedCount} AI edit${appliedCount === 1 ? "" : "s"}`,
+        description: summary ? summary.slice(0, 140) : undefined,
+        action: (
+          <ToastAction
+            altText="Undo AI edits"
+            onClick={() => {
+              updateDocumentMutation.mutate(backupDocument, {
+                onSuccess: () => {
+                  setLastAiApplyBackup(null);
+                  toast({ title: "AI edits reverted" });
+                },
+                onError: () => {
+                  toast({ title: "Failed to undo AI edits", variant: "destructive" });
+                },
+              });
+            }}
+          >
+            Undo
+          </ToastAction>
+        ),
+      });
+      return { appliedCount };
+    },
+    [newsletterData?.document, newsletterId, toast, refetchNewsletter, updateDocumentMutation]
+  );
 
   const updateTitleMutation = useMutation({
     mutationFn: async (title: string) => {
@@ -260,6 +379,21 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
   const hasMjml = !!(newsletter?.designJson as any)?.mjml;
   const hasContent = !!newsletterData?.html;
 
+  const sendReadinessQuery = useQuery<SendReadinessPreview>({
+    queryKey: ["/api/newsletters", newsletterId, "send-preview", "all"],
+    enabled: !!newsletterId && !!isDeliveryStage,
+    queryFn: async () => {
+      const res = await apiRequest("POST", `/api/newsletters/${newsletterId}/send-preview`, {
+        audienceTag: "all",
+      });
+      return res.json();
+    },
+    refetchInterval: 30000,
+  });
+  const deliveryBlockers = sendReadinessQuery.data?.blockers || [];
+  const deliveryWarnings = sendReadinessQuery.data?.warnings || [];
+  const unresolvedChangesWarning = deliveryWarnings.find((w) => w.code === "pending_change_requests");
+
   const qaCheckMutation = useMutation({
     mutationFn: async () => {
       const res = await apiRequest("POST", `/api/newsletters/${newsletterId}/qa-check`);
@@ -287,52 +421,6 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
     },
     onError: (error) => {
       toast({ title: "QA check failed", description: error.message, variant: "destructive" });
-    },
-  });
-
-  const scheduleMutation = useMutation({
-    mutationFn: async () => {
-      const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-      const res = await apiRequest("POST", `/api/newsletters/${newsletterId}/schedule`, { timezone });
-      return res.json();
-    },
-    onSuccess: async (data: any) => {
-      await refetchNewsletter();
-      queryClient.invalidateQueries({ queryKey: ["/api/newsletters"] });
-      toast({
-        title: "Newsletter scheduled",
-        description: data?.warnings?.length
-          ? `${data.warnings.length} warning(s) noted`
-          : "Ready for delivery",
-      });
-    },
-    onError: (error) => {
-      toast({ title: "Scheduling failed", description: error.message, variant: "destructive" });
-    },
-  });
-
-  const sendNowMutation = useMutation({
-    mutationFn: async () => {
-      const res = await apiRequest("POST", `/api/newsletters/${newsletterId}/send-now`);
-      return res.json();
-    },
-    onSuccess: async (data: any) => {
-      await refetchNewsletter();
-      queryClient.invalidateQueries({ queryKey: ["/api/newsletters"] });
-      const sentCount = data?.send?.sentCount;
-      const recipientsCount = data?.send?.recipientsCount;
-      toast({
-        title: "Newsletter sent",
-        description:
-          typeof sentCount === "number" && typeof recipientsCount === "number"
-            ? `Sent ${sentCount}/${recipientsCount}`
-            : data?.warnings?.length
-              ? `${data.warnings.length} warning(s) were present`
-              : "Send workflow completed",
-      });
-    },
-    onError: (error) => {
-      toast({ title: "Send failed", description: error.message, variant: "destructive" });
     },
   });
 
@@ -633,6 +721,17 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
                 Blocks
               </Button>
               <Button
+                variant={editorView === "designer" && !editingHtml ? "secondary" : "ghost"}
+                size="sm"
+                onClick={() => {
+                  setEditingHtml(false);
+                  setEditorView("designer");
+                }}
+                data-testid="button-editor-designer"
+              >
+                Designer
+              </Button>
+              <Button
                 variant={editorView === "preview" && !editingHtml ? "secondary" : "ghost"}
                 size="sm"
                 onClick={() => {
@@ -711,20 +810,24 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => scheduleMutation.mutate()}
-                disabled={scheduleMutation.isPending}
+                onClick={() => {
+                  setSendDialogMode("schedule");
+                  setSendDialogOpen(true);
+                }}
                 data-testid="button-schedule"
               >
-                {scheduleMutation.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Clock3 className="w-4 h-4 mr-1" />}
+                <Clock3 className="w-4 h-4 mr-1" />
                 Schedule
               </Button>
               <Button
                 size="sm"
-                onClick={() => sendNowMutation.mutate()}
-                disabled={sendNowMutation.isPending}
+                onClick={() => {
+                  setSendDialogMode("send_now");
+                  setSendDialogOpen(true);
+                }}
                 data-testid="button-send-now"
               >
-                {sendNowMutation.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Send className="w-4 h-4 mr-1" />}
+                <Send className="w-4 h-4 mr-1" />
                 Send Now
               </Button>
               <Button
@@ -737,11 +840,91 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
                 <Copy className="w-4 h-4 mr-1" />
                 Duplicate
               </Button>
+              {lastAiApplyBackup && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    updateDocumentMutation.mutate(lastAiApplyBackup.document, {
+                      onSuccess: () => {
+                        setLastAiApplyBackup(null);
+                        toast({ title: "AI edits reverted" });
+                      },
+                      onError: () => {
+                        toast({ title: "Failed to undo AI edits", variant: "destructive" });
+                      },
+                    });
+                  }}
+                  disabled={updateDocumentMutation.isPending}
+                  data-testid="button-undo-ai-edits"
+                >
+                  Undo AI
+                </Button>
+              )}
               <Button variant="ghost" size="icon" className="text-destructive" onClick={handleDelete} data-testid="button-delete">
                 <Trash2 className="w-4 h-4" />
               </Button>
             </div>
           </header>
+
+          {isDeliveryStage && (
+            <div
+              className="px-4 py-2 border-b bg-amber-50/70 dark:bg-amber-950/10 flex items-center justify-between gap-3"
+              data-testid="delivery-action-strip"
+            >
+              <div className="min-w-0">
+                <div className="text-sm font-medium flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 text-amber-600" />
+                  Manual delivery required
+                </div>
+                <div className="text-xs text-muted-foreground mt-0.5 flex items-center gap-3 flex-wrap">
+                  <span>
+                    Status: <span className="font-medium">{newsletter.status === "approved" ? "Approved" : "Scheduled"}</span>
+                  </span>
+                  <span>
+                    Recipients:{" "}
+                    {sendReadinessQuery.isLoading ? "..." : (sendReadinessQuery.data?.recipientsCount ?? 0)}
+                  </span>
+                  <span>
+                    Blockers: <span className={deliveryBlockers.length > 0 ? "text-destructive font-medium" : "font-medium"}>{deliveryBlockers.length}</span>
+                  </span>
+                  <span>
+                    Warnings: <span className={deliveryWarnings.length > 0 ? "text-amber-700 dark:text-amber-400 font-medium" : "font-medium"}>{deliveryWarnings.length}</span>
+                  </span>
+                  {unresolvedChangesWarning && (
+                    <span className="text-amber-700 dark:text-amber-400">
+                      {unresolvedChangesWarning.message}
+                    </span>
+                  )}
+                </div>
+              </div>
+              <div className="flex items-center gap-2 flex-shrink-0">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setSendDialogMode("schedule");
+                    setSendDialogOpen(true);
+                  }}
+                  data-testid="button-delivery-strip-schedule"
+                >
+                  <Clock3 className="w-4 h-4 mr-1" />
+                  Schedule
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={() => {
+                    setSendDialogMode("send_now");
+                    setSendDialogOpen(true);
+                  }}
+                  data-testid="button-delivery-strip-send-now"
+                >
+                  <Send className="w-4 h-4 mr-1" />
+                  Send Now
+                </Button>
+              </div>
+            </div>
+          )}
 
           <div className="flex-1 min-h-0 relative">
             {editingHtml ? (
@@ -782,6 +965,20 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
                 onGenerateWithAi={() => aiGenerateBlocksMutation.mutate()}
                 isGeneratingAi={aiGenerateBlocksMutation.isPending || isGenerating}
               />
+            ) : editorView === "designer" ? (
+              <Suspense
+                fallback={
+                  <div className="h-full flex items-center justify-center text-sm text-muted-foreground">
+                    Loading designer…
+                  </div>
+                }
+              >
+                <LazyGrapesNewsletterDesigner
+                  newsletterId={newsletterId}
+                  initialHtml={newsletterData?.html || ""}
+                  designJson={newsletter?.designJson}
+                />
+              </Suspense>
             ) : (
               <>
                 {hasContent ? (
@@ -856,6 +1053,8 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
             clientName={client.name}
             collapsed={chatCollapsed}
             onToggleCollapse={() => setChatCollapsed(!chatCollapsed)}
+            enableBlockSuggestions={editorView === "blocks" && !editingHtml}
+            onApplyBlockEdits={applyAiBlockEdits}
           />
         )}
       </div>
@@ -893,6 +1092,17 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <SendConfirmDialog
+        open={sendDialogOpen}
+        mode={sendDialogMode}
+        newsletterId={newsletterId}
+        expectedSendDate={newsletter.expectedSendDate}
+        onClose={async () => {
+          setSendDialogOpen(false);
+          await refetchNewsletter();
+        }}
+      />
     </div>
   );
 }

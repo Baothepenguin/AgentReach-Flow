@@ -233,27 +233,130 @@ function compileV1Block(block: NewsletterBlock, theme: NewsletterTheme): string 
       `;
     }
     case "grid": {
-      const items = Array.isArray(data.items) ? data.items.slice(0, 3) : [];
-      if (!items.length) return "";
-      const cells = items
+      const gridStyle =
+        typeof data.style === "string" && ["classic", "minimal", "spotlight"].includes(data.style)
+          ? data.style
+          : "classic";
+      const rawItems = Array.isArray(data.items) ? data.items : [];
+      const items = rawItems
         .map((item) => {
-          const title = typeof item?.title === "string" ? item.title : "";
-          const body = typeof item?.body === "string" ? item.body : "";
+          const address =
+            typeof item?.address === "string"
+              ? item.address
+              : typeof item?.title === "string"
+                ? item.title
+                : "";
+          const details =
+            typeof item?.details === "string"
+              ? item.details
+              : typeof item?.body === "string"
+                ? item.body
+                : "";
+          const price = typeof item?.price === "string" ? item.price : "";
           const imageUrl = typeof item?.imageUrl === "string" ? item.imageUrl : "";
-          return `
-            <td class="mobile-stack" width="${Math.round(100 / items.length)}%" style="vertical-align:top;padding:8px;">
-              ${imageUrl ? `<img src="${escapeHtml(imageUrl)}" alt="" style="display:block;width:100%;height:auto;border-radius:6px;">` : ""}
-              ${title ? `<h3 style="margin:10px 0 6px;font-size:18px;font-family:${theme.fontHeading};">${escapeHtml(title)}</h3>` : ""}
-              ${body ? `<p style="margin:0;font-size:14px;line-height:1.5;color:${theme.text};">${escapeHtml(body)}</p>` : ""}
-            </td>
-          `;
+          const href =
+            typeof item?.href === "string"
+              ? item.href
+              : typeof item?.url === "string"
+                ? item.url
+                : "";
+          return { address, details, price, imageUrl, href };
         })
-        .join("");
+        .filter((item) => item.address || item.details || item.price || item.imageUrl || item.href)
+        .slice(0, 6);
+      if (!items.length) return "";
+      const columnsPerRow = items.length === 1 ? 1 : 2;
+      const cellWidth = Math.floor(100 / columnsPerRow);
+      const rows: string[] = [];
+
+      for (let index = 0; index < items.length; index += columnsPerRow) {
+        const rowItems = items.slice(index, index + columnsPerRow);
+        const rowCells = rowItems
+          .map((item) => {
+            const address = escapeHtml(item.address || "Featured Listing");
+            const price = item.price ? escapeHtml(item.price) : "";
+            const details = item.details ? escapeHtml(item.details) : "";
+            const imageHtml = item.imageUrl
+              ? `<img src="${escapeHtml(item.imageUrl)}" alt="${address}" style="display:block;width:100%;height:auto;border-radius:8px 8px 0 0;">`
+              : "";
+            const actionHtml = item.href
+              ? `<a href="${escapeHtml(item.href)}" target="_blank" rel="noopener noreferrer" style="display:inline-block;margin-top:10px;color:${theme.accent};font-size:13px;font-weight:600;text-decoration:none;">View listing</a>`
+              : "";
+            const minimalImageHtml = item.imageUrl
+              ? `<img src="${escapeHtml(item.imageUrl)}" alt="${address}" style="display:block;width:100%;max-width:180px;height:auto;border-radius:8px;">`
+              : "";
+            const spotlightImageHtml = item.imageUrl
+              ? `<img src="${escapeHtml(item.imageUrl)}" alt="${address}" style="display:block;width:100%;height:auto;border-radius:12px 12px 0 0;">`
+              : "";
+
+            let cardHtml = "";
+            if (gridStyle === "minimal") {
+              cardHtml = `
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#ffffff;border-bottom:1px solid #e5e7eb;">
+                  <tr>
+                    <td style="padding:10px 12px 12px;">
+                      ${minimalImageHtml ? `<div style="padding-bottom:10px;">${minimalImageHtml}</div>` : ""}
+                      <div style="font-size:15px;line-height:1.35;font-weight:700;color:${theme.text};">${address}</div>
+                      ${price ? `<div style="margin-top:4px;font-size:14px;line-height:1.35;font-weight:700;color:${theme.accent};">${price}</div>` : ""}
+                      ${details ? `<div style="margin-top:4px;font-size:12px;line-height:1.45;color:${theme.text};">${details}</div>` : ""}
+                      ${actionHtml}
+                    </td>
+                  </tr>
+                </table>
+              `;
+            } else if (gridStyle === "spotlight") {
+              cardHtml = `
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#0f172a;border:1px solid #0f172a;border-radius:12px;">
+                  ${spotlightImageHtml ? `<tr><td>${spotlightImageHtml}</td></tr>` : ""}
+                  <tr>
+                    <td style="padding:12px 12px 14px;">
+                      <div style="font-size:17px;line-height:1.35;font-weight:700;color:#ffffff;font-family:${theme.fontHeading};">${address}</div>
+                      ${price ? `<div style="margin-top:6px;font-size:15px;line-height:1.35;font-weight:700;color:#86efac;">${price}</div>` : ""}
+                      ${details ? `<div style="margin-top:5px;font-size:13px;line-height:1.45;color:#e5e7eb;">${details}</div>` : ""}
+                      ${item.href
+                        ? `<a href="${escapeHtml(item.href)}" target="_blank" rel="noopener noreferrer" style="display:inline-block;margin-top:10px;color:#93c5fd;font-size:13px;font-weight:600;text-decoration:none;">View listing</a>`
+                        : ""}
+                    </td>
+                  </tr>
+                </table>
+              `;
+            } else {
+              cardHtml = `
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#ffffff;border:1px solid #e5e7eb;border-radius:8px;">
+                  ${imageHtml ? `<tr><td>${imageHtml}</td></tr>` : ""}
+                  <tr>
+                    <td style="padding:12px 12px 14px;">
+                      <div style="font-size:16px;line-height:1.35;font-weight:700;color:${theme.text};font-family:${theme.fontHeading};">${address}</div>
+                      ${price ? `<div style="margin-top:6px;font-size:15px;line-height:1.35;font-weight:700;color:${theme.accent};">${price}</div>` : ""}
+                      ${details ? `<div style="margin-top:5px;font-size:13px;line-height:1.45;color:${theme.text};">${details}</div>` : ""}
+                      ${actionHtml}
+                    </td>
+                  </tr>
+                </table>
+              `;
+            }
+
+            return `
+              <td class="mobile-stack" width="${cellWidth}%" style="vertical-align:top;padding:8px;">
+                ${cardHtml}
+              </td>
+            `;
+          })
+          .join("");
+
+        const spacerCell =
+          rowItems.length < columnsPerRow
+            ? `<td class="mobile-stack" width="${cellWidth}%" style="vertical-align:top;padding:8px;"></td>`
+            : "";
+
+        rows.push(`<tr>${rowCells}${spacerCell}</tr>`);
+      }
+
       return `
         <tr data-block-id="${blockId}" data-block-type="grid">
           <td style="padding:16px 20px;">
             <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
-              <tr>${cells}</tr>
+              ${rows.join("")}
             </table>
           </td>
         </tr>

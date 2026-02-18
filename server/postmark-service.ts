@@ -1,6 +1,20 @@
 import * as postmark from "postmark";
 
-const accountClient = new postmark.AccountClient(process.env.POSTMARK_ACCOUNT_API_TOKEN || "");
+let cachedAccountClient: postmark.AccountClient | null | undefined;
+
+function getAccountClient(): postmark.AccountClient | null {
+  if (cachedAccountClient !== undefined) return cachedAccountClient;
+
+  const token = process.env.POSTMARK_ACCOUNT_API_TOKEN || "";
+  if (!token) {
+    cachedAccountClient = null;
+    return cachedAccountClient;
+  }
+
+  // Postmark validates token format at construction time; avoid crashing app boot.
+  cachedAccountClient = new postmark.AccountClient(token);
+  return cachedAccountClient;
+}
 
 export interface SenderSignatureResult {
   success: boolean;
@@ -11,6 +25,14 @@ export interface SenderSignatureResult {
 
 export async function createSenderSignature(email: string, name: string): Promise<SenderSignatureResult> {
   try {
+    const accountClient = getAccountClient();
+    if (!accountClient) {
+      return {
+        success: false,
+        error: "Postmark account API token is not configured (POSTMARK_ACCOUNT_API_TOKEN).",
+      };
+    }
+
     const result = await accountClient.createSenderSignature({
       FromEmail: email,
       Name: name,
@@ -60,6 +82,9 @@ async function findSignatureByEmail(email: string): Promise<any | null> {
 
 export async function getSenderSignatures(): Promise<any[]> {
   try {
+    const accountClient = getAccountClient();
+    if (!accountClient) return [];
+
     const result = await accountClient.getSenderSignatures();
     return result.SenderSignatures || [];
   } catch (error) {
@@ -70,6 +95,9 @@ export async function getSenderSignatures(): Promise<any[]> {
 
 export async function resendConfirmation(signatureId: number): Promise<boolean> {
   try {
+    const accountClient = getAccountClient();
+    if (!accountClient) return false;
+
     await accountClient.resendSenderSignatureConfirmation(signatureId);
     return true;
   } catch (error) {
@@ -80,6 +108,9 @@ export async function resendConfirmation(signatureId: number): Promise<boolean> 
 
 export async function deleteSenderSignature(signatureId: number): Promise<boolean> {
   try {
+    const accountClient = getAccountClient();
+    if (!accountClient) return false;
+
     await accountClient.deleteSenderSignature(signatureId);
     return true;
   } catch (error) {
@@ -90,6 +121,9 @@ export async function deleteSenderSignature(signatureId: number): Promise<boolea
 
 export async function getSenderSignature(signatureId: number): Promise<any | null> {
   try {
+    const accountClient = getAccountClient();
+    if (!accountClient) return null;
+
     const result = await accountClient.getSenderSignature(signatureId);
     return result;
   } catch (error) {

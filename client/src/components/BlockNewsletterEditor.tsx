@@ -2,9 +2,10 @@ import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import type { NewsletterBlock, NewsletterBlockType, NewsletterDocument } from "@shared/schema";
-import { GripVertical, Plus, Save, Trash2, Sparkles } from "lucide-react";
+import { ArrowDown, ArrowUp, GripVertical, Plus, Save, Trash2, Sparkles } from "lucide-react";
 
 interface BlockNewsletterEditorProps {
   document?: NewsletterDocument;
@@ -77,7 +78,18 @@ function createDefaultBlock(type: NewsletterBlockType): NewsletterBlock {
       return {
         id: makeBlockId(),
         type,
-        data: { items: [{ title: "Block title", body: "Short description", imageUrl: "" }] },
+        data: {
+          style: "classic",
+          items: [
+            {
+              address: "123 Maple St",
+              price: "$925,000",
+              details: "3 bd • 2 ba • 1,780 sqft",
+              imageUrl: "",
+              href: "",
+            },
+          ],
+        },
       };
     case "image_button":
       return {
@@ -119,31 +131,59 @@ function fromSocialLinksText(value: string): Array<{ platform: string; href: str
     });
 }
 
-function toGridItemsText(value: unknown): string {
-  if (!Array.isArray(value)) return "";
-  return value
-    .map((item) => {
-      const title = typeof item?.title === "string" ? item.title : "";
-      const body = typeof item?.body === "string" ? item.body : "";
-      const imageUrl = typeof item?.imageUrl === "string" ? item.imageUrl : "";
-      return `${title}|${body}|${imageUrl}`;
-    })
-    .join("\n");
+type ListingCardItem = {
+  address: string;
+  price: string;
+  details: string;
+  imageUrl?: string;
+  href?: string;
+};
+
+const GRID_STYLES = ["classic", "minimal", "spotlight"] as const;
+type GridStyle = (typeof GRID_STYLES)[number];
+
+function normalizeGridStyle(value: unknown): GridStyle {
+  if (typeof value === "string" && GRID_STYLES.includes(value as GridStyle)) {
+    return value as GridStyle;
+  }
+  return "classic";
 }
 
-function fromGridItemsText(value: string): Array<{ title: string; body: string; imageUrl?: string }> {
-  return value
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line) => {
-      const [title, body, imageUrl] = line.split("|");
-      return {
-        title: (title || "").trim(),
-        body: (body || "").trim(),
-        imageUrl: (imageUrl || "").trim(),
-      };
-    });
+function createDefaultListingItem(): ListingCardItem {
+  return {
+    address: "",
+    price: "",
+    details: "",
+    imageUrl: "",
+    href: "",
+  };
+}
+
+function normalizeListingItems(value: unknown): ListingCardItem[] {
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => {
+    const address =
+      typeof item?.address === "string"
+        ? item.address
+        : typeof item?.title === "string"
+          ? item.title
+          : "";
+    const details =
+      typeof item?.details === "string"
+        ? item.details
+        : typeof item?.body === "string"
+          ? item.body
+          : "";
+    const price = typeof item?.price === "string" ? item.price : "";
+    const imageUrl = typeof item?.imageUrl === "string" ? item.imageUrl : "";
+    const href =
+      typeof item?.href === "string"
+        ? item.href
+        : typeof item?.url === "string"
+          ? item.url
+          : "";
+    return { address, price, details, imageUrl, href };
+  });
 }
 
 export function BlockNewsletterEditor({ document, isSaving, onSave, onGenerateWithAi, isGeneratingAi }: BlockNewsletterEditorProps) {
@@ -209,6 +249,20 @@ export function BlockNewsletterEditor({ document, isSaving, onSave, onGenerateWi
     }
   };
 
+  const moveBlock = (blockId: string, direction: -1 | 1) => {
+    const sourceIndex = blocks.findIndex((block) => block.id === blockId);
+    if (sourceIndex < 0) return;
+    const targetIndex = sourceIndex + direction;
+    if (targetIndex < 0 || targetIndex >= blocks.length) return;
+    const nextBlocks = [...blocks];
+    const [moved] = nextBlocks.splice(sourceIndex, 1);
+    nextBlocks.splice(targetIndex, 0, moved);
+    updateDocument({
+      ...workingDocument,
+      blocks: nextBlocks,
+    });
+  };
+
   const updateSelectedBlockData = (patch: Record<string, unknown>) => {
     if (!selectedBlock) return;
     const nextBlocks = blocks.map((block) =>
@@ -226,6 +280,49 @@ export function BlockNewsletterEditor({ document, isSaving, onSave, onGenerateWi
       ...workingDocument,
       blocks: nextBlocks,
     });
+  };
+
+  const selectedGridItems =
+    selectedBlock?.type === "grid"
+      ? normalizeListingItems(selectedBlock.data?.items)
+      : [];
+  const selectedGridStyle =
+    selectedBlock?.type === "grid"
+      ? normalizeGridStyle(selectedBlock.data?.style)
+      : "classic";
+
+  const setSelectedGridItems = (items: ListingCardItem[]) => {
+    if (selectedBlock?.type !== "grid") return;
+    updateSelectedBlockData({ items });
+  };
+
+  const upsertSelectedGridItem = (index: number, patch: Partial<ListingCardItem>) => {
+    if (selectedBlock?.type !== "grid") return;
+    const nextItems = [...selectedGridItems];
+    const existing = nextItems[index] || createDefaultListingItem();
+    nextItems[index] = { ...existing, ...patch };
+    setSelectedGridItems(nextItems);
+  };
+
+  const addSelectedGridItem = () => {
+    if (selectedBlock?.type !== "grid") return;
+    setSelectedGridItems([...selectedGridItems, createDefaultListingItem()]);
+  };
+
+  const removeSelectedGridItem = (index: number) => {
+    if (selectedBlock?.type !== "grid") return;
+    const nextItems = selectedGridItems.filter((_, i) => i !== index);
+    setSelectedGridItems(nextItems);
+  };
+
+  const moveSelectedGridItem = (index: number, direction: -1 | 1) => {
+    if (selectedBlock?.type !== "grid") return;
+    const nextIndex = index + direction;
+    if (nextIndex < 0 || nextIndex >= selectedGridItems.length) return;
+    const nextItems = [...selectedGridItems];
+    const [moved] = nextItems.splice(index, 1);
+    nextItems.splice(nextIndex, 0, moved);
+    setSelectedGridItems(nextItems);
   };
 
   const handleDropOnBlock = (targetBlockId: string) => {
@@ -299,6 +396,11 @@ export function BlockNewsletterEditor({ document, isSaving, onSave, onGenerateWi
             </Card>
           )}
           {blocks.map((block) => (
+            (() => {
+              const blockIndex = blocks.findIndex((b) => b.id === block.id);
+              const isFirst = blockIndex === 0;
+              const isLast = blockIndex === blocks.length - 1;
+              return (
             <Card
               key={block.id}
               draggable
@@ -317,20 +419,48 @@ export function BlockNewsletterEditor({ document, isSaving, onSave, onGenerateWi
                   <GripVertical className="w-4 h-4 text-muted-foreground" />
                   <span className="text-sm font-medium">{BLOCK_TYPE_LABELS[block.type]}</span>
                 </div>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    removeBlock(block.id);
-                  }}
-                  data-testid={`button-remove-block-${block.id}`}
-                >
-                  <Trash2 className="w-4 h-4" />
-                </Button>
+                <div className="flex items-center gap-1">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      moveBlock(block.id, -1);
+                    }}
+                    disabled={isFirst}
+                    data-testid={`button-move-block-up-${block.id}`}
+                  >
+                    <ArrowUp className="w-4 h-4" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      moveBlock(block.id, 1);
+                    }}
+                    disabled={isLast}
+                    data-testid={`button-move-block-down-${block.id}`}
+                  >
+                    <ArrowDown className="w-4 h-4" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      removeBlock(block.id);
+                    }}
+                    data-testid={`button-remove-block-${block.id}`}
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </Button>
+                </div>
               </div>
               <div className="text-xs text-muted-foreground mt-1">ID: {block.id}</div>
             </Card>
+              );
+            })()
           ))}
         </div>
       </main>
@@ -469,13 +599,110 @@ export function BlockNewsletterEditor({ document, isSaving, onSave, onGenerateWi
         )}
 
         {selectedBlock?.type === "grid" && (
-          <Textarea
-            value={toGridItemsText(selectedBlock.data?.items)}
-            onChange={(event) => updateSelectedBlockData({ items: fromGridItemsText(event.target.value) })}
-            className="min-h-[160px]"
-            placeholder="Title|Body|Image URL"
-            data-testid="textarea-block-grid-items"
-          />
+          <div className="space-y-2">
+            <div className="space-y-1">
+              <div className="text-xs text-muted-foreground">Listing Card Style</div>
+              <Select
+                value={selectedGridStyle}
+                onValueChange={(value) => updateSelectedBlockData({ style: normalizeGridStyle(value) })}
+              >
+                <SelectTrigger data-testid="select-grid-style">
+                  <SelectValue placeholder="Select card style" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="classic">Classic Card</SelectItem>
+                  <SelectItem value="minimal">Minimal List</SelectItem>
+                  <SelectItem value="spotlight">Spotlight Card</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="flex items-center justify-between">
+              <div className="text-xs text-muted-foreground">Listings</div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={addSelectedGridItem}
+                data-testid="button-add-grid-listing"
+              >
+                <Plus className="w-4 h-4 mr-1" />
+                Add Listing
+              </Button>
+            </div>
+
+            {selectedGridItems.length === 0 && (
+              <Card className="p-3 text-xs text-muted-foreground">
+                Add at least one listing card.
+              </Card>
+            )}
+
+            {selectedGridItems.map((item, index) => (
+              <Card key={`${selectedBlock.id}-listing-${index}`} className="p-2 space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="text-xs font-medium">Listing {index + 1}</div>
+                  <div className="flex items-center gap-1">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => moveSelectedGridItem(index, -1)}
+                      disabled={index === 0}
+                      data-testid={`button-move-grid-listing-up-${index}`}
+                    >
+                      <ArrowUp className="w-4 h-4" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => moveSelectedGridItem(index, 1)}
+                      disabled={index === selectedGridItems.length - 1}
+                      data-testid={`button-move-grid-listing-down-${index}`}
+                    >
+                      <ArrowDown className="w-4 h-4" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => removeSelectedGridItem(index)}
+                      data-testid={`button-remove-grid-listing-${index}`}
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </Button>
+                  </div>
+                </div>
+                <Input
+                  placeholder="Address"
+                  value={item.address}
+                  onChange={(event) => upsertSelectedGridItem(index, { address: event.target.value })}
+                  data-testid={`input-grid-listing-address-${index}`}
+                />
+                <Input
+                  placeholder="Price"
+                  value={item.price}
+                  onChange={(event) => upsertSelectedGridItem(index, { price: event.target.value })}
+                  data-testid={`input-grid-listing-price-${index}`}
+                />
+                <Input
+                  placeholder="Details (beds/baths/sqft)"
+                  value={item.details}
+                  onChange={(event) => upsertSelectedGridItem(index, { details: event.target.value })}
+                  data-testid={`input-grid-listing-details-${index}`}
+                />
+                <Input
+                  placeholder="Image URL"
+                  value={item.imageUrl || ""}
+                  onChange={(event) => upsertSelectedGridItem(index, { imageUrl: event.target.value })}
+                  data-testid={`input-grid-listing-image-${index}`}
+                />
+                <Input
+                  placeholder="Listing URL"
+                  value={item.href || ""}
+                  onChange={(event) => upsertSelectedGridItem(index, { href: event.target.value })}
+                  data-testid={`input-grid-listing-link-${index}`}
+                />
+              </Card>
+            ))}
+          </div>
         )}
 
         {selectedBlock?.type === "image_button" && (
