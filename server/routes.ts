@@ -22,6 +22,8 @@ import {
 import { randomUUID } from "crypto";
 import session from "express-session";
 import MemoryStore from "memorystore";
+import connectPgSimple from "connect-pg-simple";
+import { Pool } from "pg";
 import bcrypt from "bcrypt";
 import { addDays, addWeeks, addMonths, format } from "date-fns";
 
@@ -513,19 +515,46 @@ async function importContactsFromCsv(
 }
 
 const SessionStore = MemoryStore(session);
+const PgSessionStore = connectPgSimple(session);
+
+function createSessionStore() {
+  // Production/serverless should use a shared store so sessions survive across instances.
+  if (process.env.DATABASE_URL) {
+    try {
+      const pool = new Pool({
+        connectionString: process.env.DATABASE_URL,
+      });
+
+      return new PgSessionStore({
+        pool,
+        tableName: "sessions",
+        createTableIfMissing: true,
+      });
+    } catch (error) {
+      console.warn("Falling back to in-memory session store:", error);
+    }
+  }
+
+  return new SessionStore({ checkPeriod: 86400000 });
+}
 
 export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
+  // Required for secure cookies behind Vercel/edge proxies.
+  app.set("trust proxy", 1);
+
   app.use(
     session({
       secret: process.env.SESSION_SECRET || "dev-secret-change-me",
       resave: false,
       saveUninitialized: false,
-      store: new SessionStore({ checkPeriod: 86400000 }),
+      store: createSessionStore(),
+      proxy: true,
       cookie: {
         secure: process.env.NODE_ENV === "production",
+        sameSite: "lax",
         httpOnly: true,
         maxAge: 7 * 24 * 60 * 60 * 1000,
       },
