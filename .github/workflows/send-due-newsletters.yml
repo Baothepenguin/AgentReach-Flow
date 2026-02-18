@@ -1,0 +1,27 @@
+name: Send Due Newsletters
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch: {}
+
+jobs:
+  send_due:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Call Flow cron endpoint
+        env:
+          FLOW_CRON_URL: ${{ secrets.FLOW_CRON_URL }}
+          FLOW_CRON_SECRET: ${{ secrets.FLOW_CRON_SECRET }}
+        run: |
+          if [ -z "$FLOW_CRON_URL" ]; then
+            echo "Missing secret: FLOW_CRON_URL" >&2
+            exit 1
+          fi
+          if [ -z "$FLOW_CRON_SECRET" ]; then
+            echo "Missing secret: FLOW_CRON_SECRET" >&2
+            exit 1
+          fi
+          curl -fsS -H "Authorization: Bearer $FLOW_CRON_SECRET" "$FLOW_CRON_URL"
+
