@@ -17,9 +17,9 @@ interface ClientSidePanelProps {
 function getStatusBadge(status: string) {
   switch (status) {
     case "active":
-      return <Badge className="bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-xs">Active</Badge>;
+      return <Badge className="bg-blue-500/10 text-blue-600 dark:text-blue-400 text-xs">Active</Badge>;
     case "paid":
-      return <Badge className="bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-xs">Paid</Badge>;
+      return <Badge className="bg-blue-500/10 text-blue-600 dark:text-blue-400 text-xs">Paid</Badge>;
     case "pending":
       return <Badge className="bg-amber-500/10 text-amber-600 dark:text-amber-400 text-xs">Pending</Badge>;
     case "overdue":

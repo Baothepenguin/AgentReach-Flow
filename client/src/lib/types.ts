@@ -38,11 +38,11 @@ export const MODULE_TYPE_COLORS: Record<ModuleType, string> = {
   Hero: "border-l-blue-500",
   RichText: "border-l-gray-500",
   EventsList: "border-l-purple-500",
-  CTA: "border-l-green-500",
+  CTA: "border-l-sky-500",
   MarketUpdate: "border-l-amber-500",
   NewsCards: "border-l-indigo-500",
   ListingsGrid: "border-l-rose-500",
   Testimonial: "border-l-cyan-500",
-  AgentBio: "border-l-emerald-500",
+  AgentBio: "border-l-slate-500",
   FooterCompliance: "border-l-gray-400",
 };

@@ -23,8 +23,8 @@ function getStatusIndicator(status: string) {
   switch (status) {
     case "active":
       return (
-        <span className="inline-flex items-center gap-1.5 text-xs text-green-600 dark:text-green-400">
-          <StatusDot color="bg-green-500" />
+        <span className="inline-flex items-center gap-1.5 text-xs text-blue-600 dark:text-blue-400">
+          <StatusDot color="bg-blue-500" />
           Active
         </span>
       );

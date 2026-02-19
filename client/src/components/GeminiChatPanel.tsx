@@ -308,7 +308,7 @@ export function GeminiChatPanel({
         <div className="px-3 py-2 border-b border-border/70 text-xs flex items-center gap-1.5 bg-muted/20">
           {aiStatus.geminiConfigured ? (
             <>
-              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+              <CheckCircle2 className="w-3.5 h-3.5 text-blue-600" />
               <span className="text-muted-foreground">Gemini connected</span>
             </>
           ) : (

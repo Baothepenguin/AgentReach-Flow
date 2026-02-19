@@ -113,8 +113,8 @@ export default function OnboardingPage() {
           <div className="mt-3 flex items-center gap-2">
             {data.client.isVerified ? (
               <>
-                <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                <span className="text-sm text-emerald-700">Sender verified</span>
+                <CheckCircle2 className="w-4 h-4 text-blue-600" />
+                <span className="text-sm text-blue-700">Sender verified</span>
               </>
             ) : (
               <>

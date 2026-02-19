@@ -101,7 +101,7 @@ function ClientEmailsList({ clientId }: { clientId: string }) {
             {email.isInbound ? (
               <ArrowDownLeft className="w-3 h-3 text-blue-500 flex-shrink-0" />
             ) : (
-              <ArrowUpRight className="w-3 h-3 text-green-500 flex-shrink-0" />
+              <ArrowUpRight className="w-3 h-3 text-blue-500 flex-shrink-0" />
             )}
             <span className="text-sm font-medium truncate">{email.subject || "(No subject)"}</span>
           </div>
@@ -674,7 +674,7 @@ export default function ClientProfilePage({ clientId }: ClientProfilePageProps) 
                           disabled={updateClientMutation.isPending}
                           data-testid="button-save-info"
                         >
-                          <Check className="w-4 h-4 text-green-600" />
+                          <Check className="w-4 h-4 text-blue-600" />
                         </Button>
                         <Button
                           variant="ghost"

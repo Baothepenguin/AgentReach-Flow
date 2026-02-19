@@ -34,16 +34,16 @@ const STATUS_DOT_COLORS: Record<string, string> = {
   draft: "bg-neutral-300",
   in_review: "bg-blue-400",
   changes_requested: "bg-orange-400",
-  approved: "bg-green-400",
+  approved: "bg-blue-500",
   scheduled: "bg-indigo-500",
-  sent: "bg-emerald-600",
+  sent: "bg-slate-500",
 };
 
 const NEWSLETTER_STATUSES = [
   { value: "draft", label: "Draft", color: "bg-muted text-muted-foreground" },
   { value: "in_review", label: "In Review", color: "bg-blue-500/10 text-blue-600 dark:text-blue-400" },
   { value: "changes_requested", label: "Changes Requested", color: "bg-orange-500/10 text-orange-600 dark:text-orange-400" },
-  { value: "approved", label: "Approved", color: "bg-green-500/10 text-green-600 dark:text-green-400" },
+  { value: "approved", label: "Approved", color: "bg-blue-500/10 text-blue-600 dark:text-blue-400" },
   { value: "scheduled", label: "Scheduled", color: "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400" },
   { value: "sent", label: "Sent", color: "bg-primary/10 text-primary" },
 ] as const;
@@ -389,7 +389,7 @@ export default function NewslettersPage() {
             <Button
               variant="ghost"
               size="icon"
-              className={cn(view === "board" && "bg-emerald-50 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300")}
+              className={cn(view === "board" && "bg-muted text-foreground")}
               onClick={() => setView("board")}
               data-testid="button-view-board"
             >
@@ -398,7 +398,7 @@ export default function NewslettersPage() {
             <Button
               variant="ghost"
               size="icon"
-              className={cn(view === "table" && "bg-emerald-50 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300")}
+              className={cn(view === "table" && "bg-muted text-foreground")}
               onClick={() => setView("table")}
               data-testid="button-view-table"
             >

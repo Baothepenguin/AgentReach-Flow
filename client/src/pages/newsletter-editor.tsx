@@ -335,7 +335,7 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
   return (
     <div className="flex flex-col h-screen w-full bg-background">
       <TopNav />
-      <div className="flex flex-1 overflow-hidden bg-gradient-to-b from-emerald-50/50 via-background to-background dark:from-emerald-950/10">
+      <div className="flex flex-1 overflow-hidden bg-background">
         <div className="flex-1 flex flex-col min-w-0">
           <header className="border-b border-border/70 bg-background/90 backdrop-blur px-5 py-3">
             <div className="flex flex-wrap items-start justify-between gap-3">
@@ -412,8 +412,8 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
                       </span>
                     )}
                     {saveStatus === "saved" && (
-                      <span className="inline-flex items-center gap-1 text-xs text-emerald-700 dark:text-emerald-300" data-testid="save-indicator-saved">
-                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                      <span className="inline-flex items-center gap-1 text-xs text-blue-700 dark:text-blue-300" data-testid="save-indicator-saved">
+                        <span className="w-1.5 h-1.5 rounded-full bg-blue-500" />
                         Saved
                       </span>
                     )}

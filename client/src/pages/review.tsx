@@ -378,7 +378,7 @@ export default function ReviewPage() {
     return (
       <div className="min-h-screen flex items-center justify-center bg-muted/30 p-6">
         <Card className="p-8 text-center max-w-md">
-          <CheckCircle2 className="w-12 h-12 mx-auto text-emerald-500 mb-4" />
+          <CheckCircle2 className="w-12 h-12 mx-auto text-blue-500 mb-4" />
           <h1 className="text-xl font-semibold mb-2">Thank You!</h1>
           <p className="text-sm text-muted-foreground">
             Your newsletter has been approved. You can close this page.

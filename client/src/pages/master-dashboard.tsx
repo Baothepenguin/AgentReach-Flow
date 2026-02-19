@@ -89,7 +89,7 @@ export default function MasterDashboard() {
     if (isPast(date) && !isToday(date)) return "bg-red-400";
     const daysUntil = differenceInDays(date, new Date());
     if (daysUntil <= 5) return "bg-amber-400";
-    return "bg-emerald-400";
+    return "bg-blue-400";
   };
 
   const getStatusLabel = (status: string) => {
@@ -106,7 +106,7 @@ export default function MasterDashboard() {
 
   const getInvoiceStatusColor = (status: string) => {
     switch (status) {
-      case "paid": return "text-emerald-600 dark:text-emerald-400";
+      case "paid": return "text-blue-600 dark:text-blue-400";
       case "pending": return "text-amber-600 dark:text-amber-400";
       case "overdue": return "text-red-600 dark:text-red-400";
       default: return "text-muted-foreground";
@@ -119,7 +119,7 @@ export default function MasterDashboard() {
 
   const getSubscriptionStatusColor = (status: string) => {
     switch (status) {
-      case "active": return "text-emerald-600 dark:text-emerald-400";
+      case "active": return "text-blue-600 dark:text-blue-400";
       case "paused": return "text-amber-600 dark:text-amber-400";
       case "canceled": return "text-muted-foreground";
       case "past_due": return "text-red-600 dark:text-red-400";
