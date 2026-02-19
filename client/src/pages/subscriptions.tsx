@@ -271,18 +271,53 @@ export default function SubscriptionsPage() {
     },
   });
 
+  const pullStripeSubscriptionsMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/stripe/pull-subscriptions", {});
+      return res.json();
+    },
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/subscriptions"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/clients"] });
+      const created = data?.createdCount ?? 0;
+      const updated = data?.updatedCount ?? 0;
+      toast({
+        title: "Stripe subscriptions synced",
+        description: `Created ${created}, updated ${updated}.`,
+      });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Stripe sync failed", description: error.message, variant: "destructive" });
+    },
+  });
+
   return (
     <div className="min-h-screen bg-background">
       <TopNav />
 
       <div className="flex h-[calc(100vh-56px)]">
-        <div className="flex-1 p-6 overflow-auto">
+        <div className="flex-1 px-8 py-6 overflow-auto">
           <div className="flex items-center justify-between gap-2 mb-6">
             <h1 className="text-xl font-semibold">Subscriptions</h1>
-            <Button onClick={() => setCreateOpen(true)} data-testid="button-new-subscription">
-              <Plus className="w-4 h-4 mr-1.5" />
-              New Subscription
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                onClick={() => pullStripeSubscriptionsMutation.mutate()}
+                disabled={pullStripeSubscriptionsMutation.isPending}
+                data-testid="button-pull-stripe-subscriptions"
+              >
+                {pullStripeSubscriptionsMutation.isPending ? (
+                  <RefreshCw className="w-4 h-4 mr-1.5 animate-spin" />
+                ) : (
+                  <RefreshCw className="w-4 h-4 mr-1.5" />
+                )}
+                Pull from Stripe
+              </Button>
+              <Button onClick={() => setCreateOpen(true)} data-testid="button-new-subscription">
+                <Plus className="w-4 h-4 mr-1.5" />
+                New Subscription
+              </Button>
+            </div>
           </div>
 
           {isLoading ? (

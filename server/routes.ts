@@ -284,6 +284,11 @@ function normalizeSendMode(mode: unknown): "fixed_time" | "immediate_after_appro
   return undefined;
 }
 
+function buildNewsletterTitle(clientName: string): string {
+  const normalizedName = clientName.trim() || "Client";
+  return `${normalizedName} Newsletter`;
+}
+
 function applyNewsletterStatusSideEffects(
   status: NewsletterStatus | undefined,
   updateData: Record<string, unknown>,
@@ -1024,8 +1029,7 @@ export async function registerRoutes(
           
           const newsletters = [];
           for (const sendDate of sendDates) {
-            const formattedDate = format(sendDate, "MMM d");
-            const title = `${client.name} - ${formattedDate}`;
+            const title = buildNewsletterTitle(client.name);
             
             const newsletter = await storage.createNewsletter({
               clientId,
@@ -1166,9 +1170,7 @@ export async function registerRoutes(
         paidAt: stripePaymentId ? new Date() : null,
       });
 
-      const sendDate = new Date(expectedSendDate);
-      const formattedDate = sendDate.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-      const title = `${client.name} - ${formattedDate}`;
+      const title = buildNewsletterTitle(client.name);
 
       const latestNewsletter = await storage.getLatestClientNewsletter(client.id);
       let documentJson: NewsletterDocument;
@@ -1270,9 +1272,7 @@ export async function registerRoutes(
         return res.status(404).json({ error: "Client not found" });
       }
 
-      const sendDate = new Date(expectedSendDate);
-      const formattedDate = sendDate.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-      const title = `${client.name} - ${formattedDate}`;
+      const title = buildNewsletterTitle(client.name);
 
       let documentJson: NewsletterDocument;
 
@@ -1381,6 +1381,12 @@ export async function registerRoutes(
         if (!newsletter) {
           return res.status(404).json({ error: "Newsletter not found" });
         }
+        if (newsletter.status === "sent" && normalizedStatus && normalizedStatus !== "sent") {
+          return res.status(400).json({ error: "Sent newsletters are locked and cannot move back to earlier stages." });
+        }
+        if (normalizedStatus === "sent") {
+          return res.status(400).json({ error: "Status 'sent' is set automatically only after a successful send." });
+        }
 
         const versions = await storage.getVersionsByNewsletter(newsletter.id);
         const currentVersion = versions.find((v) => v.id === newsletter.currentVersionId);
@@ -1435,6 +1441,12 @@ export async function registerRoutes(
       const existingNewsletter = await storage.getNewsletter(req.params.id);
       if (!existingNewsletter) {
         return res.status(404).json({ error: "Newsletter not found" });
+      }
+      if (existingNewsletter.status === "sent" && normalizedStatus && normalizedStatus !== "sent") {
+        return res.status(400).json({ error: "Sent newsletters are locked and cannot move back to earlier stages." });
+      }
+      if (normalizedStatus === "sent") {
+        return res.status(400).json({ error: "Status 'sent' is set automatically only after a successful send." });
       }
 
       const updateData: any = {
@@ -3902,6 +3914,213 @@ export async function registerRoutes(
     } catch (error: any) {
       console.error("Failed to fetch Stripe products:", error);
       res.json({ data: [] });
+    }
+  });
+
+  app.post("/api/stripe/pull-orders", requireAuth, async (_req: Request, res: Response) => {
+    try {
+      const { getUncachableStripeClient } = await import("./stripeClient");
+      const stripe = await getUncachableStripeClient();
+      const [clients, invoices] = await Promise.all([
+        storage.getClients(),
+        storage.getAllInvoices(),
+      ]);
+
+      const clientByEmail = new Map(
+        clients
+          .filter((c) => !!c.primaryEmail)
+          .map((c) => [c.primaryEmail.trim().toLowerCase(), c])
+      );
+      const existingByStripePaymentId = new Set(
+        invoices.map((invoice) => invoice.stripePaymentId).filter((id): id is string => !!id)
+      );
+
+      const sessions = await stripe.checkout.sessions.list({
+        limit: 100,
+        expand: ["data.customer"],
+      });
+
+      let importedCount = 0;
+      let skippedCount = 0;
+
+      for (const session of sessions.data) {
+        const expandedCustomer =
+          typeof session.customer !== "string" && session.customer && "deleted" in session.customer && session.customer.deleted
+            ? null
+            : (typeof session.customer !== "string" ? session.customer : null);
+        const customerEmail =
+          session.customer_details?.email ||
+          expandedCustomer?.email ||
+          null;
+        if (!customerEmail) {
+          skippedCount += 1;
+          continue;
+        }
+        const client = clientByEmail.get(customerEmail.trim().toLowerCase());
+        if (!client) {
+          skippedCount += 1;
+          continue;
+        }
+
+        const stripePaymentId =
+          (typeof session.payment_intent === "string" && session.payment_intent) ||
+          (typeof session.payment_intent !== "string" && session.payment_intent?.id) ||
+          session.id;
+        if (existingByStripePaymentId.has(stripePaymentId)) {
+          skippedCount += 1;
+          continue;
+        }
+
+        const amount = ((session.amount_total || 0) / 100).toFixed(2);
+        const currency = (session.currency || "usd").toUpperCase();
+        const status = session.payment_status === "paid" ? "paid" : "pending";
+        const paidAt = status === "paid" ? new Date((session.created || Math.floor(Date.now() / 1000)) * 1000) : null;
+
+        await storage.createInvoice({
+          clientId: client.id,
+          amount,
+          currency,
+          status,
+          stripePaymentId,
+          paidAt,
+        });
+        existingByStripePaymentId.add(stripePaymentId);
+        importedCount += 1;
+      }
+
+      res.json({
+        success: true,
+        scanned: sessions.data.length,
+        importedCount,
+        skippedCount,
+      });
+    } catch (error: any) {
+      console.error("Stripe order pull error:", error);
+      res.status(500).json({ error: error?.message || "Failed to pull orders from Stripe" });
+    }
+  });
+
+  app.post("/api/stripe/pull-subscriptions", requireAuth, async (_req: Request, res: Response) => {
+    try {
+      const { getUncachableStripeClient } = await import("./stripeClient");
+      const stripe = await getUncachableStripeClient();
+      const [clients, subscriptions] = await Promise.all([
+        storage.getClients(),
+        storage.getAllSubscriptions(),
+      ]);
+
+      const clientByEmail = new Map(
+        clients
+          .filter((c) => !!c.primaryEmail)
+          .map((c) => [c.primaryEmail.trim().toLowerCase(), c])
+      );
+      const existingByStripeId = new Map(
+        subscriptions
+          .filter((sub) => !!sub.stripeSubscriptionId)
+          .map((sub) => [sub.stripeSubscriptionId as string, sub])
+      );
+
+      const stripeSubscriptions = await stripe.subscriptions.list({
+        limit: 100,
+        status: "all",
+        expand: ["data.customer"],
+      });
+
+      let createdCount = 0;
+      let updatedCount = 0;
+      let skippedCount = 0;
+      const touchedClientIds = new Set<string>();
+
+      const toLocalFrequency = (interval?: string | null, intervalCount?: number | null): "weekly" | "biweekly" | "monthly" => {
+        if (interval === "week" && intervalCount === 2) return "biweekly";
+        if (interval === "week") return "weekly";
+        return "monthly";
+      };
+
+      const toLocalStatus = (stripeStatus: string): "active" | "paused" | "canceled" | "past_due" => {
+        if (stripeStatus === "active" || stripeStatus === "trialing") return "active";
+        if (stripeStatus === "past_due" || stripeStatus === "unpaid") return "past_due";
+        if (stripeStatus === "canceled" || stripeStatus === "incomplete_expired") return "canceled";
+        return "paused";
+      };
+
+      for (const sub of stripeSubscriptions.data) {
+        const expandedCustomer =
+          typeof sub.customer !== "string" && sub.customer && "deleted" in sub.customer && sub.customer.deleted
+            ? null
+            : (typeof sub.customer !== "string" ? sub.customer : null);
+        const customerEmail =
+          expandedCustomer?.email ||
+          null;
+        if (!customerEmail) {
+          skippedCount += 1;
+          continue;
+        }
+
+        const client = clientByEmail.get(customerEmail.trim().toLowerCase());
+        if (!client) {
+          skippedCount += 1;
+          continue;
+        }
+
+        const price = sub.items.data[0]?.price;
+        const amount = ((price?.unit_amount || 0) / 100).toFixed(2);
+        const frequency = toLocalFrequency(price?.recurring?.interval, price?.recurring?.interval_count || 1);
+        const status = toLocalStatus(sub.status);
+        const subAny = sub as any;
+        const startTs = subAny.current_period_start || sub.start_date || sub.created;
+        const endTs = subAny.current_period_end || subAny.cancel_at || null;
+        const startDate = startTs
+          ? new Date(startTs * 1000).toISOString().slice(0, 10)
+          : null;
+        const endDate = endTs
+          ? new Date(endTs * 1000).toISOString().slice(0, 10)
+          : null;
+
+        const existing = existingByStripeId.get(sub.id);
+        if (existing) {
+          await storage.updateSubscription(existing.id, {
+            amount,
+            currency: (price?.currency || "usd").toUpperCase(),
+            frequency,
+            status,
+            startDate,
+            endDate,
+          });
+          updatedCount += 1;
+        } else {
+          const created = await storage.createSubscription({
+            clientId: client.id,
+            amount,
+            currency: (price?.currency || "usd").toUpperCase(),
+            frequency,
+            status,
+            stripeSubscriptionId: sub.id,
+            startDate,
+            endDate,
+          });
+          existingByStripeId.set(sub.id, created);
+          createdCount += 1;
+        }
+        touchedClientIds.add(client.id);
+      }
+
+      await Promise.all(
+        Array.from(touchedClientIds).map((clientId) =>
+          storage.recalculateClientSubscriptionStatus(clientId)
+        )
+      );
+
+      res.json({
+        success: true,
+        scanned: stripeSubscriptions.data.length,
+        createdCount,
+        updatedCount,
+        skippedCount,
+      });
+    } catch (error: any) {
+      console.error("Stripe subscription pull error:", error);
+      res.status(500).json({ error: error?.message || "Failed to pull subscriptions from Stripe" });
     }
   });
 

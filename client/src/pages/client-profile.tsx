@@ -428,9 +428,15 @@ export default function ClientProfilePage({ clientId }: ClientProfilePageProps) 
     try {
       const res = await apiRequest("POST", `/api/newsletters/${selectedNewsletterId}/send-for-review`);
       const data = await res.json();
-      if (data.reviewUrl) {
+      if (!data.reviewUrl) {
+        throw new Error("No review URL returned");
+      }
+      window.open(data.reviewUrl, "_blank");
+      try {
         await navigator.clipboard.writeText(data.reviewUrl);
         toast({ title: "Review link copied to clipboard", description: data.reviewUrl });
+      } catch {
+        toast({ title: "Review link opened", description: data.reviewUrl });
       }
     } catch {
       toast({ title: "Failed to generate review link", variant: "destructive" });

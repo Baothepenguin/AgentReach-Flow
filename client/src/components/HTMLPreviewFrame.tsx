@@ -351,8 +351,8 @@ export function HTMLPreviewFrame({
   }, [html, describeElement, markSelectedElement, syncHeight]);
 
   return (
-    <div className="flex flex-col h-full relative">
-      <div className={`flex-1 flex items-start justify-center overflow-auto bg-muted/20 ${fullWidth ? "p-3" : "p-4"}`}>
+    <div className="flex flex-col h-full relative overflow-hidden">
+      <div className={`flex-1 flex items-start justify-center overflow-y-auto overflow-x-hidden bg-muted/20 ${fullWidth ? "p-3" : "p-4"}`}>
         {isLoading ? (
           <div className="bg-white rounded-lg shadow-lg overflow-hidden" style={{ width: previewWidth }}>
             <Skeleton className="h-48 w-full" />
@@ -369,7 +369,7 @@ export function HTMLPreviewFrame({
                 activeDeviceMode === "mobile" && !fullWidth
                   ? "rounded-3xl border-4 border-gray-700 shadow-lg"
                   : fullWidth
-                    ? "rounded-xl border shadow-sm"
+                    ? "rounded-xl shadow-sm"
                     : "rounded-lg shadow-lg"
               }`}
             >
@@ -380,6 +380,7 @@ export function HTMLPreviewFrame({
                 className="w-full border-0 bg-white"
                 style={{ height: activeDeviceMode === "mobile" ? "667px" : "680px" }}
                 sandbox="allow-same-origin allow-scripts"
+                scrolling="no"
                 data-testid="iframe-preview"
               />
 

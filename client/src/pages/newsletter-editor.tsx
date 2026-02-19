@@ -41,7 +41,6 @@ import {
   X,
   Code,
   Upload,
-  FileImage,
   FileText,
   Clock3,
   Send,
@@ -256,10 +255,16 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
     try {
       const res = await apiRequest("POST", `/api/newsletters/${newsletterId}/send-for-review`);
       const data = await res.json();
-      if (data.reviewUrl) {
-        window.open(data.reviewUrl, "_blank");
+      if (!data.reviewUrl) {
+        throw new Error("No review link returned");
+      }
+
+      window.open(data.reviewUrl, "_blank");
+      try {
         await navigator.clipboard.writeText(data.reviewUrl);
         toast({ title: "Review link copied and opened" });
+      } catch {
+        toast({ title: "Review link opened", description: data.reviewUrl });
       }
     } catch {
       toast({ title: "Failed to generate review link", variant: "destructive" });
@@ -271,38 +276,6 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
     updateHtmlMutation.mutate(importHtml.trim());
     setImportHtml("");
     setShowImportDialog(false);
-  };
-
-  const handleExportPdf = async () => {
-    if (!newsletterData?.html) return;
-    try {
-      const res = await fetch(`/api/newsletters/${newsletterId}/export?format=pdf`, { credentials: "include" });
-      if (res.ok) {
-        const blob = await res.blob();
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = `${newsletter?.title || "newsletter"}.pdf`;
-        a.click();
-        URL.revokeObjectURL(url);
-      }
-    } catch {}
-  };
-
-  const handleExportPng = async () => {
-    if (!newsletterData?.html) return;
-    try {
-      const res = await fetch(`/api/newsletters/${newsletterId}/export?format=png`, { credentials: "include" });
-      if (res.ok) {
-        const blob = await res.blob();
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = `${newsletter?.title || "newsletter"}.png`;
-        a.click();
-        URL.revokeObjectURL(url);
-      }
-    } catch {}
   };
 
   if (loadingNewsletter) {
@@ -338,19 +311,19 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
       <div className="flex flex-1 overflow-hidden bg-background">
         <div className="flex-1 flex flex-col min-w-0">
           <header className="border-b border-border/70 bg-background/90 backdrop-blur px-5 py-3">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div className="flex min-w-0 flex-1 items-start gap-3">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex min-w-0 flex-1 items-center gap-3">
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="mt-0.5"
+                  className="mt-0"
                   onClick={() => setLocation("/newsletters")}
                   data-testid="button-back"
                 >
                   <ArrowLeft className="w-5 h-5" />
                 </Button>
 
-                <div className="min-w-0 space-y-1.5">
+                <div className="min-w-0">
                   <div className="flex min-w-0 flex-wrap items-center gap-2">
                     {isEditingTitle ? (
                       <div className="flex items-center gap-1">
@@ -401,9 +374,16 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
                       </button>
                     )}
 
-                    <span className="inline-flex items-center rounded-full border border-border px-2 py-0.5 text-[11px] font-medium text-foreground bg-muted/60">
-                      {newsletter.status.replace("_", " ")}
-                    </span>
+                    {client && (
+                      <Link
+                        href={`/clients/${client.id}`}
+                        className="text-xs text-muted-foreground hover:text-foreground transition-colors inline-flex items-center gap-1"
+                        data-testid="link-client-name"
+                      >
+                        <User className="w-3.5 h-3.5" />
+                        {client.name}
+                      </Link>
+                    )}
 
                     {saveStatus === "saving" && (
                       <span className="inline-flex items-center gap-1 text-xs text-amber-700 dark:text-amber-300" data-testid="save-indicator-saving">
@@ -418,41 +398,29 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
                       </span>
                     )}
                   </div>
-
-                  <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                    {client && (
-                      <Link
-                        href={`/clients/${client.id}`}
-                        className="hover:text-foreground transition-colors inline-flex items-center gap-1"
-                        data-testid="link-client-name"
-                      >
-                        <User className="w-3.5 h-3.5" />
-                        {client.name}
-                      </Link>
-                    )}
-                    <Popover open={showDatePicker} onOpenChange={setShowDatePicker}>
-                      <PopoverTrigger asChild>
-                        <Button variant="ghost" size="sm" className="h-7 px-2 text-muted-foreground" data-testid="button-edit-date">
-                          <CalendarIcon className="w-3.5 h-3.5 mr-1.5" />
-                          {newsletter.expectedSendDate
-                            ? format(new Date(newsletter.expectedSendDate), "MMM d, yyyy")
-                            : "Set date"}
-                        </Button>
-                      </PopoverTrigger>
-                      <PopoverContent className="w-auto p-0" align="start">
-                        <Calendar
-                          mode="single"
-                          selected={newsletter.expectedSendDate ? new Date(newsletter.expectedSendDate) : undefined}
-                          onSelect={(date) => date && updateDateMutation.mutate(format(date, "yyyy-MM-dd"))}
-                          data-testid="calendar-send-date"
-                        />
-                      </PopoverContent>
-                    </Popover>
-                  </div>
                 </div>
               </div>
 
               <div className="flex flex-wrap items-center justify-end gap-2 pl-1">
+                <Popover open={showDatePicker} onOpenChange={setShowDatePicker}>
+                  <PopoverTrigger asChild>
+                    <Button variant="outline" size="sm" className="h-9" data-testid="button-edit-date">
+                      <CalendarIcon className="w-3.5 h-3.5 mr-1.5" />
+                      {newsletter.expectedSendDate
+                        ? format(new Date(newsletter.expectedSendDate), "MMM d, yyyy")
+                        : "Set date"}
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-auto p-0" align="end">
+                    <Calendar
+                      mode="single"
+                      selected={newsletter.expectedSendDate ? new Date(newsletter.expectedSendDate) : undefined}
+                      onSelect={(date) => date && updateDateMutation.mutate(format(date, "yyyy-MM-dd"))}
+                      data-testid="calendar-send-date"
+                    />
+                  </PopoverContent>
+                </Popover>
+
                 <Button
                   variant={editingHtml ? "secondary" : "outline"}
                   size="sm"
@@ -511,14 +479,6 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
                     <DropdownMenuItem onClick={handleExportHtml} disabled={!hasContent} data-testid="button-export-html">
                       <FileText className="w-4 h-4 mr-2" />
                       Export HTML
-                    </DropdownMenuItem>
-                    <DropdownMenuItem onClick={handleExportPdf} disabled={!hasContent} data-testid="button-export-pdf">
-                      <FileText className="w-4 h-4 mr-2" />
-                      Export PDF
-                    </DropdownMenuItem>
-                    <DropdownMenuItem onClick={handleExportPng} disabled={!hasContent} data-testid="button-export-png">
-                      <FileImage className="w-4 h-4 mr-2" />
-                      Export PNG
                     </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
@@ -589,12 +549,31 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
                   <span>
                     Warnings: <span className={deliveryWarnings.length > 0 ? "text-amber-700 dark:text-amber-400 font-medium" : "font-medium"}>{deliveryWarnings.length}</span>
                   </span>
-                  {unresolvedChangesWarning && (
-                    <span className="text-amber-700 dark:text-amber-400">
-                      {unresolvedChangesWarning.message}
-                    </span>
-                  )}
                 </div>
+                {(deliveryBlockers.length > 0 || deliveryWarnings.length > 0) && (
+                  <div className="mt-2 space-y-1">
+                    {deliveryBlockers.slice(0, 2).map((blocker) => (
+                      <div key={blocker.code} className="text-xs text-destructive">
+                        Blocker: {blocker.message}
+                      </div>
+                    ))}
+                    {deliveryWarnings.slice(0, 2).map((warning) => (
+                      <div key={warning.code} className="text-xs text-amber-700 dark:text-amber-400">
+                        Warning: {warning.message}
+                      </div>
+                    ))}
+                    {deliveryWarnings.length > 2 && (
+                      <div className="text-xs text-muted-foreground">
+                        +{deliveryWarnings.length - 2} more warning(s) in delivery dialog.
+                      </div>
+                    )}
+                    {unresolvedChangesWarning && (
+                      <div className="text-xs text-amber-700 dark:text-amber-400">
+                        {unresolvedChangesWarning.message}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
               <div className="flex items-center gap-2 flex-shrink-0 text-xs text-amber-800/90 dark:text-amber-200/80">
                 Manual click required for every send.

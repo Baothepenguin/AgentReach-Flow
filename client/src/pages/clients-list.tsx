@@ -137,7 +137,7 @@ export default function ClientsListPage() {
     <div className="min-h-screen bg-background">
       <TopNav />
       
-      <div className="p-6">
+      <div className="px-8 py-6">
         <div className="flex items-center justify-between gap-4 mb-8 flex-wrap">
           <div className="flex items-center gap-4 flex-wrap">
             <h1 className="text-xl font-semibold">Clients</h1>

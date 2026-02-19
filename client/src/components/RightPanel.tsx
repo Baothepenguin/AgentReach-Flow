@@ -18,6 +18,9 @@ const NEWSLETTER_STATUSES = [
   { value: "scheduled", label: "Scheduled" },
   { value: "sent", label: "Sent" },
 ];
+const EDITABLE_NEWSLETTER_STATUSES = NEWSLETTER_STATUSES.filter(
+  (status) => status.value !== "scheduled" && status.value !== "sent"
+);
 
 interface RightPanelProps {
   newsletterId: string;
@@ -35,6 +38,7 @@ export function RightPanel({
   onAssignedToChange,
 }: RightPanelProps) {
   const [newNoteContent, setNewNoteContent] = useState("");
+  const canEditStatus = !!onStatusChange && status !== "scheduled" && status !== "sent";
   const currentStatus = NEWSLETTER_STATUSES.find(s => s.value === status) || NEWSLETTER_STATUSES[0];
 
   const { data: users = [] } = useQuery<any[]>({
@@ -109,6 +113,13 @@ export function RightPanel({
       default: return type;
     }
   };
+  const getCommentAuthor = (comment: ReviewComment) => {
+    if (comment.createdById) {
+      const user = users.find((u) => u.id === comment.createdById);
+      return user?.name || "Team";
+    }
+    return comment.isInternal ? "Team" : "Client";
+  };
 
   const getAttachmentUrl = (path: string) => {
     if (!path) return "#";
@@ -133,13 +144,13 @@ export function RightPanel({
         <label className="text-xs font-medium text-muted-foreground mb-2 block" data-testid="label-status">
           Status
         </label>
-        {onStatusChange ? (
+        {canEditStatus ? (
           <Select value={status} onValueChange={onStatusChange}>
             <SelectTrigger className="w-full" data-testid="select-status-trigger">
               <SelectValue placeholder="Select status" data-testid="select-status-value" />
             </SelectTrigger>
             <SelectContent align="start" data-testid="select-status-content">
-              {NEWSLETTER_STATUSES.map((s) => (
+              {EDITABLE_NEWSLETTER_STATUSES.map((s) => (
                 <SelectItem key={s.value} value={s.value} data-testid={`status-option-${s.value}`}>
                   {s.label}
                 </SelectItem>
@@ -257,7 +268,7 @@ export function RightPanel({
               <div className="flex-1 min-w-0">
                 <p className="text-xs">{note.content}</p>
                 <span className="text-xs text-muted-foreground">
-                  {format(new Date(note.createdAt), "MMM d")}
+                  {format(new Date(note.createdAt), "MMM d")} · {getCommentAuthor(note)}
                 </span>
               </div>
               <Button
@@ -289,7 +300,7 @@ export function RightPanel({
                   <div className="flex-1 min-w-0">
                     <p className="text-xs line-through text-muted-foreground">{note.content}</p>
                     <span className="text-xs text-muted-foreground">
-                      {format(new Date(note.createdAt), "MMM d")}
+                      {format(new Date(note.createdAt), "MMM d")} · {getCommentAuthor(note)}
                     </span>
                   </div>
                   <Button

@@ -3,7 +3,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation, useSearch } from "wouter";
 import { TopNav } from "@/components/TopNav";
 import { Button } from "@/components/ui/button";
-import { Receipt, X, Mail, Plus, ExternalLink, CreditCard } from "lucide-react";
+import { Receipt, X, Mail, Plus, ExternalLink, CreditCard, RefreshCw } from "lucide-react";
 import { format } from "date-fns";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -241,6 +241,22 @@ export default function OrdersPage() {
     queryKey: ["/api/invoices"],
   });
 
+  const pullStripeOrdersMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/stripe/pull-orders", {});
+      return res.json();
+    },
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/invoices"] });
+      const imported = data?.importedCount ?? 0;
+      const scanned = data?.scanned ?? 0;
+      toast({ title: "Stripe orders synced", description: `Imported ${imported} from ${scanned} checked sessions.` });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Stripe sync failed", description: error.message, variant: "destructive" });
+    },
+  });
+
   useEffect(() => {
     if (searchString && orders.length > 0) {
       const params = new URLSearchParams(searchString);
@@ -256,11 +272,7 @@ export default function OrdersPage() {
 
   const handleCreateNewsletter = async (order: OrderWithRelations) => {
     try {
-      const frequency = order.subscription?.frequency || "monthly";
-      const title = `${order.client.name} - ${frequency.charAt(0).toUpperCase() + frequency.slice(1)}`;
-      
       const res = await apiRequest("POST", `/api/clients/${order.clientId}/newsletters`, {
-        title,
         invoiceId: order.id,
         subscriptionId: order.subscriptionId,
         expectedSendDate: new Date().toISOString().split("T")[0],
@@ -284,9 +296,22 @@ export default function OrdersPage() {
       <TopNav />
       
       <div className="flex h-[calc(100vh-56px)]">
-        <div className="flex-1 p-6 overflow-auto">
+        <div className="flex-1 px-8 py-6 overflow-auto">
           <div className="flex items-center justify-between gap-2 mb-6">
             <h1 className="text-xl font-semibold">Orders</h1>
+            <Button
+              variant="outline"
+              onClick={() => pullStripeOrdersMutation.mutate()}
+              disabled={pullStripeOrdersMutation.isPending}
+              data-testid="button-pull-stripe-orders"
+            >
+              {pullStripeOrdersMutation.isPending ? (
+                <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+              ) : (
+                <RefreshCw className="w-4 h-4 mr-2" />
+              )}
+              Pull from Stripe
+            </Button>
           </div>
 
           {isLoading ? (
