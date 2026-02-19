@@ -471,10 +471,31 @@ function normalizeTags(raw: string | undefined): string[] {
   return tokens.length > 0 ? Array.from(new Set(tokens)) : ["all"];
 }
 
+function normalizeSegmentCandidates(input: unknown): string[] {
+  const values =
+    Array.isArray(input)
+      ? input
+      : typeof input === "string"
+        ? input.split(",")
+        : [];
+
+  return Array.from(
+    new Set(
+      values
+        .map((value) => String(value || "").trim().toLowerCase())
+        .filter((value) => value.length > 0 && value !== "all")
+    )
+  );
+}
+
 async function importContactsFromCsv(
   clientId: string,
   csvContent: string,
-  requestedMapping: Record<string, unknown>
+  requestedMapping: Record<string, unknown>,
+  options: {
+    createSegmentsFromTags?: boolean;
+    segmentTags?: unknown;
+  } = {}
 ) {
   const { headers, rows } = parseCsvContent(csvContent);
   if (headers.length === 0) {
@@ -508,9 +529,13 @@ async function importContactsFromCsv(
 
   const indexByHeader = new Map(headers.map((header, index) => [header, index]));
   const errors: string[] = [];
+  const discoveredTags = new Set<string>();
   let importedCount = 0;
   let updatedCount = 0;
   let skippedCount = 0;
+  const shouldCreateSegmentsFromTags = !!options.createSegmentsFromTags;
+  const selectedSegmentTags = normalizeSegmentCandidates(options.segmentTags);
+  const createdSegments: string[] = [];
   try {
     for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
       const row = rows[rowIndex];
@@ -531,6 +556,9 @@ async function importContactsFromCsv(
       const lastName = lastNameIndex !== undefined ? (row[lastNameIndex] || "").trim() : "";
       const rawTags = tagsIndex !== undefined ? (row[tagsIndex] || "").trim() : "";
       const tags = normalizeTags(rawTags);
+      for (const tag of tags) {
+        if (tag && tag !== "all") discoveredTags.add(tag);
+      }
 
       const upsert = await storage.upsertContactByEmail(clientId, email, {
         firstName: firstName || null,
@@ -547,13 +575,35 @@ async function importContactsFromCsv(
     }
 
     const existingSegments = await storage.getContactSegmentsByClient(clientId);
-    if (existingSegments.length === 0) {
+    const segmentNameSet = new Set(existingSegments.map((segment) => segment.name.trim().toLowerCase()));
+
+    if (!segmentNameSet.has("all")) {
       await storage.createContactSegment({
         clientId,
         name: "all",
         tags: ["all"],
         isDefault: true,
       });
+      segmentNameSet.add("all");
+    }
+
+    if (shouldCreateSegmentsFromTags) {
+      const tagsToCreate = selectedSegmentTags.length > 0 ? selectedSegmentTags : Array.from(discoveredTags);
+
+      for (const tag of tagsToCreate) {
+        const normalizedTag = tag.trim().toLowerCase();
+        if (!normalizedTag || normalizedTag === "all" || segmentNameSet.has(normalizedTag)) {
+          continue;
+        }
+        await storage.createContactSegment({
+          clientId,
+          name: normalizedTag,
+          tags: [normalizedTag],
+          isDefault: false,
+        });
+        segmentNameSet.add(normalizedTag);
+        createdSegments.push(normalizedTag);
+      }
     }
 
     const updatedJob = await storage.updateContactImportJob(importJob.id, {
@@ -572,6 +622,9 @@ async function importContactsFromCsv(
         updatedCount,
         skippedCount,
         errorCount: errors.length,
+        discoveredTags: Array.from(discoveredTags),
+        createdSegmentsCount: createdSegments.length,
+        createdSegments,
       },
       mapping,
       suggestedMapping,
@@ -975,7 +1028,10 @@ export async function registerRoutes(
       }
 
       const requestedMapping = req.body.mapping && typeof req.body.mapping === "object" ? req.body.mapping : {};
-      const result = await importContactsFromCsv(client.id, csvContent, requestedMapping);
+      const result = await importContactsFromCsv(client.id, csvContent, requestedMapping, {
+        createSegmentsFromTags: !!req.body?.createSegmentsFromTags,
+        segmentTags: req.body?.segmentTags,
+      });
       res.json(result);
     } catch (error) {
       console.error("Import CSV error:", error);
@@ -2894,7 +2950,10 @@ export async function registerRoutes(
       }
 
       const requestedMapping = req.body.mapping && typeof req.body.mapping === "object" ? req.body.mapping : {};
-      const result = await importContactsFromCsv(client.id, csvContent, requestedMapping);
+      const result = await importContactsFromCsv(client.id, csvContent, requestedMapping, {
+        createSegmentsFromTags: !!req.body?.createSegmentsFromTags,
+        segmentTags: req.body?.segmentTags,
+      });
       res.json(result);
     } catch (error) {
       console.error("Onboarding CSV import error:", error);
