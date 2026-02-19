@@ -503,6 +503,8 @@ async function importContactsFromCsv(
   options: {
     createSegmentsFromTags?: boolean;
     segmentTags?: unknown;
+    importedByUserId?: string;
+    importedBySource?: string;
   } = {}
 ) {
   const { headers, rows } = parseCsvContent(csvContent);
@@ -524,6 +526,18 @@ async function importContactsFromCsv(
     throw error;
   }
 
+  const mappingWithMeta: Record<string, string> = {
+    ...Object.fromEntries(
+      Object.entries(mapping).filter((entry): entry is [string, string] => typeof entry[1] === "string")
+    ),
+  };
+  if (options.importedByUserId) {
+    mappingWithMeta.importedByUserId = options.importedByUserId;
+  }
+  if (options.importedBySource) {
+    mappingWithMeta.importedBySource = options.importedBySource;
+  }
+
   const importJob = await storage.createContactImportJob({
     clientId,
     status: "running",
@@ -532,7 +546,7 @@ async function importContactsFromCsv(
     updatedCount: 0,
     skippedCount: 0,
     errors: [],
-    mapping: mapping as Record<string, string>,
+    mapping: mappingWithMeta,
   });
 
   const indexByHeader = new Map(headers.map((header, index) => [header, index]));
@@ -885,6 +899,57 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/clients/:id/contact-import-jobs", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const client = await storage.getClient(req.params.id);
+      if (!client) {
+        return res.status(404).json({ error: "Client not found" });
+      }
+
+      const jobs = await storage.getContactImportJobsByClient(client.id);
+      const limitedJobs = jobs.slice(0, 20);
+
+      const userIds = Array.from(
+        new Set(
+          limitedJobs
+            .map((job) => (job.mapping && typeof job.mapping === "object" ? (job.mapping as Record<string, unknown>).importedByUserId : null))
+            .filter((value): value is string => typeof value === "string" && value.length > 0)
+        )
+      );
+
+      const usersById = new Map<string, { id: string; name: string; email: string }>();
+      await Promise.all(
+        userIds.map(async (userId) => {
+          const user = await storage.getUser(userId);
+          if (user) {
+            usersById.set(user.id, { id: user.id, name: user.name, email: user.email });
+          }
+        })
+      );
+
+      const enriched = limitedJobs.map((job) => {
+        const mapping = (job.mapping || {}) as Record<string, unknown>;
+        const importedByUserId =
+          typeof mapping.importedByUserId === "string" ? mapping.importedByUserId : null;
+        const importedBySource =
+          typeof mapping.importedBySource === "string" ? mapping.importedBySource : "internal_app";
+        const importedByUser = importedByUserId ? usersById.get(importedByUserId) : null;
+
+        return {
+          ...job,
+          importedByUserId,
+          importedBySource,
+          importedByLabel: importedByUser?.name || (importedBySource === "onboarding_portal" ? "Client Onboarding" : "Team"),
+        };
+      });
+
+      res.json(enriched);
+    } catch (error) {
+      console.error("Get contact import jobs error:", error);
+      res.status(500).json({ error: "Failed to fetch contact import history" });
+    }
+  });
+
   app.post("/api/clients/:id/contacts", requireAuth, async (req: Request, res: Response) => {
     try {
       const client = await storage.getClient(req.params.id);
@@ -1205,10 +1270,13 @@ export async function registerRoutes(
         return res.status(400).json({ error: "csvContent is required" });
       }
 
+      const userId = (req as Request & { userId: string }).userId;
       const requestedMapping = req.body.mapping && typeof req.body.mapping === "object" ? req.body.mapping : {};
       const result = await importContactsFromCsv(client.id, csvContent, requestedMapping, {
         createSegmentsFromTags: !!req.body?.createSegmentsFromTags,
         segmentTags: req.body?.segmentTags,
+        importedByUserId: userId,
+        importedBySource: "internal_app",
       });
       res.json(result);
     } catch (error) {
@@ -3131,6 +3199,7 @@ export async function registerRoutes(
       const result = await importContactsFromCsv(client.id, csvContent, requestedMapping, {
         createSegmentsFromTags: !!req.body?.createSegmentsFromTags,
         segmentTags: req.body?.segmentTags,
+        importedBySource: "onboarding_portal",
       });
       res.json(result);
     } catch (error) {

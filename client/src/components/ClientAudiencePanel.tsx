@@ -1,5 +1,6 @@
 import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
+import { format, formatDistanceToNow } from "date-fns";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
@@ -19,6 +20,31 @@ import type { Contact, ContactSegment } from "@shared/schema";
 
 interface ClientAudiencePanelProps {
   clientId: string;
+}
+
+interface ContactImportJobItem {
+  id: string;
+  status: "running" | "completed" | "failed";
+  totalRows: number;
+  importedCount: number;
+  updatedCount: number;
+  skippedCount: number;
+  errors: string[];
+  createdAt: string;
+  importedByLabel?: string | null;
+  importedBySource?: string | null;
+}
+
+function normalizeLower(value: string | null | undefined): string {
+  return String(value || "").trim().toLowerCase();
+}
+
+function buildSegmentTagSet(segment: ContactSegment): Set<string> {
+  return new Set(
+    [segment.name, ...(segment.tags || [])]
+      .map((tag) => normalizeLower(tag))
+      .filter(Boolean)
+  );
 }
 
 function toTitleCase(value: string): string {
@@ -44,6 +70,17 @@ export function ClientAudiencePanel({ clientId }: ClientAudiencePanelProps) {
   const [selectedSegmentTags, setSelectedSegmentTags] = useState<string[]>([]);
   const [mergeSourceSegmentId, setMergeSourceSegmentId] = useState("");
   const [mergeTargetSegmentId, setMergeTargetSegmentId] = useState("");
+  const [undoTick, setUndoTick] = useState(() => Date.now());
+  const [deleteUndoSnapshot, setDeleteUndoSnapshot] = useState<{
+    expiresAt: number;
+    contacts: Contact[];
+  } | null>(null);
+  const [mergeUndoSnapshot, setMergeUndoSnapshot] = useState<{
+    expiresAt: number;
+    sourceSegment: ContactSegment;
+    targetSegment: ContactSegment;
+    affectedContacts: Array<{ id: string; tags: string[] }>;
+  } | null>(null);
 
   const [newContact, setNewContact] = useState({
     email: "",
@@ -63,6 +100,10 @@ export function ClientAudiencePanel({ clientId }: ClientAudiencePanelProps) {
 
   const { data: segments = [] } = useQuery<ContactSegment[]>({
     queryKey: ["/api/clients", clientId, "segments"],
+  });
+
+  const { data: importJobs = [] } = useQuery<ContactImportJobItem[]>({
+    queryKey: ["/api/clients", clientId, "contact-import-jobs"],
   });
 
   const existingEmailSet = useMemo(
@@ -96,6 +137,7 @@ export function ClientAudiencePanel({ clientId }: ClientAudiencePanelProps) {
     onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/clients", clientId, "contacts"] });
       queryClient.invalidateQueries({ queryKey: ["/api/clients", clientId, "segments"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/clients", clientId, "contact-import-jobs"] });
       setCsvContent("");
       setCsvFileName("");
       setSelectedContactIds([]);
@@ -167,9 +209,9 @@ export function ClientAudiencePanel({ clientId }: ClientAudiencePanelProps) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/clients", clientId, "contacts"] });
       queryClient.invalidateQueries({ queryKey: ["/api/clients", clientId, "segments"] });
-      toast({ title: "Contact removed" });
     },
     onError: (error: Error) => {
+      setDeleteUndoSnapshot(null);
       toast({ title: "Failed to remove contact", description: error.message, variant: "destructive" });
     },
   });
@@ -184,18 +226,24 @@ export function ClientAudiencePanel({ clientId }: ClientAudiencePanelProps) {
       queryClient.invalidateQueries({ queryKey: ["/api/clients", clientId, "segments"] });
       setSelectedContactIds([]);
       const count = data?.contactCount || variables.contactIds.length;
+      const skippedCount = data?.skippedCount || 0;
       const actionLabel =
         variables.action === "activate"
           ? "activated"
           : variables.action === "deactivate"
             ? "deactivated"
             : "removed";
+      const skippedSuffix = skippedCount > 0 ? ` (${skippedCount} skipped)` : "";
+      const undoSuffix = variables.action === "delete" ? ". Undo is available for 30 seconds." : "";
       toast({
         title: "Bulk action complete",
-        description: `${count} contacts ${actionLabel}`,
+        description: `${count} contacts ${actionLabel}${skippedSuffix}${undoSuffix}`,
       });
     },
-    onError: (error: Error) => {
+    onError: (error: Error, variables) => {
+      if (variables?.action === "delete") {
+        setDeleteUndoSnapshot(null);
+      }
       toast({ title: "Bulk action failed", description: error.message, variant: "destructive" });
     },
   });
@@ -264,11 +312,105 @@ export function ClientAudiencePanel({ clientId }: ClientAudiencePanelProps) {
       const updatedContacts = data?.updatedContacts || 0;
       toast({
         title: "Segments merged",
-        description: `${updatedContacts} contacts updated`,
+        description: `${updatedContacts} contacts updated. Undo is available for 30 seconds.`,
       });
     },
     onError: (error: Error) => {
+      setMergeUndoSnapshot(null);
       toast({ title: "Merge failed", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const undoDeleteMutation = useMutation({
+    mutationFn: async (snapshot: { contacts: Contact[] }) => {
+      const results = await Promise.allSettled(
+        snapshot.contacts.map(async (contact) => {
+          await apiRequest("POST", `/api/clients/${clientId}/contacts`, {
+            email: contact.email,
+            firstName: contact.firstName || null,
+            lastName: contact.lastName || null,
+            tags: contact.tags || ["all"],
+            isActive: !!contact.isActive,
+          });
+        })
+      );
+      const restoredCount = results.filter((result) => result.status === "fulfilled").length;
+      return {
+        restoredCount,
+        failedCount: results.length - restoredCount,
+      };
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/clients", clientId, "contacts"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/clients", clientId, "segments"] });
+      setDeleteUndoSnapshot(null);
+      const failedCount = data?.failedCount || 0;
+      const failedSuffix = failedCount > 0 ? ` (${failedCount} could not be restored)` : "";
+      toast({
+        title: "Delete undone",
+        description: `${data?.restoredCount || 0} contacts restored${failedSuffix}`,
+      });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Undo failed", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const undoMergeMutation = useMutation({
+    mutationFn: async (snapshot: {
+      sourceSegment: ContactSegment;
+      targetSegment: ContactSegment;
+      affectedContacts: Array<{ id: string; tags: string[] }>;
+    }) => {
+      const existingSegmentRes = await apiRequest("GET", `/api/clients/${clientId}/segments`);
+      const existingSegments = (await existingSegmentRes.json()) as ContactSegment[];
+      const sourceNameKey = normalizeLower(snapshot.sourceSegment.name);
+      const existingSource = existingSegments.find(
+        (segment) =>
+          !segment.id.startsWith("derived-") &&
+          normalizeLower(segment.name) === sourceNameKey
+      );
+
+      if (existingSource) {
+        await apiRequest("PATCH", `/api/segments/${existingSource.id}`, {
+          name: snapshot.sourceSegment.name,
+          tags: snapshot.sourceSegment.tags || [sourceNameKey || "all"],
+          isDefault: !!snapshot.sourceSegment.isDefault,
+        });
+      } else {
+        await apiRequest("POST", `/api/clients/${clientId}/segments`, {
+          name: snapshot.sourceSegment.name,
+          tags: snapshot.sourceSegment.tags || [sourceNameKey || "all"],
+          isDefault: !!snapshot.sourceSegment.isDefault,
+        });
+      }
+
+      await apiRequest("PATCH", `/api/segments/${snapshot.targetSegment.id}`, {
+        name: snapshot.targetSegment.name,
+        tags: snapshot.targetSegment.tags || [snapshot.targetSegment.name.toLowerCase()],
+        isDefault: snapshot.targetSegment.isDefault,
+      });
+      for (const contact of snapshot.affectedContacts) {
+        await apiRequest("PATCH", `/api/contacts/${contact.id}`, {
+          tags: contact.tags,
+        });
+      }
+
+      return {
+        restoredContactCount: snapshot.affectedContacts.length,
+      };
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/clients", clientId, "contacts"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/clients", clientId, "segments"] });
+      setMergeUndoSnapshot(null);
+      toast({
+        title: "Merge undone",
+        description: `${data?.restoredContactCount || 0} contacts restored`,
+      });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Undo failed", description: error.message, variant: "destructive" });
     },
   });
 
@@ -305,6 +447,31 @@ export function ClientAudiencePanel({ clientId }: ClientAudiencePanelProps) {
     () => savedSegments.filter((segment) => segment.name.toLowerCase() !== "all"),
     [savedSegments]
   );
+  const segmentCoverageById = useMemo(() => {
+    const result = new Map<string, { total: number; active: number; inactive: number }>();
+    for (const segment of savedSegments) {
+      const tagSet = new Set(
+        [segment.name, ...(segment.tags || [])]
+          .map((tag) => String(tag || "").trim().toLowerCase())
+          .filter(Boolean)
+      );
+      let total = 0;
+      let active = 0;
+      let inactive = 0;
+      for (const contact of contacts) {
+        const contactTags = (contact.tags || ["all"])
+          .map((tag) => String(tag || "").trim().toLowerCase())
+          .filter(Boolean);
+        const matches = contactTags.some((tag) => tagSet.has(tag));
+        if (!matches) continue;
+        total += 1;
+        if (contact.isActive) active += 1;
+        else inactive += 1;
+      }
+      result.set(segment.id, { total, active, inactive });
+    }
+    return result;
+  }, [savedSegments, contacts]);
 
   useEffect(() => {
     setContactsPage(1);
@@ -319,6 +486,26 @@ export function ClientAudiencePanel({ clientId }: ClientAudiencePanelProps) {
     const filteredIdSet = new Set(filteredContacts.map((contact) => contact.id));
     setSelectedContactIds((current) => current.filter((id) => filteredIdSet.has(id)));
   }, [filteredContacts]);
+
+  useEffect(() => {
+    if (!deleteUndoSnapshot) return;
+    const delay = Math.max(0, deleteUndoSnapshot.expiresAt - Date.now());
+    const timer = window.setTimeout(() => setDeleteUndoSnapshot(null), delay);
+    return () => window.clearTimeout(timer);
+  }, [deleteUndoSnapshot]);
+
+  useEffect(() => {
+    if (!mergeUndoSnapshot) return;
+    const delay = Math.max(0, mergeUndoSnapshot.expiresAt - Date.now());
+    const timer = window.setTimeout(() => setMergeUndoSnapshot(null), delay);
+    return () => window.clearTimeout(timer);
+  }, [mergeUndoSnapshot]);
+
+  useEffect(() => {
+    if (!deleteUndoSnapshot && !mergeUndoSnapshot) return;
+    const timer = window.setInterval(() => setUndoTick(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [deleteUndoSnapshot, mergeUndoSnapshot]);
 
   const handleCsvFileSelected = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -403,14 +590,94 @@ export function ClientAudiencePanel({ clientId }: ClientAudiencePanelProps) {
     if (selectedContactIds.length === 0) return;
     const confirmRequired = action === "delete";
     if (confirmRequired) {
-      const ok = window.confirm(`Remove ${selectedContactIds.length} selected contacts? This cannot be undone.`);
+      const ok = window.confirm(`Remove ${selectedContactIds.length} selected contacts? Undo is available for 30 seconds.`);
       if (!ok) return;
+      const snapshotContacts = contacts.filter((contact) => selectedContactIds.includes(contact.id));
+      if (snapshotContacts.length > 0) {
+        setDeleteUndoSnapshot({
+          expiresAt: Date.now() + 30_000,
+          contacts: snapshotContacts,
+        });
+      }
     }
     bulkContactActionMutation.mutate({
       action,
       contactIds: selectedContactIds,
     });
   };
+
+  const runDeleteContact = (contact: Contact) => {
+    const ok = window.confirm(`Remove ${contact.email}? Undo is available for 30 seconds.`);
+    if (!ok) return;
+
+    setDeleteUndoSnapshot({
+      expiresAt: Date.now() + 30_000,
+      contacts: [contact],
+    });
+
+    deleteContactMutation.mutate(contact.id, {
+      onSuccess: () => {
+        toast({
+          title: "Contact removed",
+          description: "Undo is available for 30 seconds.",
+        });
+      },
+      onError: () => {
+        setDeleteUndoSnapshot(null);
+      },
+    });
+  };
+
+  const runMergeSegments = () => {
+    if (!mergeSourceSegmentId || !mergeTargetSegmentId || mergeSourceSegmentId === mergeTargetSegmentId) {
+      return;
+    }
+
+    const sourceSegment = savedSegments.find((segment) => segment.id === mergeSourceSegmentId);
+    const targetSegment = savedSegments.find((segment) => segment.id === mergeTargetSegmentId);
+    if (!sourceSegment || !targetSegment) {
+      toast({
+        title: "Merge unavailable",
+        description: "Selected segments could not be found. Refresh and try again.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const ok = window.confirm(`Merge "${sourceSegment.name}" into "${targetSegment.name}"?`);
+    if (!ok) return;
+
+    const sourceTagSet = buildSegmentTagSet(sourceSegment);
+    const affectedContacts = contacts
+      .filter((contact) =>
+        (contact.tags || ["all"])
+          .map((tag) => normalizeLower(tag))
+          .some((tag) => sourceTagSet.has(tag))
+      )
+      .map((contact) => ({
+        id: contact.id,
+        tags: contact.tags || ["all"],
+      }));
+
+    setMergeUndoSnapshot({
+      expiresAt: Date.now() + 30_000,
+      sourceSegment,
+      targetSegment,
+      affectedContacts,
+    });
+
+    mergeSegmentsMutation.mutate({
+      sourceSegmentId: mergeSourceSegmentId,
+      targetSegmentId: mergeTargetSegmentId,
+    });
+  };
+
+  const deleteUndoSecondsRemaining = deleteUndoSnapshot
+    ? Math.max(0, Math.ceil((deleteUndoSnapshot.expiresAt - undoTick) / 1000))
+    : 0;
+  const mergeUndoSecondsRemaining = mergeUndoSnapshot
+    ? Math.max(0, Math.ceil((mergeUndoSnapshot.expiresAt - undoTick) / 1000))
+    : 0;
 
   const quickRenameSegment = (segment: ContactSegment) => {
     const proposed = window.prompt("Rename segment", segment.name);
@@ -440,6 +707,47 @@ export function ClientAudiencePanel({ clientId }: ClientAudiencePanelProps) {
       </div>
 
       <Tabs defaultValue="bulk" className="w-full">
+        {deleteUndoSnapshot && (
+          <div className="mb-3 rounded-md border border-amber-400/50 bg-amber-500/10 p-2 flex items-center justify-between gap-2">
+            <div className="text-[11px] text-amber-900 dark:text-amber-200">
+              {deleteUndoSnapshot.contacts.length} contacts removed. Undo available for {deleteUndoSecondsRemaining}s.
+            </div>
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 px-2 text-xs border-amber-500/50"
+              onClick={() => undoDeleteMutation.mutate({ contacts: deleteUndoSnapshot.contacts })}
+              disabled={undoDeleteMutation.isPending || deleteUndoSecondsRemaining <= 0}
+              data-testid="button-undo-contact-delete"
+            >
+              Undo
+            </Button>
+          </div>
+        )}
+        {mergeUndoSnapshot && (
+          <div className="mb-3 rounded-md border border-amber-400/50 bg-amber-500/10 p-2 flex items-center justify-between gap-2">
+            <div className="text-[11px] text-amber-900 dark:text-amber-200">
+              Merged {mergeUndoSnapshot.sourceSegment.name} into {mergeUndoSnapshot.targetSegment.name}. Undo available for {mergeUndoSecondsRemaining}s.
+            </div>
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 px-2 text-xs border-amber-500/50"
+              onClick={() =>
+                undoMergeMutation.mutate({
+                  sourceSegment: mergeUndoSnapshot.sourceSegment,
+                  targetSegment: mergeUndoSnapshot.targetSegment,
+                  affectedContacts: mergeUndoSnapshot.affectedContacts,
+                })
+              }
+              disabled={undoMergeMutation.isPending || mergeUndoSecondsRemaining <= 0}
+              data-testid="button-undo-segment-merge"
+            >
+              Undo
+            </Button>
+          </div>
+        )}
+
         <TabsList className="grid h-8 w-full grid-cols-3">
           <TabsTrigger value="bulk" className="text-xs">Bulk Upload</TabsTrigger>
           <TabsTrigger value="contacts" className="text-xs">Contacts</TabsTrigger>
@@ -719,6 +1027,49 @@ export function ClientAudiencePanel({ clientId }: ClientAudiencePanelProps) {
               Download Invalid Rows From Last Import
             </Button>
           )}
+
+          <div className="rounded-md border p-3 space-y-2">
+            <div className="flex items-center justify-between">
+              <div className="text-xs font-medium text-muted-foreground">Recent Imports</div>
+              <span className="text-[11px] text-muted-foreground">{importJobs.length} jobs</span>
+            </div>
+            {importJobs.length === 0 && (
+              <div className="text-xs text-muted-foreground">No import history yet</div>
+            )}
+            <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
+              {importJobs.map((job) => {
+                const createdAt = new Date(job.createdAt);
+                const hasValidDate = !Number.isNaN(createdAt.getTime());
+                const statusTone =
+                  job.status === "completed"
+                    ? "text-emerald-700 dark:text-emerald-300"
+                    : job.status === "failed"
+                      ? "text-red-700 dark:text-red-300"
+                      : "text-blue-700 dark:text-blue-300";
+                return (
+                  <div key={job.id} className="rounded border p-2 space-y-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className={`text-[11px] font-medium ${statusTone}`}>{toTitleCase(job.status)}</div>
+                      <span className="text-[11px] text-muted-foreground">
+                        {hasValidDate ? formatDistanceToNow(createdAt, { addSuffix: true }) : "Unknown time"}
+                      </span>
+                    </div>
+                    <div className="text-[11px] text-muted-foreground">
+                      {hasValidDate ? format(createdAt, "MMM d, yyyy h:mm a") : "Unknown time"} · {job.importedByLabel || "Team"}
+                    </div>
+                    <div className="text-[11px] text-muted-foreground">
+                      {job.importedCount} new · {job.updatedCount} updated · {job.skippedCount} skipped
+                    </div>
+                    {job.errors?.length > 0 && (
+                      <div className="text-[11px] text-amber-700 dark:text-amber-300 truncate">
+                        {job.errors[0]}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
         </TabsContent>
 
         <TabsContent value="contacts" className="mt-3 space-y-3">
@@ -983,7 +1334,7 @@ export function ClientAudiencePanel({ clientId }: ClientAudiencePanelProps) {
                           size="sm"
                           variant="ghost"
                           className="h-7 px-2 text-xs text-red-600 hover:text-red-600 dark:text-red-300"
-                          onClick={() => deleteContactMutation.mutate(contact.id)}
+                          onClick={() => runDeleteContact(contact)}
                           data-testid={`button-delete-contact-${contact.id}`}
                         >
                           Remove
@@ -1086,12 +1437,7 @@ export function ClientAudiencePanel({ clientId }: ClientAudiencePanelProps) {
               size="sm"
               variant="outline"
               className="h-8 w-full text-xs"
-              onClick={() =>
-                mergeSegmentsMutation.mutate({
-                  sourceSegmentId: mergeSourceSegmentId,
-                  targetSegmentId: mergeTargetSegmentId,
-                })
-              }
+              onClick={runMergeSegments}
               disabled={
                 mergeSegmentsMutation.isPending ||
                 !mergeSourceSegmentId ||
@@ -1112,6 +1458,7 @@ export function ClientAudiencePanel({ clientId }: ClientAudiencePanelProps) {
               )}
               {savedSegments.map((segment) => {
                 const segmentDraft = editingSegments[segment.id];
+                const coverage = segmentCoverageById.get(segment.id) || { total: 0, active: 0, inactive: 0 };
                 return (
                   <div key={segment.id} className="rounded border p-2 space-y-1.5">
                     {segmentDraft ? (
@@ -1170,6 +1517,9 @@ export function ClientAudiencePanel({ clientId }: ClientAudiencePanelProps) {
                           <div className="text-xs font-medium">{segment.name}</div>
                           <div className="text-[11px] text-muted-foreground">
                             {(segment.tags || []).join(", ") || "all"}
+                          </div>
+                          <div className="text-[10px] text-muted-foreground">
+                            {coverage.total} total · {coverage.active} active · {coverage.inactive} inactive
                           </div>
                         </div>
                         <div className="flex items-center gap-1">
