@@ -38,6 +38,7 @@ export default function OnboardingPage() {
   const csvFileInputRef = useRef<HTMLInputElement | null>(null);
   const [csvContent, setCsvContent] = useState("");
   const [csvFileName, setCsvFileName] = useState("");
+  const [lastImportInvalidRowsCsv, setLastImportInvalidRowsCsv] = useState("");
   const [createSegmentsFromTags, setCreateSegmentsFromTags] = useState(true);
   const [selectedSegmentTags, setSelectedSegmentTags] = useState<string[]>([]);
 
@@ -104,11 +105,14 @@ export default function OnboardingPage() {
       setCsvContent("");
       setCsvFileName("");
       setSelectedSegmentTags([]);
+      setLastImportInvalidRowsCsv(result?.invalidRowsCsv || "");
       const createdSegmentsCount = result?.summary?.createdSegmentsCount || 0;
+      const invalidRowsCount = result?.summary?.invalidRowsCount || 0;
       const segmentSuffix = createdSegmentsCount > 0 ? `, ${createdSegmentsCount} segments created` : "";
+      const invalidSuffix = invalidRowsCount > 0 ? `, ${invalidRowsCount} invalid rows available to download` : "";
       toast({
         title: "Contacts imported",
-        description: `${result?.summary?.importedCount || 0} new, ${result?.summary?.updatedCount || 0} updated${segmentSuffix}`,
+        description: `${result?.summary?.importedCount || 0} new, ${result?.summary?.updatedCount || 0} updated${segmentSuffix}${invalidSuffix}`,
       });
       refetch();
     },
@@ -401,6 +405,17 @@ export default function OnboardingPage() {
             )}
             Import CSV
           </Button>
+
+          {lastImportInvalidRowsCsv && (
+            <Button
+              variant="outline"
+              onClick={() => triggerCsvDownload("flow-invalid-rows.csv", lastImportInvalidRowsCsv)}
+              data-testid="button-onboarding-download-last-invalid-rows"
+            >
+              <Download className="w-4 h-4 mr-2" />
+              Download Invalid Rows From Last Import
+            </Button>
+          )}
         </Card>
       </div>
     </div>

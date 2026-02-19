@@ -442,6 +442,14 @@ function parseCsvContent(csvContent: string): { headers: string[]; rows: string[
   return { headers, rows };
 }
 
+function escapeCsvCell(value: unknown): string {
+  const raw = String(value ?? "");
+  if (raw.includes('"') || raw.includes(",") || raw.includes("\n")) {
+    return `"${raw.replace(/"/g, '""')}"`;
+  }
+  return raw;
+}
+
 function suggestCsvMapping(headers: string[]): {
   email?: string;
   firstName?: string;
@@ -530,32 +538,50 @@ async function importContactsFromCsv(
   const indexByHeader = new Map(headers.map((header, index) => [header, index]));
   const errors: string[] = [];
   const discoveredTags = new Set<string>();
+  const invalidRows: Array<{
+    lineNumber: number;
+    email: string;
+    firstName: string;
+    lastName: string;
+    tags: string[];
+    reason: string;
+  }> = [];
   let importedCount = 0;
   let updatedCount = 0;
   let skippedCount = 0;
   const shouldCreateSegmentsFromTags = !!options.createSegmentsFromTags;
   const selectedSegmentTags = normalizeSegmentCandidates(options.segmentTags);
   const createdSegments: string[] = [];
+
+  const emailIndex = indexByHeader.get(mapping.email);
+  const firstNameIndex = mapping.firstName ? indexByHeader.get(mapping.firstName) : undefined;
+  const lastNameIndex = mapping.lastName ? indexByHeader.get(mapping.lastName) : undefined;
+  const tagsIndex = mapping.tags ? indexByHeader.get(mapping.tags) : undefined;
+
   try {
     for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
       const row = rows[rowIndex];
-      const emailIndex = indexByHeader.get(mapping.email);
-      const firstNameIndex = mapping.firstName ? indexByHeader.get(mapping.firstName) : undefined;
-      const lastNameIndex = mapping.lastName ? indexByHeader.get(mapping.lastName) : undefined;
-      const tagsIndex = mapping.tags ? indexByHeader.get(mapping.tags) : undefined;
-
       const rawEmail = emailIndex !== undefined ? (row[emailIndex] || "") : "";
       const email = rawEmail.trim().toLowerCase();
-      if (!email || !email.includes("@")) {
-        skippedCount += 1;
-        errors.push(`Row ${rowIndex + 2}: invalid email`);
-        continue;
-      }
-
       const firstName = firstNameIndex !== undefined ? (row[firstNameIndex] || "").trim() : "";
       const lastName = lastNameIndex !== undefined ? (row[lastNameIndex] || "").trim() : "";
       const rawTags = tagsIndex !== undefined ? (row[tagsIndex] || "").trim() : "";
       const tags = normalizeTags(rawTags);
+
+      if (!email || !email.includes("@")) {
+        skippedCount += 1;
+        const reason = "invalid email";
+        errors.push(`Row ${rowIndex + 2}: ${reason}`);
+        invalidRows.push({
+          lineNumber: rowIndex + 2,
+          email,
+          firstName,
+          lastName,
+          tags,
+          reason,
+        });
+        continue;
+      }
       for (const tag of tags) {
         if (tag && tag !== "all") discoveredTags.add(tag);
       }
@@ -614,6 +640,24 @@ async function importContactsFromCsv(
       errors,
     });
 
+    const invalidRowsCsv = invalidRows.length
+      ? [
+          "line_number,email,first_name,last_name,tags,reason",
+          ...invalidRows.map((row) =>
+            [
+              row.lineNumber,
+              row.email,
+              row.firstName,
+              row.lastName,
+              row.tags.join(";"),
+              row.reason,
+            ]
+              .map((cell) => escapeCsvCell(cell))
+              .join(",")
+          ),
+        ].join("\n")
+      : "";
+
     return {
       job: updatedJob,
       summary: {
@@ -622,10 +666,13 @@ async function importContactsFromCsv(
         updatedCount,
         skippedCount,
         errorCount: errors.length,
+        invalidRowsCount: invalidRows.length,
         discoveredTags: Array.from(discoveredTags),
         createdSegmentsCount: createdSegments.length,
         createdSegments,
       },
+      invalidRows,
+      invalidRowsCsv,
       mapping,
       suggestedMapping,
       headers,
@@ -909,6 +956,62 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/clients/:id/contacts/bulk-action", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const client = await storage.getClient(req.params.id);
+      if (!client) {
+        return res.status(404).json({ error: "Client not found" });
+      }
+
+      const action = String(req.body?.action || "").trim().toLowerCase();
+      const contactIds: string[] = Array.isArray(req.body?.contactIds)
+        ? Array.from(
+            new Set(
+              (req.body.contactIds as unknown[])
+                .map((value: unknown) => String(value || "").trim())
+                .filter((value): value is string => value.length > 0)
+            )
+          )
+        : [];
+
+      if (contactIds.length === 0) {
+        return res.status(400).json({ error: "contactIds are required" });
+      }
+
+      const clientContacts = await storage.getContactsByClient(client.id);
+      const validContactSet = new Set(clientContacts.map((contact) => contact.id));
+      const scopedIds = contactIds.filter((id) => validContactSet.has(id));
+
+      if (scopedIds.length === 0) {
+        return res.status(400).json({ error: "No contacts match this client" });
+      }
+
+      if (action === "activate" || action === "deactivate") {
+        const isActive = action === "activate";
+        await Promise.all(scopedIds.map((id) => storage.updateContact(id, { isActive })));
+        return res.json({
+          action,
+          contactCount: scopedIds.length,
+          skippedCount: contactIds.length - scopedIds.length,
+        });
+      }
+
+      if (action === "delete") {
+        await Promise.all(scopedIds.map((id) => storage.deleteContact(id)));
+        return res.json({
+          action,
+          contactCount: scopedIds.length,
+          skippedCount: contactIds.length - scopedIds.length,
+        });
+      }
+
+      return res.status(400).json({ error: "Unsupported bulk action" });
+    } catch (error) {
+      console.error("Bulk contact action error:", error);
+      res.status(500).json({ error: "Failed to process bulk contact action" });
+    }
+  });
+
   app.get("/api/clients/:id/segments", requireAuth, async (req: Request, res: Response) => {
     try {
       const client = await storage.getClient(req.params.id);
@@ -1012,6 +1115,81 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Delete segment error:", error);
       res.status(500).json({ error: "Failed to delete segment" });
+    }
+  });
+
+  app.post("/api/clients/:id/segments/merge", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const client = await storage.getClient(req.params.id);
+      if (!client) {
+        return res.status(404).json({ error: "Client not found" });
+      }
+
+      const sourceSegmentId = String(req.body?.sourceSegmentId || "").trim();
+      const targetSegmentId = String(req.body?.targetSegmentId || "").trim();
+      if (!sourceSegmentId || !targetSegmentId) {
+        return res.status(400).json({ error: "sourceSegmentId and targetSegmentId are required" });
+      }
+      if (sourceSegmentId === targetSegmentId) {
+        return res.status(400).json({ error: "Source and target segments must be different" });
+      }
+
+      const segments = await storage.getContactSegmentsByClient(client.id);
+      const segmentById = new Map(segments.map((segment) => [segment.id, segment]));
+      const source = segmentById.get(sourceSegmentId);
+      const target = segmentById.get(targetSegmentId);
+
+      if (!source || !target) {
+        return res.status(404).json({ error: "Segment not found for this client" });
+      }
+
+      const sourceName = source.name.trim().toLowerCase();
+      const targetName = target.name.trim().toLowerCase();
+      if (sourceName === "all" || targetName === "all") {
+        return res.status(400).json({ error: "Segment 'all' cannot be merged" });
+      }
+
+      const sourceTagSet = new Set<string>([
+        sourceName,
+        ...(source.tags || []).map((tag) => String(tag || "").trim().toLowerCase()),
+      ]);
+
+      const contacts = await storage.getContactsByClient(client.id);
+      let updatedContacts = 0;
+      for (const contact of contacts) {
+        const existingTags = (contact.tags || []).map((tag) => String(tag || "").trim().toLowerCase()).filter(Boolean);
+        if (!existingTags.some((tag) => sourceTagSet.has(tag))) {
+          continue;
+        }
+
+        const nextTags = Array.from(
+          new Set(existingTags.map((tag) => (sourceTagSet.has(tag) ? targetName : tag)).filter(Boolean))
+        );
+        await storage.updateContact(contact.id, {
+          tags: nextTags.length ? nextTags : ["all"],
+        });
+        updatedContacts += 1;
+      }
+
+      const targetTags = Array.from(
+        new Set(
+          [targetName, ...(target.tags || []).map((tag) => String(tag || "").trim().toLowerCase())].filter(Boolean)
+        )
+      );
+      const mergedSegment = await storage.updateContactSegment(target.id, {
+        tags: targetTags.length ? targetTags : [targetName],
+      });
+
+      await storage.deleteContactSegment(source.id);
+
+      res.json({
+        mergedInto: mergedSegment || target,
+        removedSegmentId: source.id,
+        updatedContacts,
+      });
+    } catch (error) {
+      console.error("Merge segment error:", error);
+      res.status(500).json({ error: "Failed to merge segments" });
     }
   });
 

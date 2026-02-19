@@ -14,7 +14,7 @@ import {
   triggerCsvDownload,
 } from "@/lib/audienceCsv";
 import { useToast } from "@/hooks/use-toast";
-import { Download, FileUp, Loader2, Plus, Save, Trash2, Upload } from "lucide-react";
+import { Download, FileUp, Loader2, Plus, Save, Upload } from "lucide-react";
 import type { Contact, ContactSegment } from "@shared/schema";
 
 interface ClientAudiencePanelProps {
@@ -32,12 +32,18 @@ function toTitleCase(value: string): string {
 export function ClientAudiencePanel({ clientId }: ClientAudiencePanelProps) {
   const { toast } = useToast();
   const csvFileInputRef = useRef<HTMLInputElement | null>(null);
+  const contactsPageSize = 50;
 
   const [csvContent, setCsvContent] = useState("");
   const [csvFileName, setCsvFileName] = useState("");
+  const [lastImportInvalidRowsCsv, setLastImportInvalidRowsCsv] = useState("");
   const [contactSearch, setContactSearch] = useState("");
+  const [contactsPage, setContactsPage] = useState(1);
+  const [selectedContactIds, setSelectedContactIds] = useState<string[]>([]);
   const [createSegmentsFromTags, setCreateSegmentsFromTags] = useState(true);
   const [selectedSegmentTags, setSelectedSegmentTags] = useState<string[]>([]);
+  const [mergeSourceSegmentId, setMergeSourceSegmentId] = useState("");
+  const [mergeTargetSegmentId, setMergeTargetSegmentId] = useState("");
 
   const [newContact, setNewContact] = useState({
     email: "",
@@ -92,15 +98,20 @@ export function ClientAudiencePanel({ clientId }: ClientAudiencePanelProps) {
       queryClient.invalidateQueries({ queryKey: ["/api/clients", clientId, "segments"] });
       setCsvContent("");
       setCsvFileName("");
+      setSelectedContactIds([]);
       setSelectedSegmentTags([]);
+      setLastImportInvalidRowsCsv(data?.invalidRowsCsv || "");
       const importedCount = data?.summary?.importedCount || 0;
       const updatedCount = data?.summary?.updatedCount || 0;
       const createdSegmentsCount = data?.summary?.createdSegmentsCount || 0;
+      const invalidRowsCount = data?.summary?.invalidRowsCount || 0;
       const segmentSuffix =
         createdSegmentsCount > 0 ? `, ${createdSegmentsCount} segments created` : "";
+      const invalidSuffix =
+        invalidRowsCount > 0 ? `, ${invalidRowsCount} invalid rows available to download` : "";
       toast({
         title: "Contacts imported",
-        description: `${importedCount} new, ${updatedCount} updated${segmentSuffix}`,
+        description: `${importedCount} new, ${updatedCount} updated${segmentSuffix}${invalidSuffix}`,
       });
     },
     onError: (error: Error) => {
@@ -163,6 +174,32 @@ export function ClientAudiencePanel({ clientId }: ClientAudiencePanelProps) {
     },
   });
 
+  const bulkContactActionMutation = useMutation({
+    mutationFn: async (payload: { action: "activate" | "deactivate" | "delete"; contactIds: string[] }) => {
+      const res = await apiRequest("POST", `/api/clients/${clientId}/contacts/bulk-action`, payload);
+      return res.json();
+    },
+    onSuccess: (data: any, variables) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/clients", clientId, "contacts"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/clients", clientId, "segments"] });
+      setSelectedContactIds([]);
+      const count = data?.contactCount || variables.contactIds.length;
+      const actionLabel =
+        variables.action === "activate"
+          ? "activated"
+          : variables.action === "deactivate"
+            ? "deactivated"
+            : "removed";
+      toast({
+        title: "Bulk action complete",
+        description: `${count} contacts ${actionLabel}`,
+      });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Bulk action failed", description: error.message, variant: "destructive" });
+    },
+  });
+
   const createSegmentMutation = useMutation({
     mutationFn: async (payload?: { name: string; tags: string[] }) => {
       const name = (payload?.name || newSegment.name).trim();
@@ -214,6 +251,27 @@ export function ClientAudiencePanel({ clientId }: ClientAudiencePanelProps) {
     },
   });
 
+  const mergeSegmentsMutation = useMutation({
+    mutationFn: async (payload: { sourceSegmentId: string; targetSegmentId: string }) => {
+      const res = await apiRequest("POST", `/api/clients/${clientId}/segments/merge`, payload);
+      return res.json();
+    },
+    onSuccess: (data: any, variables) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/clients", clientId, "contacts"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/clients", clientId, "segments"] });
+      setMergeSourceSegmentId("");
+      setMergeTargetSegmentId("");
+      const updatedContacts = data?.updatedContacts || 0;
+      toast({
+        title: "Segments merged",
+        description: `${updatedContacts} contacts updated`,
+      });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Merge failed", description: error.message, variant: "destructive" });
+    },
+  });
+
   const filteredContacts = useMemo(() => {
     const search = contactSearch.trim().toLowerCase();
     if (!search) return contacts;
@@ -225,7 +283,16 @@ export function ClientAudiencePanel({ clientId }: ClientAudiencePanelProps) {
     });
   }, [contacts, contactSearch]);
 
-  const displayedContacts = useMemo(() => filteredContacts.slice(0, 40), [filteredContacts]);
+  const contactsPageCount = Math.max(1, Math.ceil(filteredContacts.length / contactsPageSize));
+  const pagedContacts = useMemo(() => {
+    const start = (contactsPage - 1) * contactsPageSize;
+    const end = start + contactsPageSize;
+    return filteredContacts.slice(start, end);
+  }, [filteredContacts, contactsPage, contactsPageSize]);
+  const pagedContactIds = useMemo(() => pagedContacts.map((contact) => contact.id), [pagedContacts]);
+  const allPagedSelected =
+    pagedContactIds.length > 0 && pagedContactIds.every((id) => selectedContactIds.includes(id));
+
   const savedSegments = useMemo(
     () => segments.filter((segment) => !segment.id.startsWith("derived-")),
     [segments]
@@ -234,6 +301,24 @@ export function ClientAudiencePanel({ clientId }: ClientAudiencePanelProps) {
     () => segments.filter((segment) => segment.id.startsWith("derived-")),
     [segments]
   );
+  const mergeableSegments = useMemo(
+    () => savedSegments.filter((segment) => segment.name.toLowerCase() !== "all"),
+    [savedSegments]
+  );
+
+  useEffect(() => {
+    setContactsPage(1);
+    setSelectedContactIds([]);
+  }, [contactSearch, clientId]);
+
+  useEffect(() => {
+    setContactsPage((current) => Math.min(current, contactsPageCount));
+  }, [contactsPageCount]);
+
+  useEffect(() => {
+    const filteredIdSet = new Set(filteredContacts.map((contact) => contact.id));
+    setSelectedContactIds((current) => current.filter((id) => filteredIdSet.has(id)));
+  }, [filteredContacts]);
 
   const handleCsvFileSelected = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -297,6 +382,46 @@ export function ClientAudiencePanel({ clientId }: ClientAudiencePanelProps) {
     setSelectedSegmentTags((prev) =>
       prev.includes(tag) ? prev.filter((value) => value !== tag) : [...prev, tag]
     );
+  };
+
+  const toggleContactSelection = (contactId: string) => {
+    setSelectedContactIds((prev) =>
+      prev.includes(contactId) ? prev.filter((id) => id !== contactId) : [...prev, contactId]
+    );
+  };
+
+  const toggleSelectPageContacts = () => {
+    setSelectedContactIds((prev) => {
+      if (allPagedSelected) {
+        return prev.filter((id) => !pagedContactIds.includes(id));
+      }
+      return Array.from(new Set([...prev, ...pagedContactIds]));
+    });
+  };
+
+  const runBulkContactAction = (action: "activate" | "deactivate" | "delete") => {
+    if (selectedContactIds.length === 0) return;
+    const confirmRequired = action === "delete";
+    if (confirmRequired) {
+      const ok = window.confirm(`Remove ${selectedContactIds.length} selected contacts? This cannot be undone.`);
+      if (!ok) return;
+    }
+    bulkContactActionMutation.mutate({
+      action,
+      contactIds: selectedContactIds,
+    });
+  };
+
+  const quickRenameSegment = (segment: ContactSegment) => {
+    const proposed = window.prompt("Rename segment", segment.name);
+    if (!proposed) return;
+    const trimmed = proposed.trim();
+    if (!trimmed || trimmed === segment.name) return;
+    updateSegmentMutation.mutate({
+      id: segment.id,
+      name: trimmed,
+      tags: (segment.tags || [segment.name.toLowerCase()]).join(", "),
+    });
   };
 
   const canImport =
@@ -410,6 +535,30 @@ export function ClientAudiencePanel({ clientId }: ClientAudiencePanelProps) {
                   <Badge variant="outline" className="text-[11px] text-blue-700 dark:text-blue-300">
                     {csvPreview.duplicateExistingCount} existing contacts will update
                   </Badge>
+                )}
+                {csvPreview.invalidRows > 0 && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 px-2 text-xs"
+                    onClick={() =>
+                      triggerCsvDownload(
+                        "flow-invalid-rows-preview.csv",
+                        [
+                          "line_number,email,first_name,last_name,tags,reason",
+                          ...csvPreview.previewRows
+                            .filter((row) => !row.isValidEmail)
+                            .map((row) =>
+                              `${row.lineNumber},${row.email},${row.firstName},${row.lastName},${row.tags.join(";")},invalid email`
+                            ),
+                        ].join("\n")
+                      )
+                    }
+                    data-testid="button-download-preview-invalid-rows"
+                  >
+                    <Download className="w-3.5 h-3.5 mr-1.5" />
+                    Download Invalid Preview Rows
+                  </Button>
                 )}
               </div>
 
@@ -557,6 +706,19 @@ export function ClientAudiencePanel({ clientId }: ClientAudiencePanelProps) {
             )}
             Import Contact List
           </Button>
+
+          {lastImportInvalidRowsCsv && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-8 text-xs w-full"
+              onClick={() => triggerCsvDownload("flow-invalid-rows.csv", lastImportInvalidRowsCsv)}
+              data-testid="button-download-last-import-invalid-rows"
+            >
+              <Download className="w-3.5 h-3.5 mr-1.5" />
+              Download Invalid Rows From Last Import
+            </Button>
+          )}
         </TabsContent>
 
         <TabsContent value="contacts" className="mt-3 space-y-3">
@@ -609,16 +771,90 @@ export function ClientAudiencePanel({ clientId }: ClientAudiencePanelProps) {
             data-testid="input-search-audience-contacts"
           />
 
+          {selectedContactIds.length > 0 && (
+            <div className="rounded-md border bg-muted/20 p-2 flex flex-wrap items-center gap-1.5">
+              <span className="text-[11px] text-muted-foreground mr-1">
+                {selectedContactIds.length} selected
+              </span>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-7 px-2 text-xs"
+                onClick={() => runBulkContactAction("activate")}
+                disabled={bulkContactActionMutation.isPending}
+                data-testid="button-bulk-activate-contacts"
+              >
+                Activate
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-7 px-2 text-xs"
+                onClick={() => runBulkContactAction("deactivate")}
+                disabled={bulkContactActionMutation.isPending}
+                data-testid="button-bulk-deactivate-contacts"
+              >
+                Deactivate
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-7 px-2 text-xs text-red-600 hover:text-red-600 dark:text-red-300"
+                onClick={() => runBulkContactAction("delete")}
+                disabled={bulkContactActionMutation.isPending}
+                data-testid="button-bulk-delete-contacts"
+              >
+                Remove
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-7 px-2 text-xs"
+                onClick={() => setSelectedContactIds([])}
+              >
+                Clear Selection
+              </Button>
+            </div>
+          )}
+
+          <div className="flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
+            <button
+              type="button"
+              className="underline-offset-2 hover:underline disabled:opacity-40"
+              onClick={toggleSelectPageContacts}
+              disabled={pagedContactIds.length === 0}
+              data-testid="button-select-current-page-contacts"
+            >
+              {allPagedSelected ? "Unselect page" : "Select page"}
+            </button>
+            <span>
+              Page {contactsPage} / {contactsPageCount}
+            </span>
+          </div>
+
           <div className="space-y-1.5 max-h-72 overflow-y-auto pr-1">
-            {displayedContacts.length === 0 && (
+            {pagedContacts.length === 0 && (
               <div className="text-xs text-muted-foreground">
                 {contacts.length === 0 ? "No contacts imported yet" : "No contacts match this search"}
               </div>
             )}
-            {displayedContacts.map((contact) => {
+            {pagedContacts.map((contact) => {
               const draft = editingContacts[contact.id];
+              const isSelected = selectedContactIds.includes(contact.id);
               return (
                 <div key={contact.id} className="rounded border p-2 space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <label className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                      <input
+                        type="checkbox"
+                        className="h-3.5 w-3.5"
+                        checked={isSelected}
+                        onChange={() => toggleContactSelection(contact.id)}
+                        data-testid={`checkbox-select-contact-${contact.id}`}
+                      />
+                      Select
+                    </label>
+                  </div>
                   {draft ? (
                     <>
                       <Input
@@ -759,11 +995,31 @@ export function ClientAudiencePanel({ clientId }: ClientAudiencePanelProps) {
               );
             })}
           </div>
-          {filteredContacts.length > displayedContacts.length && (
-            <div className="text-[11px] text-muted-foreground">
-              Showing first {displayedContacts.length} of {filteredContacts.length} contacts
+          <div className="flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
+            <span>{filteredContacts.length} filtered contacts</span>
+            <div className="flex items-center gap-1">
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-7 px-2 text-xs"
+                onClick={() => setContactsPage((current) => Math.max(1, current - 1))}
+                disabled={contactsPage <= 1}
+                data-testid="button-contacts-page-prev"
+              >
+                Prev
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-7 px-2 text-xs"
+                onClick={() => setContactsPage((current) => Math.min(contactsPageCount, current + 1))}
+                disabled={contactsPage >= contactsPageCount}
+                data-testid="button-contacts-page-next"
+              >
+                Next
+              </Button>
             </div>
-          )}
+          </div>
         </TabsContent>
 
         <TabsContent value="segments" className="mt-3 space-y-3">
@@ -793,6 +1049,58 @@ export function ClientAudiencePanel({ clientId }: ClientAudiencePanelProps) {
             >
               <Plus className="w-3.5 h-3.5 mr-1.5" />
               Add Segment
+            </Button>
+          </div>
+
+          <div className="rounded-md border bg-muted/20 p-3 space-y-2">
+            <div className="text-xs font-medium text-muted-foreground">Merge Segments</div>
+            <div className="grid grid-cols-2 gap-2">
+              <select
+                className="h-8 rounded-md border bg-background px-2 text-xs"
+                value={mergeSourceSegmentId}
+                onChange={(event) => setMergeSourceSegmentId(event.target.value)}
+                data-testid="select-merge-source-segment"
+              >
+                <option value="">Source segment</option>
+                {mergeableSegments.map((segment) => (
+                  <option key={`source-${segment.id}`} value={segment.id}>
+                    {segment.name}
+                  </option>
+                ))}
+              </select>
+              <select
+                className="h-8 rounded-md border bg-background px-2 text-xs"
+                value={mergeTargetSegmentId}
+                onChange={(event) => setMergeTargetSegmentId(event.target.value)}
+                data-testid="select-merge-target-segment"
+              >
+                <option value="">Target segment</option>
+                {mergeableSegments.map((segment) => (
+                  <option key={`target-${segment.id}`} value={segment.id}>
+                    {segment.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-8 w-full text-xs"
+              onClick={() =>
+                mergeSegmentsMutation.mutate({
+                  sourceSegmentId: mergeSourceSegmentId,
+                  targetSegmentId: mergeTargetSegmentId,
+                })
+              }
+              disabled={
+                mergeSegmentsMutation.isPending ||
+                !mergeSourceSegmentId ||
+                !mergeTargetSegmentId ||
+                mergeSourceSegmentId === mergeTargetSegmentId
+              }
+              data-testid="button-merge-segments"
+            >
+              Merge Source Into Target
             </Button>
           </div>
 
@@ -865,6 +1173,15 @@ export function ClientAudiencePanel({ clientId }: ClientAudiencePanelProps) {
                           </div>
                         </div>
                         <div className="flex items-center gap-1">
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-7 px-2 text-xs"
+                            onClick={() => quickRenameSegment(segment)}
+                            data-testid={`button-quick-rename-segment-${segment.id}`}
+                          >
+                            Rename
+                          </Button>
                           <Button
                             size="sm"
                             variant="ghost"
