@@ -130,6 +130,7 @@ export function HTMLPreviewFrame({
   const { toast } = useToast();
   const [internalDeviceMode, setInternalDeviceMode] = useState<DeviceMode>("desktop");
   const [selectedElement, setSelectedElement] = useState<SelectedElementState | null>(null);
+  const [inspectorPosition, setInspectorPosition] = useState<{ x: number; y: number }>({ x: 18, y: 18 });
   const [isUploadingImage, setIsUploadingImage] = useState(false);
   const selectedRef = useRef<SelectedElementState | null>(null);
   const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -492,6 +493,12 @@ export function HTMLPreviewFrame({
         return;
       }
 
+      const frameWidth = iframe.clientWidth || 680;
+      const panelWidth = 288;
+      const nextX = Math.max(12, Math.min(event.clientX + 14, frameWidth - panelWidth - 12));
+      const nextY = Math.max(12, event.clientY + 14);
+      setInspectorPosition({ x: nextX, y: nextY });
+
       const snapshot = describeElement(editable);
       selectedRef.current = snapshot;
       setSelectedElement(snapshot);
@@ -521,13 +528,15 @@ export function HTMLPreviewFrame({
       style.textContent = `
         [${EDITABLE_ATTR}="true"] {
           cursor: pointer;
-          transition: box-shadow 120ms ease;
+          transition: outline-color 100ms ease, outline-width 100ms ease;
         }
         [${EDITABLE_ATTR}="true"]:hover {
-          box-shadow: inset 0 0 0 1px rgba(22, 163, 74, 0.35);
+          outline: 1px solid rgba(22, 163, 74, 0.28);
+          outline-offset: -1px;
         }
         [${EDIT_ATTR}][data-flow-selected="true"] {
-          box-shadow: inset 0 0 0 2px rgba(22, 163, 74, 0.86), 0 0 0 1px rgba(15, 23, 42, 0.12);
+          outline: 2px solid rgba(22, 163, 74, 0.75);
+          outline-offset: -2px;
         }
         [${EDIT_ATTR}] {
           scroll-margin-top: 80px;
@@ -538,7 +547,6 @@ export function HTMLPreviewFrame({
       markEditableElements(doc);
 
       doc.addEventListener("click", handleSelect, true);
-      doc.addEventListener("dblclick", handleSelect, true);
       doc.addEventListener("keydown", handleKeyDown, true);
 
       syncHeight();
@@ -554,7 +562,6 @@ export function HTMLPreviewFrame({
       window.removeEventListener("resize", syncHeight);
       if (mountedDoc) {
         mountedDoc.removeEventListener("click", handleSelect, true);
-        mountedDoc.removeEventListener("dblclick", handleSelect, true);
         mountedDoc.removeEventListener("keydown", handleKeyDown, true);
       }
       if (persistTimerRef.current) {
@@ -628,7 +635,11 @@ export function HTMLPreviewFrame({
               )}
 
               {selectedElement && (
-                <div className="absolute right-3 bottom-3 z-20 w-72 rounded-xl border bg-background/95 backdrop-blur-sm shadow-lg" data-testid="panel-element-inspector">
+                <div
+                  className="absolute z-20 w-72 rounded-xl border bg-background/95 backdrop-blur-sm shadow-lg"
+                  style={{ left: `${inspectorPosition.x}px`, top: `${inspectorPosition.y}px` }}
+                  data-testid="panel-element-inspector"
+                >
                   <div className="flex items-center justify-between border-b px-3 py-2">
                     <div className="text-xs font-medium">Edit {selectedElement.tag}</div>
                     <Button

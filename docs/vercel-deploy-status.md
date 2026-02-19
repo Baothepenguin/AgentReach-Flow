@@ -1,12 +1,14 @@
-# Vercel Deploy Status (2026-02-11)
+# Vercel Deploy Status (2026-02-19)
 
-## Current Blocker
-Vercel CLI is installed, but this environment is **not authenticated**:
-- `vercel whoami` => "No existing credentials found"
+## Current Status
+- Vercel CLI access is available in this environment (verified via project API calls).
+- Production release is intentionally blocked outside the scripted 2:00–3:00 PM MST window.
+- Git auto-deploy setting currently reports `createDeployments: disabled`.
 
 ## What I Prepared
 - App compiles and builds successfully (`npm run check`, `npm run build`)
-- Ready for deployment once credentials and env vars are set
+- Full local deep QA command (`npm run qa:deep`) with API smoke coverage
+- Script-enforced production release gate (`npm run release:prod`)
 
 ## Required Vercel Environment Variables
 At minimum:
@@ -19,12 +21,13 @@ At minimum:
 
 ## Deploy Commands (once logged in)
 ```bash
-cd projects/AgentReach-Flow
+cd /Users/bao/Documents/Flow/AgentReach-Flow
 vercel login
-vercel --prod
+npm run qa:deep
+npm run release:prod
 ```
 
-## Recommended Next Step
-Provide either:
-1. `vercel login` completed in this environment, or
-2. `VERCEL_TOKEN` so deployment can run headlessly.
+## Policy Reminder
+- Do not run `vercel deploy --prod` directly.
+- Use the scripted release gate (`npm run release:prod`) so deep QA + release window enforcement are always applied.
+- See `/Users/bao/Documents/Flow/AgentReach-Flow/docs/release-runbook.md` for full daily workflow and emergency override steps.

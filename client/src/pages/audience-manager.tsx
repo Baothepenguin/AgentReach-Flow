@@ -4,10 +4,9 @@ import { useLocation, useSearch } from "wouter";
 import { TopNav } from "@/components/TopNav";
 import { ClientSidePanel } from "@/components/ClientSidePanel";
 import { ClientAudiencePanel } from "@/components/ClientAudiencePanel";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Search, UserSquare2 } from "lucide-react";
+import { Search } from "lucide-react";
 import type { Client, Contact } from "@shared/schema";
 
 export default function AudienceManagerPage() {
@@ -106,6 +105,7 @@ export default function AudienceManagerPage() {
                       }`}
                       onClick={() => {
                         setSelectedClientId(client.id);
+                        setPreviewClientId(client.id);
                         setLocation(`/audience?clientId=${client.id}`);
                       }}
                       data-testid={`button-select-audience-client-${client.id}`}
@@ -139,16 +139,6 @@ export default function AudienceManagerPage() {
                     <Badge variant="outline" className="text-xs">
                       {unsubscribedContacts} unsubscribed
                     </Badge>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="h-8 text-xs"
-                      onClick={() => setPreviewClientId(selectedClient.id)}
-                      data-testid="button-open-client-card-audience"
-                    >
-                      <UserSquare2 className="w-3.5 h-3.5 mr-1.5" />
-                      Client Card
-                    </Button>
                   </div>
                 </div>
 

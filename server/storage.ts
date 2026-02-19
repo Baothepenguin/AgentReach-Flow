@@ -68,7 +68,7 @@ import {
   type InsertAiPrompt,
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, desc, and, ne, isNull, or, inArray, sql } from "drizzle-orm";
+import { eq, desc, and, ne, isNull, isNotNull, or, inArray, sql } from "drizzle-orm";
 import { randomUUID } from "crypto";
 
 export interface IStorage {
@@ -186,7 +186,7 @@ export interface IStorage {
   deleteClientNote(id: string): Promise<void>;
 
   // Contacts / Audience
-  getContactsByClient(clientId: string): Promise<Contact[]>;
+  getContactsByClient(clientId: string, view?: "all" | "active" | "unsubscribed" | "archived"): Promise<Contact[]>;
   getContactByEmail(clientId: string, email: string): Promise<Contact | undefined>;
   getContact(id: string): Promise<Contact | undefined>;
   createContact(data: InsertContact): Promise<Contact>;
@@ -287,7 +287,7 @@ export class DatabaseStorage implements IStorage {
     const subs = await this.getSubscriptionsByClient(clientId);
     let newStatus: "active" | "paused" | "past_due" | "canceled" = "active";
     if (subs.length === 0) {
-      newStatus = "active";
+      newStatus = "canceled";
     } else {
       const hasActive = subs.some(s => s.status === "active");
       const hasPastDue = subs.some(s => s.status === "past_due");
@@ -766,11 +766,24 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Contacts / Audience
-  async getContactsByClient(clientId: string): Promise<Contact[]> {
+  async getContactsByClient(
+    clientId: string,
+    view: "all" | "active" | "unsubscribed" | "archived" = "all"
+  ): Promise<Contact[]> {
+    const baseWhere = eq(contacts.clientId, clientId);
+    const whereClause =
+      view === "active"
+        ? and(baseWhere, eq(contacts.isActive, true), isNull(contacts.archivedAt))
+        : view === "unsubscribed"
+          ? and(baseWhere, eq(contacts.isActive, false), isNull(contacts.archivedAt))
+          : view === "archived"
+            ? and(baseWhere, isNotNull(contacts.archivedAt))
+            : and(baseWhere, isNull(contacts.archivedAt));
+
     return db
       .select()
       .from(contacts)
-      .where(eq(contacts.clientId, clientId))
+      .where(whereClause)
       .orderBy(desc(contacts.createdAt));
   }
 
@@ -803,6 +816,8 @@ export class DatabaseStorage implements IStorage {
         .set({
           ...data,
           email: email.toLowerCase(),
+          archivedAt: null,
+          archivedById: null,
           updatedAt: new Date(),
         })
         .where(eq(contacts.id, existing.id))

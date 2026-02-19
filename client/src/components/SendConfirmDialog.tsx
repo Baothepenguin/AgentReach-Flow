@@ -4,9 +4,8 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Badge } from "@/components/ui/badge";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { Loader2, Send, Clock3, AlertTriangle, ShieldCheck } from "lucide-react";
+import { Loader2, Send, Clock3, ShieldCheck } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 type Mode = "schedule" | "send_now";
@@ -286,18 +285,6 @@ export function SendConfirmDialog({
               data-testid="input-send-from-email"
             />
           </div>
-
-          {status && status !== "approved" && status !== "scheduled" && (
-            <div className="rounded-md border p-3 text-sm">
-              <div className="flex items-center gap-2 font-medium">
-                <AlertTriangle className="w-4 h-4 text-amber-600" />
-                Newsletter is not approved
-              </div>
-              <div className="text-xs text-muted-foreground mt-1">
-                Current status: <Badge variant="outline">{status}</Badge>. Set status to <Badge variant="outline">approved</Badge> before scheduling/sending.
-              </div>
-            </div>
-          )}
 
           {(blockers.length > 0 || warnings.length > 0) && (
             <div className="rounded-md border p-3 space-y-2">

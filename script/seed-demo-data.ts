@@ -72,8 +72,6 @@ type DemoClient = {
 
 function buildDemoClients(today: Date): DemoClient[] {
   const fmt = (offsetDays: number) => format(addDays(today, offsetDays), "yyyy-MM-dd");
-  const paidDate = format(subDays(today, 7), "yyyy-MM-dd");
-
   return [
     {
       name: "Sophia Martinez",
@@ -93,25 +91,17 @@ function buildDemoClients(today: Date): DemoClient[] {
         tone: "Warm, confident, neighborhood-focused",
       },
       contacts: [
+        { email: "bao@sansu.ca", firstName: "Bao", lastName: "San", tag: "all", isActive: true },
         { email: "mila.thompson@gmail.com", firstName: "Mila", lastName: "Thompson", tag: "past clients", isActive: true },
-        { email: "david.romero@gmail.com", firstName: "David", lastName: "Romero", tag: "all", isActive: true },
         { email: "oakline.lending@partner.com", firstName: "Oakline", lastName: "Lending", tag: "referral partners", isActive: true },
-        { email: "jane.holden@gmail.com", firstName: "Jane", lastName: "Holden", tag: "past clients", isActive: false },
       ],
       newsletters: [
         {
-          title: "Alder Realty Monthly Market Letter",
+          title: "Sophia Martinez Newsletter",
           expectedSendDate: fmt(4),
           status: "draft",
           subject: "Austin homes this month: what buyers should watch",
           previewText: "Listings, local events, and this week’s market pulse for Austin.",
-        },
-        {
-          title: "Alder Realty February Seller Update",
-          expectedSendDate: paidDate,
-          status: "sent",
-          subject: "Your Austin seller playbook for this month",
-          previewText: "Fresh pricing moves, neighborhood demand, and quick seller wins.",
         },
       ],
     },
@@ -133,24 +123,17 @@ function buildDemoClients(today: Date): DemoClient[] {
         tone: "Modern, upbeat, coastal lifestyle",
       },
       contacts: [
+        { email: "bao@sansu.ca", firstName: "Bao", lastName: "San", tag: "all", isActive: true },
         { email: "olivia.ward@gmail.com", firstName: "Olivia", lastName: "Ward", tag: "all", isActive: true },
-        { email: "nathan.price@gmail.com", firstName: "Nathan", lastName: "Price", tag: "past clients", isActive: true },
         { email: "horizon.title@partner.com", firstName: "Horizon", lastName: "Title", tag: "referral partners", isActive: true },
       ],
       newsletters: [
         {
-          title: "Harbor Lane Coastal Market Brief",
-          expectedSendDate: fmt(8),
+          title: "Ethan Brooks Newsletter",
+          expectedSendDate: fmt(7),
           status: "in_review",
           subject: "San Diego market snapshot + listings this week",
           previewText: "Current local stats, neighborhood picks, and agent recommendations.",
-        },
-        {
-          title: "Harbor Lane Buyer Pulse",
-          expectedSendDate: fmt(-12),
-          status: "sent",
-          subject: "Where buyer demand is moving in San Diego",
-          previewText: "Open-home activity, pricing signals, and next-step strategy.",
         },
       ],
     },
@@ -172,24 +155,81 @@ function buildDemoClients(today: Date): DemoClient[] {
         tone: "Premium, concise, data-backed",
       },
       contacts: [
+        { email: "bao@sansu.ca", firstName: "Bao", lastName: "San", tag: "all", isActive: true },
         { email: "michelle.wu@gmail.com", firstName: "Michelle", lastName: "Wu", tag: "past clients", isActive: true },
-        { email: "andrew.park@gmail.com", firstName: "Andrew", lastName: "Park", tag: "all", isActive: true },
         { email: "northstar.staging@partner.com", firstName: "Northstar", lastName: "Staging", tag: "referral partners", isActive: true },
       ],
       newsletters: [
         {
-          title: "Westfield NYC Property Brief",
+          title: "Chloe Bennett Newsletter",
           expectedSendDate: fmt(2),
-          status: "scheduled",
+          status: "approved",
           subject: "This week’s NYC housing moves and opportunities",
           previewText: "Inventory shifts, featured listings, and city highlights.",
         },
+      ],
+    },
+    {
+      name: "Liam Carter",
+      primaryEmail: "liam.carter@lakeviewproperty.com",
+      phone: "(312) 555-0145",
+      city: "Chicago",
+      region: "IL",
+      newsletterFrequency: "monthly",
+      subscriptionAmount: "139.00",
+      branding: {
+        companyName: "Lakeview Property Co.",
+        website: "https://lakeviewproperty.com",
+        instagram: "https://instagram.com/lakeviewproperty",
+        facebook: "https://facebook.com/lakeviewproperty",
+        primaryColor: "#0F766E",
+        secondaryColor: "#1F2937",
+        tone: "Local, practical, and clear",
+      },
+      contacts: [
+        { email: "bao@sansu.ca", firstName: "Bao", lastName: "San", tag: "all", isActive: true },
+        { email: "courtney.lee@gmail.com", firstName: "Courtney", lastName: "Lee", tag: "past clients", isActive: true },
+        { email: "cityline.mortgage@partner.com", firstName: "Cityline", lastName: "Mortgage", tag: "referral partners", isActive: true },
+      ],
+      newsletters: [
         {
-          title: "Westfield Midtown Market Digest",
-          expectedSendDate: fmt(-20),
-          status: "sent",
-          subject: "Midtown trends and new comps you should know",
-          previewText: "Price movement, negotiation insights, and next actions.",
+          title: "Liam Carter Newsletter",
+          expectedSendDate: fmt(9),
+          status: "draft",
+          subject: "Chicago listings and neighborhood opportunities",
+          previewText: "This month’s listings, local highlights, and market movement.",
+        },
+      ],
+    },
+    {
+      name: "Maya Patel",
+      primaryEmail: "maya.patel@suncoasthomes.com",
+      phone: "(305) 555-0128",
+      city: "Miami",
+      region: "FL",
+      newsletterFrequency: "monthly",
+      subscriptionAmount: "159.00",
+      branding: {
+        companyName: "Suncoast Homes",
+        website: "https://suncoasthomes.com",
+        instagram: "https://instagram.com/suncoasthomes",
+        facebook: "https://facebook.com/suncoasthomes",
+        primaryColor: "#0E7490",
+        secondaryColor: "#111827",
+        tone: "Bright, modern, and lifestyle-first",
+      },
+      contacts: [
+        { email: "bao@sansu.ca", firstName: "Bao", lastName: "San", tag: "all", isActive: true },
+        { email: "diego.ramos@gmail.com", firstName: "Diego", lastName: "Ramos", tag: "past clients", isActive: true },
+        { email: "coastal.title@partner.com", firstName: "Coastal", lastName: "Title", tag: "referral partners", isActive: true },
+      ],
+      newsletters: [
+        {
+          title: "Maya Patel Newsletter",
+          expectedSendDate: fmt(5),
+          status: "changes_requested",
+          subject: "Miami market update and featured homes",
+          previewText: "Fresh listings, local events, and the latest market insights.",
         },
       ],
     },
@@ -350,7 +390,7 @@ async function ensureNewsletter(
   const payload = {
     clientId,
     subscriptionId,
-    invoiceId: spec.status === "sent" ? invoiceId : null,
+    invoiceId,
     title: spec.title,
     expectedSendDate: spec.expectedSendDate,
     status: spec.status,

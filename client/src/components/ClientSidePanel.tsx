@@ -129,6 +129,22 @@ export function ClientSidePanel({ clientId, open, onClose }: ClientSidePanelProp
   const client = clientData?.client;
   const brandingKit = clientData?.brandingKit;
   const newsletters = clientData?.newsletters || [];
+  const invoicesBySubscription = invoices.reduce<Record<string, Invoice[]>>((acc, invoice) => {
+    if (!invoice.subscriptionId) return acc;
+    if (!acc[invoice.subscriptionId]) {
+      acc[invoice.subscriptionId] = [];
+    }
+    acc[invoice.subscriptionId].push(invoice);
+    return acc;
+  }, {});
+  const newslettersBySubscription = newsletters.reduce<Record<string, Newsletter[]>>((acc, newsletter) => {
+    if (!newsletter.subscriptionId) return acc;
+    if (!acc[newsletter.subscriptionId]) {
+      acc[newsletter.subscriptionId] = [];
+    }
+    acc[newsletter.subscriptionId].push(newsletter);
+    return acc;
+  }, {});
 
   useEffect(() => {
     if (!open || !client) return;
@@ -236,6 +252,7 @@ export function ClientSidePanel({ clientId, open, onClose }: ClientSidePanelProp
   });
 
   const beginEditSubscription = (subscription: Subscription) => {
+    if (!isEditing) return;
     setSubscriptionDrafts((prev) => ({
       ...prev,
       [subscription.id]: {
@@ -250,6 +267,7 @@ export function ClientSidePanel({ clientId, open, onClose }: ClientSidePanelProp
   };
 
   const beginEditInvoice = (invoice: Invoice) => {
+    if (!isEditing) return;
     setInvoiceDrafts((prev) => ({
       ...prev,
       [invoice.id]: {
@@ -624,15 +642,30 @@ export function ClientSidePanel({ clientId, open, onClose }: ClientSidePanelProp
                               ${Number(sub.amount || 0).toFixed(2)} / {sub.frequency}
                             </div>
                             <div className="mt-2 flex justify-end">
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="h-7 px-2 text-xs"
-                                onClick={() => beginEditSubscription(sub)}
-                                data-testid={`button-edit-subscription-inline-${sub.id}`}
-                              >
-                                Edit
-                              </Button>
+                              {isEditing && (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-7 px-2 text-xs"
+                                  onClick={() => beginEditSubscription(sub)}
+                                  data-testid={`button-edit-subscription-inline-${sub.id}`}
+                                >
+                                  Edit
+                                </Button>
+                              )}
+                            </div>
+                            <div className="mt-2 space-y-1">
+                              <div className="text-[11px] text-muted-foreground">
+                                Orders linked: {(invoicesBySubscription[sub.id] || []).length}
+                              </div>
+                              {(invoicesBySubscription[sub.id] || []).slice(0, 3).map((invoice) => (
+                                <div key={invoice.id} className="text-[11px] text-muted-foreground">
+                                  #{invoice.id.slice(0, 8)} · {invoice.status}
+                                </div>
+                              ))}
+                              <div className="text-[11px] text-muted-foreground">
+                                Newsletters linked: {(newslettersBySubscription[sub.id] || []).length}
+                              </div>
                             </div>
                           </>
                         )}
@@ -824,17 +857,19 @@ export function ClientSidePanel({ clientId, open, onClose }: ClientSidePanelProp
                             <div className="text-xs text-muted-foreground mt-1">
                               {format(new Date(invoice.createdAt), "MMM d, yyyy")}
                             </div>
-                            <div className="mt-2 flex justify-end">
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="h-7 px-2 text-xs"
-                                onClick={() => beginEditInvoice(invoice)}
-                                data-testid={`button-edit-invoice-inline-${invoice.id}`}
-                              >
-                                Edit
-                              </Button>
-                            </div>
+                            {isEditing && (
+                              <div className="mt-2 flex justify-end">
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-7 px-2 text-xs"
+                                  onClick={() => beginEditInvoice(invoice)}
+                                  data-testid={`button-edit-invoice-inline-${invoice.id}`}
+                                >
+                                  Edit
+                                </Button>
+                              </div>
+                            )}
                           </>
                         )}
                       </div>

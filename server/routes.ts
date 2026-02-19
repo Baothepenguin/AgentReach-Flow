@@ -295,6 +295,201 @@ function buildNewsletterTitle(clientName: string): string {
   return `${normalizedName} Newsletter`;
 }
 
+function normalizeContactView(value: unknown): "all" | "active" | "unsubscribed" | "archived" {
+  const raw = typeof value === "string" ? value.trim().toLowerCase() : "";
+  if (raw === "active" || raw === "unsubscribed" || raw === "archived") {
+    return raw;
+  }
+  return "all";
+}
+
+async function findPreferredSubscription(clientId: string, preferredSubscriptionId?: string | null) {
+  const subscriptions = await storage.getSubscriptionsByClient(clientId);
+  if (preferredSubscriptionId) {
+    const requested = subscriptions.find((sub) => sub.id === preferredSubscriptionId);
+    if (!requested) {
+      const error = new Error("Subscription not found for this client.");
+      (error as Error & { status?: number }).status = 404;
+      throw error;
+    }
+    return requested;
+  }
+
+  const active = subscriptions.find((sub) => sub.status === "active");
+  if (active) return active;
+
+  if (subscriptions.length === 0) {
+    const error = new Error(
+      "No subscription found for this client. Create or sync a subscription before creating newsletters."
+    );
+    (error as Error & { status?: number }).status = 409;
+    throw error;
+  }
+
+  const error = new Error("Client has no active subscription. Activate a subscription first.");
+  (error as Error & { status?: number }).status = 409;
+  throw error;
+}
+
+async function ensureSubscriptionHasInvoice(subscriptionId: string) {
+  const subscription = await storage.getSubscription(subscriptionId);
+  if (!subscription) return null;
+
+  const invoices = await storage.getInvoicesByClient(subscription.clientId);
+  const linked = invoices.find((invoice) => invoice.subscriptionId === subscription.id);
+  if (linked) return linked;
+
+  return storage.createInvoice({
+    clientId: subscription.clientId,
+    subscriptionId: subscription.id,
+    amount: subscription.amount,
+    currency: subscription.currency || "USD",
+    status: "pending",
+    paidAt: null,
+    stripePaymentId: null,
+  });
+}
+
+async function resolveOrCreateNewsletterInvoice(clientId: string, subscriptionId: string, preferredInvoiceId?: string | null) {
+  if (preferredInvoiceId) {
+    const invoice = await storage.getInvoice(preferredInvoiceId);
+    if (!invoice || invoice.clientId !== clientId) {
+      const error = new Error("Invoice not found for this client.");
+      (error as Error & { status?: number }).status = 404;
+      throw error;
+    }
+    if (invoice.subscriptionId && invoice.subscriptionId !== subscriptionId) {
+      const error = new Error("Invoice belongs to a different subscription.");
+      (error as Error & { status?: number }).status = 409;
+      throw error;
+    }
+    if (!invoice.subscriptionId) {
+      await storage.updateInvoice(invoice.id, { subscriptionId });
+      const updated = await storage.getInvoice(invoice.id);
+      return updated || invoice;
+    }
+    return invoice;
+  }
+
+  const invoices = await storage.getInvoicesByClient(clientId);
+  const latestLinked = invoices.find((invoice) => invoice.subscriptionId === subscriptionId);
+  if (latestLinked) return latestLinked;
+
+  const subscription = await storage.getSubscription(subscriptionId);
+  if (!subscription) {
+    const error = new Error("Subscription not found.");
+    (error as Error & { status?: number }).status = 404;
+    throw error;
+  }
+
+  return storage.createInvoice({
+    clientId,
+    subscriptionId,
+    amount: subscription.amount,
+    currency: subscription.currency || "USD",
+    status: "pending",
+    paidAt: null,
+    stripePaymentId: null,
+  });
+}
+
+async function getLatestNewsletterDocumentForClient(clientId: string): Promise<NewsletterDocument> {
+  const allNewsletters = await storage.getNewslettersByClient(clientId);
+  if (!allNewsletters.length) {
+    return cloneDefaultNewsletterDocument();
+  }
+
+  const latest = allNewsletters
+    .slice()
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0];
+
+  return normalizeNewsletterDocument(
+    (latest?.documentJson as NewsletterDocument | LegacyNewsletterDocument | null | undefined) ||
+      DEFAULT_NEWSLETTER_DOCUMENT
+  );
+}
+
+async function applyBrandingToDocument(clientId: string, document: NewsletterDocument): Promise<NewsletterDocument> {
+  const brandingKit = await storage.getBrandingKit(clientId);
+  if (!brandingKit) {
+    return document;
+  }
+
+  return {
+    ...document,
+    theme: {
+      ...(document.theme || {}),
+      ...(brandingKit.primaryColor ? { accent: brandingKit.primaryColor } : {}),
+      ...(brandingKit.secondaryColor ? { text: brandingKit.secondaryColor } : {}),
+    },
+  };
+}
+
+async function createDraftNewsletterForInvoice(
+  invoiceId: string,
+  userId: string | null,
+  expectedSendDate?: string | null
+) {
+  const invoice = await storage.getInvoice(invoiceId);
+  if (!invoice) {
+    const error = new Error("Invoice not found.");
+    (error as Error & { status?: number }).status = 404;
+    throw error;
+  }
+  if (!invoice.subscriptionId) {
+    const error = new Error("Invoice must be attached to a subscription before creating newsletters.");
+    (error as Error & { status?: number }).status = 409;
+    throw error;
+  }
+
+  const existing = (await storage.getNewslettersByClient(invoice.clientId)).find(
+    (newsletter) => newsletter.invoiceId === invoice.id
+  );
+  if (existing) {
+    return { newsletter: existing, created: false };
+  }
+
+  const client = await storage.getClient(invoice.clientId);
+  if (!client) {
+    const error = new Error("Client not found for invoice.");
+    (error as Error & { status?: number }).status = 404;
+    throw error;
+  }
+
+  const resolvedDate =
+    expectedSendDate && expectedSendDate.trim()
+      ? expectedSendDate.trim()
+      : format(addDays(new Date(), 7), "yyyy-MM-dd");
+
+  const baseDocument = await getLatestNewsletterDocumentForClient(client.id);
+  const documentJson = await applyBrandingToDocument(client.id, baseDocument);
+  const createdNewsletter = await storage.createNewsletter({
+    clientId: client.id,
+    invoiceId: invoice.id,
+    subscriptionId: invoice.subscriptionId,
+    title: buildNewsletterTitle(client.name),
+    expectedSendDate: resolvedDate,
+    status: "draft",
+    documentJson,
+    createdById: userId,
+    fromEmail: client.primaryEmail,
+  });
+
+  const version = await storage.createVersion({
+    newsletterId: createdNewsletter.id,
+    versionNumber: 1,
+    snapshotJson: documentJson,
+    createdById: userId,
+    changeSummary: "Initial version from invoice",
+  });
+
+  const finalizedNewsletter = await storage.updateNewsletter(createdNewsletter.id, { currentVersionId: version.id });
+  return {
+    newsletter: finalizedNewsletter || { ...createdNewsletter, currentVersionId: version.id },
+    created: true,
+  };
+}
+
 const PATCH_FORBIDDEN_STATUSES = new Set<NewsletterStatus>(["scheduled", "sent"]);
 const ALLOWED_STATUS_TRANSITIONS: Record<NewsletterStatus, readonly NewsletterStatus[]> = {
   draft: ["draft", "in_review", "approved"],
@@ -970,7 +1165,8 @@ export async function registerRoutes(
       if (!client) {
         return res.status(404).json({ error: "Client not found" });
       }
-      const contacts = await storage.getContactsByClient(client.id);
+      const view = normalizeContactView(req.query?.view);
+      const contacts = await storage.getContactsByClient(client.id, view);
       res.json(contacts);
     } catch (error) {
       console.error("Get contacts error:", error);
@@ -1086,11 +1282,51 @@ export async function registerRoutes(
     }
   });
 
+  app.patch("/api/contacts/:id/archive", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const existing = await storage.getContact(req.params.id);
+      if (!existing) {
+        return res.status(404).json({ error: "Contact not found" });
+      }
+
+      const userId = (req as Request & { userId: string }).userId;
+      const updated = await storage.updateContact(req.params.id, {
+        archivedAt: new Date(),
+        archivedById: userId,
+      } as any);
+      res.json(updated);
+    } catch (error) {
+      console.error("Archive contact error:", error);
+      res.status(500).json({ error: "Failed to archive contact" });
+    }
+  });
+
+  app.patch("/api/contacts/:id/restore", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const existing = await storage.getContact(req.params.id);
+      if (!existing) {
+        return res.status(404).json({ error: "Contact not found" });
+      }
+
+      const updated = await storage.updateContact(req.params.id, {
+        archivedAt: null,
+        archivedById: null,
+      } as any);
+      res.json(updated);
+    } catch (error) {
+      console.error("Restore contact error:", error);
+      res.status(500).json({ error: "Failed to restore contact" });
+    }
+  });
+
   app.delete("/api/contacts/:id", requireAuth, async (req: Request, res: Response) => {
     try {
       const existing = await storage.getContact(req.params.id);
       if (!existing) {
         return res.status(404).json({ error: "Contact not found" });
+      }
+      if (!existing.archivedAt) {
+        return res.status(409).json({ error: "Archive contact before permanent deletion." });
       }
       await storage.deleteContact(req.params.id);
       res.status(204).send();
@@ -1108,6 +1344,7 @@ export async function registerRoutes(
       }
 
       const action = String(req.body?.action || "").trim().toLowerCase();
+      const userId = (req as Request & { userId: string }).userId;
       const contactIds: string[] = Array.isArray(req.body?.contactIds)
         ? Array.from(
             new Set(
@@ -1122,7 +1359,11 @@ export async function registerRoutes(
         return res.status(400).json({ error: "contactIds are required" });
       }
 
-      const clientContacts = await storage.getContactsByClient(client.id);
+      const [mainContacts, archivedContacts] = await Promise.all([
+        storage.getContactsByClient(client.id, "all"),
+        storage.getContactsByClient(client.id, "archived"),
+      ]);
+      const clientContacts = [...mainContacts, ...archivedContacts];
       const validContactSet = new Set(clientContacts.map((contact) => contact.id));
       const scopedIds = contactIds.filter((id) => validContactSet.has(id));
 
@@ -1132,7 +1373,47 @@ export async function registerRoutes(
 
       if (action === "activate" || action === "deactivate") {
         const isActive = action === "activate";
-        await Promise.all(scopedIds.map((id) => storage.updateContact(id, { isActive })));
+        await Promise.all(
+          scopedIds.map((id) =>
+            storage.updateContact(id, {
+              isActive,
+              archivedAt: null,
+              archivedById: null,
+            } as any)
+          )
+        );
+        return res.json({
+          action,
+          contactCount: scopedIds.length,
+          skippedCount: contactIds.length - scopedIds.length,
+        });
+      }
+
+      if (action === "archive") {
+        await Promise.all(
+          scopedIds.map((id) =>
+            storage.updateContact(id, {
+              archivedAt: new Date(),
+              archivedById: userId,
+            } as any)
+          )
+        );
+        return res.json({
+          action,
+          contactCount: scopedIds.length,
+          skippedCount: contactIds.length - scopedIds.length,
+        });
+      }
+
+      if (action === "restore") {
+        await Promise.all(
+          scopedIds.map((id) =>
+            storage.updateContact(id, {
+              archivedAt: null,
+              archivedById: null,
+            } as any)
+          )
+        );
         return res.json({
           action,
           contactCount: scopedIds.length,
@@ -1141,10 +1422,15 @@ export async function registerRoutes(
       }
 
       if (action === "delete") {
-        await Promise.all(scopedIds.map((id) => storage.deleteContact(id)));
+        const existingById = new Map(clientContacts.map((contact) => [contact.id, contact]));
+        const archivedIds = scopedIds.filter((id) => !!existingById.get(id)?.archivedAt);
+        if (archivedIds.length === 0) {
+          return res.status(409).json({ error: "Only archived contacts can be permanently deleted." });
+        }
+        await Promise.all(archivedIds.map((id) => storage.deleteContact(id)));
         return res.json({
           action,
-          contactCount: scopedIds.length,
+          contactCount: archivedIds.length,
           skippedCount: contactIds.length - scopedIds.length,
         });
       }
@@ -1387,7 +1673,7 @@ export async function registerRoutes(
         const raw = String(payload.subscriptionStatus || payload.status || "").trim().toLowerCase();
         if (raw === "active" || raw === "paused" || raw === "past_due" || raw === "canceled") return raw;
         if (raw === "inactive" || raw === "churned") return "canceled";
-        return "active";
+        return "canceled";
       })();
 
       const insertPayload = {
@@ -1422,7 +1708,9 @@ export async function registerRoutes(
         }
       }
       
-      res.status(201).json(client);
+      await storage.recalculateClientSubscriptionStatus(client.id);
+      const refreshed = await storage.getClient(client.id);
+      res.status(201).json(refreshed || client);
     } catch (error) {
       console.error("Create client error:", error);
       res.status(500).json({ error: "Failed to create client" });
@@ -1431,6 +1719,17 @@ export async function registerRoutes(
 
   app.patch("/api/clients/:id", requireAuth, async (req: Request, res: Response) => {
     try {
+      const requestedStatus =
+        typeof req.body?.subscriptionStatus === "string" ? req.body.subscriptionStatus.trim().toLowerCase() : "";
+      if (requestedStatus === "active") {
+        const subscriptions = await storage.getSubscriptionsByClient(req.params.id);
+        const hasActive = subscriptions.some((sub) => sub.status === "active");
+        if (!hasActive) {
+          return res.status(409).json({
+            error: "Client cannot be marked active without at least one active subscription.",
+          });
+        }
+      }
       const client = await storage.updateClient(req.params.id, req.body);
       res.json(client);
     } catch (error) {
@@ -1598,6 +1897,10 @@ export async function registerRoutes(
         ...req.body,
       });
 
+      if (subscription.status === "active") {
+        await ensureSubscriptionHasInvoice(subscription.id);
+      }
+
       if (subscription.status === "active" && subscription.frequency) {
         const client = await storage.getClient(clientId);
         if (client) {
@@ -1612,14 +1915,26 @@ export async function registerRoutes(
           const newsletters = [];
           for (const sendDate of sendDates) {
             const title = buildNewsletterTitle(client.name);
+            const invoice = await storage.createInvoice({
+              clientId,
+              subscriptionId: subscription.id,
+              amount: subscription.amount,
+              currency: subscription.currency || "USD",
+              status: "pending",
+              paidAt: null,
+              stripePaymentId: null,
+            });
             
+            const themedDocument = await applyBrandingToDocument(clientId, cloneDefaultNewsletterDocument());
+
             const newsletter = await storage.createNewsletter({
               clientId,
+              invoiceId: invoice.id,
               subscriptionId: subscription.id,
               title,
               expectedSendDate: format(sendDate, "yyyy-MM-dd"),
               status: "draft",
-              documentJson: cloneDefaultNewsletterDocument(),
+              documentJson: themedDocument,
               createdById: userId,
               fromEmail: client.primaryEmail,
             });
@@ -1627,7 +1942,7 @@ export async function registerRoutes(
             const version = await storage.createVersion({
               newsletterId: newsletter.id,
               versionNumber: 1,
-              snapshotJson: cloneDefaultNewsletterDocument(),
+              snapshotJson: themedDocument,
               createdById: userId,
               changeSummary: "Initial version",
             });
@@ -1657,8 +1972,12 @@ export async function registerRoutes(
         return res.status(400).json({ error: "clientId is required" });
       }
       const subscription = await storage.createSubscription({ clientId, ...rest });
+      if (subscription.status === "active") {
+        await ensureSubscriptionHasInvoice(subscription.id);
+      }
       await storage.recalculateClientSubscriptionStatus(clientId);
-      res.status(201).json(subscription);
+      const refreshed = await storage.getSubscription(subscription.id);
+      res.status(201).json(refreshed || subscription);
     } catch (error) {
       console.error("Create subscription error:", error);
       res.status(500).json({ error: "Failed to create subscription" });
@@ -1669,6 +1988,9 @@ export async function registerRoutes(
     try {
       const existing = await storage.getSubscription(req.params.id);
       const subscription = await storage.updateSubscription(req.params.id, req.body);
+      if (subscription?.status === "active") {
+        await ensureSubscriptionHasInvoice(subscription.id);
+      }
       if (existing) {
         await storage.recalculateClientSubscriptionStatus(existing.clientId);
       }
@@ -1697,13 +2019,28 @@ export async function registerRoutes(
   // ============================================================================
   app.get("/api/invoices", requireAuth, async (req: Request, res: Response) => {
     try {
-      const invoices = await storage.getAllInvoices();
-      const clients = await storage.getClients();
+      const [invoices, clients, subscriptions, newsletters] = await Promise.all([
+        storage.getAllInvoices(),
+        storage.getClients(),
+        storage.getAllSubscriptions(),
+        storage.getAllNewsletters(),
+      ]);
       const clientMap = new Map(clients.map(c => [c.id, c]));
+      const subscriptionMap = new Map(subscriptions.map((subscription) => [subscription.id, subscription]));
+      const newslettersByInvoiceId = newsletters.reduce<Record<string, any[]>>((acc, newsletter) => {
+        if (!newsletter.invoiceId) return acc;
+        if (!acc[newsletter.invoiceId]) {
+          acc[newsletter.invoiceId] = [];
+        }
+        acc[newsletter.invoiceId].push(newsletter);
+        return acc;
+      }, {});
 
       const enrichedInvoices = invoices.map(inv => ({
         ...inv,
         client: clientMap.get(inv.clientId),
+        subscription: inv.subscriptionId ? subscriptionMap.get(inv.subscriptionId) || null : null,
+        newsletters: newslettersByInvoiceId[inv.id] || [],
       }));
 
       res.json(enrichedInvoices);
@@ -1733,59 +2070,37 @@ export async function registerRoutes(
         return res.status(404).json({ error: "Client not found" });
       }
 
-      let linkedSubscriptionId = subscriptionId;
-      if (!linkedSubscriptionId) {
+      let linkedSubscriptionId = subscriptionId || null;
+      if (linkedSubscriptionId) {
+        const linked = await storage.getSubscription(linkedSubscriptionId);
+        if (!linked || linked.clientId !== client.id) {
+          return res.status(404).json({ error: "Subscription not found for this client" });
+        }
+      } else {
         const subscriptions = await storage.getSubscriptionsByClient(clientId);
-        const activeSubscription = subscriptions.find(s => s.status === "active");
+        const activeSubscription = subscriptions.find((s) => s.status === "active");
         if (activeSubscription) {
           linkedSubscriptionId = activeSubscription.id;
         }
       }
 
+      if (!linkedSubscriptionId) {
+        return res.status(409).json({
+          error: "Invoice requires an active subscription. Create or activate a subscription first.",
+        });
+      }
+
       const invoice = await storage.createInvoice({
         clientId,
-        subscriptionId: linkedSubscriptionId || null,
+        subscriptionId: linkedSubscriptionId,
         amount,
         currency: currency || "USD",
         stripePaymentId,
         status: stripePaymentId ? "paid" : "pending",
         paidAt: stripePaymentId ? new Date() : null,
       });
-
-      const title = buildNewsletterTitle(client.name);
-
-      const latestNewsletter = await storage.getLatestClientNewsletter(client.id);
-      let documentJson: NewsletterDocument;
-
-      if (latestNewsletter?.documentJson) {
-        documentJson = normalizeNewsletterDocument(latestNewsletter.documentJson as NewsletterDocument);
-      } else {
-        documentJson = cloneDefaultNewsletterDocument();
-      }
-
-      const newsletter = await storage.createNewsletter({
-        clientId: client.id,
-        invoiceId: invoice.id,
-        subscriptionId: linkedSubscriptionId || null,
-        title,
-        expectedSendDate: expectedSendDate,
-        status: "draft",
-        documentJson,
-        createdById: userId,
-        fromEmail: client.primaryEmail,
-      });
-
-      const version = await storage.createVersion({
-        newsletterId: newsletter.id,
-        versionNumber: 1,
-        snapshotJson: documentJson,
-        createdById: userId,
-        changeSummary: "Initial version from invoice",
-      });
-
-      await storage.updateNewsletter(newsletter.id, { currentVersionId: version.id });
-
-      res.status(201).json({ invoice, newsletter: { ...newsletter, currentVersionId: version.id } });
+      const draft = await createDraftNewsletterForInvoice(invoice.id, userId, expectedSendDate);
+      res.status(201).json({ invoice, newsletter: draft.newsletter, createdNewsletter: draft.created });
     } catch (error) {
       console.error("Create invoice error:", error);
       res.status(500).json({ error: "Failed to create invoice" });
@@ -1847,12 +2162,20 @@ export async function registerRoutes(
   app.post("/api/clients/:clientId/newsletters", requireAuth, async (req: Request, res: Response) => {
     try {
       const userId = (req as Request & { userId: string }).userId;
-      const { expectedSendDate, importedHtml } = req.body;
+      const { expectedSendDate, importedHtml, invoiceId, subscriptionId } = req.body;
 
       const client = await storage.getClient(req.params.clientId);
       if (!client) {
         return res.status(404).json({ error: "Client not found" });
       }
+
+      const resolvedExpectedSendDate =
+        typeof expectedSendDate === "string" && expectedSendDate.trim().length > 0
+          ? expectedSendDate.trim()
+          : format(addDays(new Date(), 7), "yyyy-MM-dd");
+
+      const subscription = await findPreferredSubscription(client.id, subscriptionId || null);
+      const invoice = await resolveOrCreateNewsletterInvoice(client.id, subscription.id, invoiceId || null);
 
       const title = buildNewsletterTitle(client.name);
 
@@ -1861,17 +2184,16 @@ export async function registerRoutes(
       if (importedHtml && importedHtml.trim()) {
         documentJson = createNewsletterDocumentFromHtml(importedHtml.trim());
       } else {
-        const latestNewsletter = await storage.getLatestClientNewsletter(client.id);
-        documentJson = normalizeNewsletterDocument(
-          (latestNewsletter?.documentJson as NewsletterDocument | LegacyNewsletterDocument | null) ||
-            DEFAULT_NEWSLETTER_DOCUMENT
-        );
+        documentJson = await getLatestNewsletterDocumentForClient(client.id);
       }
+      documentJson = await applyBrandingToDocument(client.id, documentJson);
 
       const newsletter = await storage.createNewsletter({
         clientId: req.params.clientId,
+        invoiceId: invoice.id,
+        subscriptionId: subscription.id,
         title,
-        expectedSendDate,
+        expectedSendDate: resolvedExpectedSendDate,
         status: "draft",
         documentJson,
         createdById: userId,
@@ -1890,6 +2212,10 @@ export async function registerRoutes(
 
       res.status(201).json({ ...newsletter, currentVersionId: version.id });
     } catch (error) {
+      const status = (error as Error & { status?: number }).status || 500;
+      if (status !== 500) {
+        return res.status(status).json({ error: (error as Error).message || "Unable to create newsletter" });
+      }
       console.error("Create newsletter error:", error);
       res.status(500).json({ error: "Failed to create newsletter" });
     }
@@ -2070,6 +2396,18 @@ export async function registerRoutes(
         (currentVersion?.snapshotJson || original.documentJson || DEFAULT_NEWSLETTER_DOCUMENT) as NewsletterDocument
       );
 
+      if (!original.subscriptionId) {
+        return res.status(409).json({
+          error: "Cannot duplicate newsletter without a linked subscription.",
+        });
+      }
+
+      const linkedInvoice = await resolveOrCreateNewsletterInvoice(
+        original.clientId,
+        original.subscriptionId,
+        original.invoiceId || null
+      );
+
       let expectedSendDate: string;
       if (original.subscriptionId) {
         const subscription = await storage.getSubscription(original.subscriptionId);
@@ -2085,7 +2423,8 @@ export async function registerRoutes(
 
       const newsletter = await storage.createNewsletter({
         clientId: original.clientId,
-        subscriptionId: original.subscriptionId || null,
+        invoiceId: linkedInvoice.id,
+        subscriptionId: original.subscriptionId,
         title: original.title + " (Copy)",
         status: "draft",
         documentJson: normalizeNewsletterDocument(documentJson),
@@ -3927,6 +4266,87 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/newsletters/:id/send-test", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const toEmail = typeof req.body?.toEmail === "string" ? req.body.toEmail.trim() : "";
+      if (!toEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(toEmail)) {
+        return res.status(400).json({ error: "Valid toEmail is required." });
+      }
+
+      const qa = await buildNewsletterQaReport(req.params.id);
+      if (!qa) {
+        return res.status(404).json({ error: "Newsletter not found" });
+      }
+
+      const blockers = qa.blockers.filter((blocker) => blocker.code !== "sender_not_verified");
+      if (blockers.length > 0) {
+        return res.status(400).json({
+          error: "Cannot send test email until blockers are resolved.",
+          blockers,
+        });
+      }
+
+      const postmarkToken = process.env.POSTMARK_SERVER_TOKEN || "";
+      if (!postmarkToken) {
+        return res.status(400).json({
+          error: "Postmark server token is not configured (POSTMARK_SERVER_TOKEN).",
+        });
+      }
+
+      const { ServerClient } = await import("postmark");
+      const pm = new ServerClient(postmarkToken);
+      const messageStream = process.env.POSTMARK_MESSAGE_STREAM || "outbound";
+      const testSubject = `[TEST] ${qa.subject}`;
+      const htmlBody = personalizeNewsletterHtml(qa.html, {
+        firstName: "Test",
+        lastName: "Recipient",
+      });
+
+      const sendResult = await pm.sendEmail({
+        From: qa.fromEmail,
+        To: toEmail,
+        Subject: testSubject,
+        HtmlBody: htmlBody,
+        MessageStream: messageStream,
+        TrackOpens: true,
+        TrackLinks: "HtmlAndText",
+        Tag: `${qa.newsletter.id}-test`,
+        Metadata: {
+          newsletterId: qa.newsletter.id,
+          clientId: qa.newsletter.clientId,
+          type: "test_send",
+        },
+      } as any);
+
+      const { db } = await import("./db");
+      const { newsletterEvents } = await import("@shared/schema");
+      await db.insert(newsletterEvents).values({
+        newsletterId: qa.newsletter.id,
+        clientId: qa.newsletter.clientId,
+        contactId: null,
+        email: toEmail,
+        postmarkMessageId:
+          typeof (sendResult as any)?.MessageID === "string" ? (sendResult as any).MessageID : null,
+        eventType: "test_sent",
+        occurredAt: new Date(),
+        payload: {
+          type: "test_send",
+          toEmail,
+          subject: testSubject,
+        },
+      } as any);
+
+      res.json({
+        ok: true,
+        toEmail,
+        status: "test_sent",
+      });
+    } catch (error) {
+      console.error("Send test error:", error);
+      res.status(500).json({ error: "Failed to send test email" });
+    }
+  });
+
   app.post("/api/newsletters/:id/schedule", requireAuth, async (req: Request, res: Response) => {
     try {
       const userId = (req as Request & { userId: string }).userId;
@@ -4728,6 +5148,7 @@ export async function registerRoutes(
     try {
       const { getUncachableStripeClient } = await import("./stripeClient");
       const stripe = await getUncachableStripeClient();
+      const userId = (req as Request & { userId: string }).userId;
       const requestedProductId =
         typeof req.body?.productId === "string" ? req.body.productId.trim() : "";
       const requestedPriceId =
@@ -4742,9 +5163,10 @@ export async function registerRoutes(
         return res.status(400).json({ error: dateRange.error });
       }
       const needsLineItemFilter = !!requestedProductId || !!requestedPriceId;
-      const [clients, invoices] = await Promise.all([
+      const [clients, invoices, subscriptions] = await Promise.all([
         storage.getClients(),
         storage.getAllInvoices(),
+        storage.getAllSubscriptions(),
       ]);
 
       const clientByEmail = new Map(
@@ -4754,6 +5176,11 @@ export async function registerRoutes(
       );
       const existingStripeOrderIds = new Set(
         invoices.map((invoice) => invoice.stripePaymentId).filter((id): id is string => !!id)
+      );
+      const activeSubscriptionByClient = new Map(
+        subscriptions
+          .filter((subscription) => subscription.status === "active")
+          .map((subscription) => [subscription.clientId, subscription])
       );
 
       const sessions = await stripe.checkout.sessions.list({
@@ -4834,14 +5261,20 @@ export async function registerRoutes(
         const status = session.payment_status === "paid" ? "paid" : "pending";
         const paidAt = status === "paid" ? new Date((session.created || Math.floor(Date.now() / 1000)) * 1000) : null;
 
-        await storage.createInvoice({
+        const activeSubscription = activeSubscriptionByClient.get(client.id);
+
+        const invoice = await storage.createInvoice({
           clientId: client.id,
+          subscriptionId: activeSubscription?.id || null,
           amount,
           currency,
           status,
           stripePaymentId,
           paidAt,
         });
+        if (invoice.subscriptionId) {
+          await createDraftNewsletterForInvoice(invoice.id, userId, null);
+        }
         for (const dedupeId of dedupeIds) {
           existingStripeOrderIds.add(dedupeId);
         }
@@ -4998,7 +5431,7 @@ export async function registerRoutes(
 
         const existing = existingByStripeId.get(sub.id);
         if (existing) {
-          await storage.updateSubscription(existing.id, {
+          const updated = await storage.updateSubscription(existing.id, {
             amount,
             currency: (price?.currency || "usd").toUpperCase(),
             frequency,
@@ -5006,6 +5439,9 @@ export async function registerRoutes(
             startDate,
             endDate,
           });
+          if (updated?.status === "active") {
+            await ensureSubscriptionHasInvoice(updated.id);
+          }
           updatedCount += 1;
         } else {
           const created = await storage.createSubscription({
@@ -5019,6 +5455,9 @@ export async function registerRoutes(
             endDate,
           });
           existingByStripeId.set(sub.id, created);
+          if (created.status === "active") {
+            await ensureSubscriptionHasInvoice(created.id);
+          }
           createdCount += 1;
         }
         touchedClientIds.add(client.id);

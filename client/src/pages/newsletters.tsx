@@ -290,21 +290,20 @@ function TableView({
             <tr key={newsletter.id} className="border-b border-border/50 hover:bg-muted/20" data-testid={`newsletter-row-${newsletter.id}`}>
               <td className="p-3">
                 <div className="flex flex-col items-start gap-1">
-                  <Link href={`/newsletters/${newsletter.id}`} className="hover:underline font-medium">
-                    {newsletter.client.name}
-                  </Link>
                   <button
                     type="button"
-                    className="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
+                    className="hover:underline font-medium text-left"
                     onClick={() => onOpenClient(newsletter.client.id)}
-                    data-testid={`button-open-client-card-table-${newsletter.id}`}
                   >
-                    <UserSquare2 className="w-3 h-3" />
-                    Client Card
+                    {newsletter.client.name}
                   </button>
                 </div>
               </td>
-              <td className="p-3 text-muted-foreground">{newsletter.title}</td>
+              <td className="p-3 text-muted-foreground">
+                <Link href={`/newsletters/${newsletter.id}`} className="hover:underline">
+                  {newsletter.title}
+                </Link>
+              </td>
               <td className="p-3 text-muted-foreground">
                 {format(new Date(newsletter.expectedSendDate), "MMM d, yyyy")}
               </td>

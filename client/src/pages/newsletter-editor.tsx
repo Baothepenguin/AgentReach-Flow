@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { useLocation, Link } from "wouter";
+import { useLocation } from "wouter";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { TopNav } from "@/components/TopNav";
 import { RightPanel } from "@/components/RightPanel";
@@ -46,7 +46,8 @@ import {
   Send,
   Monitor,
   Smartphone,
-  PanelRightOpen,
+  UserSquare2,
+  Bot,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import type {
@@ -55,6 +56,7 @@ import type {
   NewsletterDocument,
   Client,
   TasksFlags,
+  Invoice,
 } from "@shared/schema";
 import { format } from "date-fns";
 
@@ -79,13 +81,14 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
   const { toast } = useToast();
   const [, setLocation] = useLocation();
   const [showClientPanel, setShowClientPanel] = useState(false);
+  const [rightRailMode, setRightRailMode] = useState<"ai" | "client">("client");
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [sendDialogOpen, setSendDialogOpen] = useState(false);
   const [sendDialogMode, setSendDialogMode] = useState<"schedule" | "send_now">("schedule");
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved">("idle");
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [editedTitle, setEditedTitle] = useState("");
-  const [chatCollapsed, setChatCollapsed] = useState(true);
+  const [chatCollapsed, setChatCollapsed] = useState(false);
   const [editingHtml, setEditingHtml] = useState(false);
   const [previewDevice, setPreviewDevice] = useState<"desktop" | "mobile">("desktop");
   const [htmlDraft, setHtmlDraft] = useState("");
@@ -98,6 +101,7 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
     versions: NewsletterVersion[];
     flags: TasksFlags[];
     html: string;
+    invoice?: Invoice | null;
   }>({
     queryKey: ["/api/newsletters", newsletterId],
   });
@@ -250,8 +254,31 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
       } catch {
         toast({ title: "Review link opened", description: data.reviewUrl });
       }
-    } catch {
-      toast({ title: "Failed to generate review link", variant: "destructive" });
+    } catch (error: any) {
+      toast({
+        title: "Failed to generate review link",
+        description: error?.message || "Try again.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleSendTestEmail = async () => {
+    const toEmail = window.prompt("Send test email to:");
+    if (!toEmail) return;
+    try {
+      const res = await apiRequest("POST", `/api/newsletters/${newsletterId}/send-test`, { toEmail });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data?.error || "Failed to send test email");
+      }
+      toast({ title: "Test email sent", description: `Sent to ${toEmail}` });
+    } catch (error: any) {
+      toast({
+        title: "Test email failed",
+        description: error?.message || "Unable to send test email",
+        variant: "destructive",
+      });
     }
   };
 
@@ -293,6 +320,16 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
     <div className="flex flex-col h-screen w-full bg-background">
       <TopNav />
       <div className="flex flex-1 overflow-hidden bg-background">
+        <div className="hidden lg:block w-60 xl:w-72 flex-shrink-0 border-r bg-background/70 backdrop-blur-sm">
+          <RightPanel
+            newsletterId={newsletterId}
+            status={newsletter.status}
+            onStatusChange={(status) => updateStatusMutation.mutate(status)}
+            assignedToId={newsletter.assignedToId}
+            onAssignedToChange={(assignedToId) => updateAssignedToMutation.mutate(assignedToId)}
+          />
+        </div>
+
         <div className="flex-1 flex flex-col min-w-0">
           <header className="border-b border-border/70 bg-background/90 backdrop-blur px-3 sm:px-5 py-2.5">
             <div className="flex flex-wrap items-center justify-between gap-2">
@@ -360,24 +397,23 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
 
                     {client && (
                       <div className="inline-flex items-center gap-2">
-                        <Link
-                          href={`/clients/${client.id}`}
+                        <button
+                          type="button"
                           className="text-xs text-muted-foreground hover:text-foreground transition-colors inline-flex items-center gap-1"
+                          onClick={() => {
+                            setRightRailMode("client");
+                            setShowClientPanel(true);
+                          }}
                           data-testid="link-client-name"
                         >
                           <User className="w-3.5 h-3.5" />
                           {client.name}
-                        </Link>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-7 px-2 text-xs"
-                          onClick={() => setShowClientPanel(true)}
-                          data-testid="button-open-client-panel"
-                        >
-                          <PanelRightOpen className="w-3.5 h-3.5 mr-1" />
-                          Client Card
-                        </Button>
+                        </button>
+                        {newsletterData?.invoice?.id && (
+                          <span className="text-[11px] text-muted-foreground">
+                            Order #{newsletterData.invoice.id.slice(0, 8)}
+                          </span>
+                        )}
                       </div>
                     )}
 
@@ -492,6 +528,10 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
                       <ExternalLink className="w-4 h-4 mr-2" />
                       Get review link
                     </DropdownMenuItem>
+                    <DropdownMenuItem onClick={handleSendTestEmail} disabled={!hasContent} data-testid="button-send-test">
+                      <Send className="w-4 h-4 mr-2" />
+                      Send test email
+                    </DropdownMenuItem>
                     <DropdownMenuSeparator />
                     <DropdownMenuItem
                       onClick={() => {
@@ -517,6 +557,37 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
                     </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
+
+                {client && (
+                  <div className="inline-flex items-center rounded-md border border-border bg-background overflow-hidden">
+                    <Button
+                      size="sm"
+                      variant={rightRailMode === "client" ? "secondary" : "ghost"}
+                      className="h-8 rounded-none text-xs"
+                      onClick={() => {
+                        setRightRailMode("client");
+                        setShowClientPanel(true);
+                        setChatCollapsed(true);
+                      }}
+                    >
+                      <UserSquare2 className="w-3.5 h-3.5 mr-1.5" />
+                      Client
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant={rightRailMode === "ai" ? "secondary" : "ghost"}
+                      className="h-8 rounded-none text-xs"
+                      onClick={() => {
+                        setRightRailMode("ai");
+                        setShowClientPanel(false);
+                        setChatCollapsed(false);
+                      }}
+                    >
+                      <Bot className="w-3.5 h-3.5 mr-1.5" />
+                      AI
+                    </Button>
+                  </div>
+                )}
               </div>
             </div>
           </header>
@@ -598,26 +669,26 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
           </div>
         </div>
 
-        <div className="hidden lg:block w-60 xl:w-72 flex-shrink-0 border-l bg-background/70 backdrop-blur-sm">
-          <RightPanel
-            newsletterId={newsletterId}
-            status={newsletter.status}
-            onStatusChange={(status) => updateStatusMutation.mutate(status)}
-            assignedToId={newsletter.assignedToId}
-            onAssignedToChange={(assignedToId) => updateAssignedToMutation.mutate(assignedToId)}
-          />
-        </div>
-
         {client && (
-          <div className="hidden xl:flex">
-            <GeminiChatPanel
-              newsletterId={newsletterId}
-              clientId={client.id}
-              clientName={client.name}
-              collapsed={chatCollapsed}
-              onToggleCollapse={() => setChatCollapsed(!chatCollapsed)}
-              enableBlockSuggestions={false}
-            />
+          <div className="hidden xl:flex w-[360px] flex-shrink-0 border-l bg-background/70 backdrop-blur-sm">
+            {rightRailMode === "ai" ? (
+              <GeminiChatPanel
+                newsletterId={newsletterId}
+                clientId={client.id}
+                clientName={client.name}
+                collapsed={chatCollapsed}
+                onToggleCollapse={() => setChatCollapsed(!chatCollapsed)}
+                enableBlockSuggestions={false}
+              />
+            ) : (
+              <div className="w-full p-4 space-y-3">
+                <div className="text-sm font-medium">Client Context</div>
+                <div className="rounded-md border p-3 space-y-1">
+                  <div className="text-sm font-semibold">{client.name}</div>
+                  <div className="text-xs text-muted-foreground">{client.primaryEmail}</div>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>

@@ -2,6 +2,7 @@ import express, { type Express } from "express";
 import { createServer, type Server } from "http";
 import { registerRoutes } from "./routes";
 import { WebhookHandlers } from "./webhookHandlers";
+import { ensureRuntimeSchemaCompatibility } from "./db";
 
 declare module "http" {
   interface IncomingMessage {
@@ -74,6 +75,7 @@ export async function createApp(): Promise<{ app: Express; httpServer: Server }>
   );
   app.use(express.urlencoded({ extended: false, limit: "10mb" }));
 
+  await ensureRuntimeSchemaCompatibility();
   await registerRoutes(httpServer, app);
   return { app, httpServer };
 }

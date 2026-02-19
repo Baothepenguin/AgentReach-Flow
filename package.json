@@ -8,8 +8,15 @@
     "build": "tsx script/build.ts",
     "start": "NODE_ENV=production node dist/index.cjs",
     "check": "tsc",
+    "qa:deep": "tsx script/deep-qa.ts",
+    "qa:deep:ci": "tsx script/deep-qa.ts --ci",
+    "release:prod": "bash script/deploy-prod-safe.sh",
+    "release:prod:emergency": "bash script/deploy-prod-safe.sh --emergency",
     "db:push": "drizzle-kit push",
-    "seed:demo": "tsx script/seed-demo-data.ts"
+    "seed:demo:additive": "tsx script/seed-demo-data.ts",
+    "seed:demo:reset": "tsx script/reset-seed-demo.ts --confirm",
+    "seed:demo": "npm run seed:demo:reset && npm run seed:demo:additive",
+    "repair:relations": "tsx script/repair-relations.ts --confirm"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

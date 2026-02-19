@@ -634,6 +634,8 @@ export const contacts = pgTable("contacts", {
   lastName: text("last_name"),
   tags: jsonb("tags").$type<string[]>().default(["all"]),
   isActive: boolean("is_active").notNull().default(true),
+  archivedAt: timestamp("archived_at"),
+  archivedById: varchar("archived_by_id").references(() => users.id, { onDelete: "set null" }),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -642,6 +644,10 @@ export const contactsRelations = relations(contacts, ({ one }) => ({
   client: one(clients, {
     fields: [contacts.clientId],
     references: [clients.id],
+  }),
+  archivedBy: one(users, {
+    fields: [contacts.archivedById],
+    references: [users.id],
   }),
 }));
 

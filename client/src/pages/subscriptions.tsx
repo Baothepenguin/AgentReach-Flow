@@ -1,6 +1,5 @@
 import { useState, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { useLocation } from "wouter";
 import { TopNav } from "@/components/TopNav";
 import { ClientSidePanel } from "@/components/ClientSidePanel";
 import { Button } from "@/components/ui/button";
@@ -8,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
-import { RefreshCw, X, Plus, Save, Trash2, UserSquare2 } from "lucide-react";
+import { RefreshCw, X, Plus, Save } from "lucide-react";
 import { format } from "date-fns";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -88,7 +87,6 @@ function SubscriptionPreview({
   onUpdated: () => void;
   onOpenClientCard: (clientId: string) => void;
 }) {
-  const [, setLocation] = useLocation();
   const { toast } = useToast();
 
   const [editFrequency, setEditFrequency] = useState(subscription.frequency);
@@ -114,20 +112,6 @@ function SubscriptionPreview({
     },
     onError: (error: Error) => {
       toast({ title: "Failed to update", description: error.message, variant: "destructive" });
-    },
-  });
-
-  const deleteMutation = useMutation({
-    mutationFn: async () => {
-      await apiRequest("DELETE", `/api/subscriptions/${subscription.id}`);
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/subscriptions"] });
-      toast({ title: "Subscription deleted" });
-      onClose();
-    },
-    onError: (error: Error) => {
-      toast({ title: "Failed to delete", description: error.message, variant: "destructive" });
     },
   });
 
@@ -211,15 +195,6 @@ function SubscriptionPreview({
             <Save className="w-4 h-4 mr-1.5" />
             {updateMutation.isPending ? "Saving..." : "Save"}
           </Button>
-          <Button
-            variant="destructive"
-            onClick={() => deleteMutation.mutate()}
-            disabled={deleteMutation.isPending}
-            data-testid="button-delete-subscription"
-          >
-            <Trash2 className="w-4 h-4 mr-1.5" />
-            {deleteMutation.isPending ? "Deleting..." : "Delete"}
-          </Button>
         </div>
 
         <div className="pt-4 border-t border-border/30">
@@ -227,22 +202,12 @@ function SubscriptionPreview({
           <div className="py-2 space-y-2">
             <div
               className="cursor-pointer hover-elevate rounded-md px-2 py-1.5"
-              onClick={() => setLocation(`/clients?id=${subscription.client.id}`)}
+              onClick={() => onOpenClientCard(subscription.client.id)}
               data-testid={`link-client-${subscription.client.id}`}
             >
               <p className="font-medium">{subscription.client.name}</p>
               <p className="text-sm text-muted-foreground">{subscription.client.primaryEmail}</p>
             </div>
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-8 text-xs"
-              onClick={() => onOpenClientCard(subscription.client.id)}
-              data-testid={`button-open-client-card-subscription-preview-${subscription.id}`}
-            >
-              <UserSquare2 className="w-3.5 h-3.5 mr-1.5" />
-              Open Client Card
-            </Button>
           </div>
         </div>
       </div>
@@ -312,6 +277,9 @@ export default function SubscriptionsPage() {
 
   const { data: clients = [] } = useQuery<Client[]>({
     queryKey: ["/api/clients"],
+  });
+  const { data: invoices = [] } = useQuery<any[]>({
+    queryKey: ["/api/invoices"],
   });
 
   const [newClientId, setNewClientId] = useState("");
@@ -540,6 +508,7 @@ export default function SubscriptionsPage() {
                     <th className="text-left p-3 text-xs font-medium text-muted-foreground">Frequency</th>
                     <th className="text-right p-3 text-xs font-medium text-muted-foreground">Amount</th>
                     <th className="text-left p-3 text-xs font-medium text-muted-foreground">Status</th>
+                    <th className="text-center p-3 text-xs font-medium text-muted-foreground">Orders</th>
                     <th className="text-left p-3 text-xs font-medium text-muted-foreground">Start Date</th>
                   </tr>
                 </thead>
@@ -552,25 +521,23 @@ export default function SubscriptionsPage() {
                       data-testid={`subscription-row-${sub.id}`}
                     >
                       <td className="p-3">
-                        <div className="flex flex-col items-start gap-1">
-                          <span className="font-medium">{sub.client.name}</span>
-                          <button
-                            type="button"
-                            className="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              setSelectedClientId(sub.client.id);
-                            }}
-                            data-testid={`button-open-client-card-subscription-row-${sub.id}`}
-                          >
-                            <UserSquare2 className="w-3 h-3" />
-                            Client Card
-                          </button>
-                        </div>
+                        <button
+                          type="button"
+                          className="font-medium hover:underline"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setSelectedClientId(sub.client.id);
+                          }}
+                        >
+                          {sub.client.name}
+                        </button>
                       </td>
                       <td className="p-3 text-muted-foreground">{formatFrequency(sub.frequency)}</td>
                       <td className="p-3 text-right">{sub.currency} ${Number(sub.amount).toFixed(2)}</td>
                       <td className="p-3">{getStatusIndicator(sub.status)}</td>
+                      <td className="p-3 text-center text-muted-foreground">
+                        {invoices.filter((invoice) => invoice.subscriptionId === sub.id).length}
+                      </td>
                       <td className="p-3 text-muted-foreground">
                         {sub.startDate ? format(new Date(sub.startDate), "MMM d, yyyy") : "-"}
                       </td>
