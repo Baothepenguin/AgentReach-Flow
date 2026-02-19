@@ -461,7 +461,22 @@ export function ClientSidePanel({ clientId, open, onClose }: ClientSidePanelProp
               </div>
 
               <div>
-                <h3 className="text-sm font-medium mb-3">Audience (Contacts + Segments)</h3>
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-sm font-medium">Audience (Contacts + Segments)</h3>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 px-2 text-xs"
+                    onClick={() => {
+                      setLocation(`/audience?clientId=${client.id}`);
+                      onClose();
+                    }}
+                    data-testid="button-open-audience-workspace-client-card"
+                  >
+                    Open Workspace
+                    <ExternalLink className="w-3 h-3 ml-1" />
+                  </Button>
+                </div>
                 <ClientAudiencePanel clientId={client.id} />
               </div>
             </div>

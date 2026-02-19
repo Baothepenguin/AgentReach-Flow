@@ -11,6 +11,7 @@ import NewslettersPage from "@/pages/newsletters";
 import InvoicesPage from "@/pages/invoices";
 import SubscriptionsPage from "@/pages/subscriptions";
 import BrandingKitsPage from "@/pages/branding-kits";
+import AudienceManagerPage from "@/pages/audience-manager";
 import NewsletterEditorPage from "@/pages/newsletter-editor";
 import ReviewPage from "@/pages/review";
 import OnboardingPage from "@/pages/onboarding";
@@ -66,6 +67,11 @@ function Router() {
       <Route path="/branding-kits" component={() => (
         <ProtectedRoute>
           <BrandingKitsPage />
+        </ProtectedRoute>
+      )} />
+      <Route path="/audience" component={() => (
+        <ProtectedRoute>
+          <AudienceManagerPage />
         </ProtectedRoute>
       )} />
       <Route path="/newsletters/:id" component={(params) => (
