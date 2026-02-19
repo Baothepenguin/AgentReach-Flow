@@ -319,7 +319,7 @@ export function RightPanel({
         </div>
       </div>
 
-      <div className="px-3 pt-1 pb-2">
+      <div className="px-3 py-2">
         <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground" data-testid="label-client-feedback">
           Client Feedback
           {pendingFeedback.length > 0 && (
@@ -329,7 +329,7 @@ export function RightPanel({
       </div>
       
       <ScrollArea className="flex-1">
-        <div className="p-2 space-y-1">
+        <div className="px-3 pb-3 space-y-1">
           {clientFeedback.length === 0 ? (
             <div className="text-center py-6 text-sm text-muted-foreground" data-testid="text-no-feedback">
               No client feedback yet

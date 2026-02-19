@@ -295,7 +295,10 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         const blockerMessage = Array.isArray(data?.blockers) && data.blockers.length > 0
-          ? data.blockers[0]?.message
+          ? data.blockers
+              .map((blocker: { message?: string }) => blocker?.message)
+              .filter(Boolean)
+              .join(" ")
           : null;
         throw new Error(blockerMessage || data?.error || "Failed to send test email");
       }

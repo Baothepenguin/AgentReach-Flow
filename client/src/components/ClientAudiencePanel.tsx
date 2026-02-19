@@ -355,7 +355,7 @@ export function ClientAudiencePanel({ clientId }: ClientAudiencePanelProps) {
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="inline-flex items-center rounded-md border bg-background">
+        <div className="inline-flex items-center rounded-md bg-muted/25">
           {(["all", "active", "unsubscribed", "archived"] as const).map((tab) => (
             <Button
               key={tab}
@@ -402,7 +402,7 @@ export function ClientAudiencePanel({ clientId }: ClientAudiencePanelProps) {
       </div>
 
       {showSingleAdd && (
-        <div className="rounded-md border bg-muted/20 p-3 space-y-2">
+        <div className="rounded-md bg-muted/20 p-3 space-y-2">
           <div className="grid grid-cols-2 gap-2">
             <Input
               value={newContact.email}
@@ -451,7 +451,7 @@ export function ClientAudiencePanel({ clientId }: ClientAudiencePanelProps) {
       )}
 
       {showBulkAdd && (
-        <div className="rounded-md border bg-muted/20 p-3 space-y-2">
+        <div className="rounded-md bg-muted/20 p-3 space-y-2">
           <Textarea
             value={bulkEmails}
             onChange={(event) => setBulkEmails(event.target.value)}
@@ -470,7 +470,7 @@ export function ClientAudiencePanel({ clientId }: ClientAudiencePanelProps) {
       )}
 
       {showImportPanel && (
-        <div className="rounded-md border bg-muted/20 p-3 space-y-2">
+        <div className="rounded-md bg-muted/20 p-3 space-y-2">
           <input
             ref={csvFileInputRef}
             type="file"
@@ -553,7 +553,7 @@ export function ClientAudiencePanel({ clientId }: ClientAudiencePanelProps) {
       )}
 
       {showImportHistory && (
-        <div className="rounded-md border bg-muted/20 p-3 space-y-2">
+        <div className="rounded-md bg-muted/20 p-3 space-y-2">
           {importJobs.length === 0 ? (
             <div className="text-xs text-muted-foreground">No import history yet</div>
           ) : (
@@ -562,7 +562,7 @@ export function ClientAudiencePanel({ clientId }: ClientAudiencePanelProps) {
                 const createdAt = new Date(job.createdAt);
                 const hasValidDate = !Number.isNaN(createdAt.getTime());
                 return (
-                  <div key={job.id} className="rounded-md border bg-background px-2 py-1.5 space-y-1">
+                  <div key={job.id} className="rounded-md bg-background px-2 py-1.5 space-y-1">
                     <div className="flex items-center justify-between gap-2">
                       <div className="text-[11px] font-medium">{toTitleCase(job.status)}</div>
                       <span className="text-[11px] text-muted-foreground">

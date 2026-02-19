@@ -71,7 +71,7 @@ export default function AudienceManagerPage() {
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-[320px_1fr] gap-5">
-          <section className="rounded-lg border bg-background p-3 h-[calc(100vh-180px)] overflow-hidden">
+          <section className="rounded-lg bg-background p-3 h-[calc(100vh-180px)] overflow-hidden">
             <div className="space-y-2">
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
@@ -118,7 +118,7 @@ export default function AudienceManagerPage() {
             </div>
           </section>
 
-          <section className="rounded-lg border bg-background p-4 h-[calc(100vh-180px)] overflow-y-auto">
+          <section className="rounded-lg bg-background p-4 h-[calc(100vh-180px)] overflow-y-auto">
             {!selectedClient ? (
               <div className="h-full flex items-center justify-center text-sm text-muted-foreground">
                 Select a client to manage their list and segments
