@@ -270,7 +270,7 @@ export function ClientSidePanel({ clientId, open, onClose }: ClientSidePanelProp
   };
 
   const manageButtonClass =
-    "h-7 px-2 text-xs opacity-0 pointer-events-none transition-opacity group-hover/section:opacity-100 group-hover/section:pointer-events-auto focus-visible:opacity-100 focus-visible:pointer-events-auto";
+    "h-7 px-2 text-xs transition-opacity md:opacity-0 md:pointer-events-none md:group-hover/section:opacity-100 md:group-hover/section:pointer-events-auto";
 
   return (
     <Sheet
@@ -279,7 +279,7 @@ export function ClientSidePanel({ clientId, open, onClose }: ClientSidePanelProp
         if (!nextOpen) onClose();
       }}
     >
-      <SheetContent className="w-[400px] sm:w-[480px] p-0 [&>button]:hidden">
+      <SheetContent className="w-[94vw] max-w-[420px] sm:w-[480px] p-0 [&>button]:hidden">
         <SheetHeader className="p-4 border-b">
           <div className="flex items-center justify-between gap-2">
             <SheetTitle className="text-left">

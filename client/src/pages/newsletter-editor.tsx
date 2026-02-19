@@ -85,7 +85,7 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved">("idle");
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [editedTitle, setEditedTitle] = useState("");
-  const [chatCollapsed, setChatCollapsed] = useState(false);
+  const [chatCollapsed, setChatCollapsed] = useState(true);
   const [editingHtml, setEditingHtml] = useState(false);
   const [previewDevice, setPreviewDevice] = useState<"desktop" | "mobile">("desktop");
   const [htmlDraft, setHtmlDraft] = useState("");
@@ -294,9 +294,9 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
       <TopNav />
       <div className="flex flex-1 overflow-hidden bg-background">
         <div className="flex-1 flex flex-col min-w-0">
-          <header className="border-b border-border/70 bg-background/90 backdrop-blur px-5 py-3">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="flex min-w-0 flex-1 items-center gap-3">
+          <header className="border-b border-border/70 bg-background/90 backdrop-blur px-3 sm:px-5 py-2.5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex min-w-0 flex-1 items-center gap-2">
                 <Button
                   variant="ghost"
                   size="icon"
@@ -397,10 +397,10 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
                 </div>
               </div>
 
-              <div className="flex flex-wrap items-center justify-end gap-2 pl-1">
+              <div className="flex flex-wrap items-center justify-end gap-1.5 pl-1">
                 <Popover open={showDatePicker} onOpenChange={setShowDatePicker}>
                   <PopoverTrigger asChild>
-                    <Button variant="outline" size="sm" className="h-9" data-testid="button-edit-date">
+                    <Button variant="outline" size="sm" className="h-8 px-2.5 text-xs sm:text-sm" data-testid="button-edit-date">
                       <CalendarIcon className="w-3.5 h-3.5 mr-1.5" />
                       {newsletter.expectedSendDate
                         ? format(new Date(newsletter.expectedSendDate), "MMM d, yyyy")
@@ -420,7 +420,7 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
                 <Button
                   variant={editingHtml ? "secondary" : "outline"}
                   size="sm"
-                  className="h-9"
+                  className="h-8 px-2.5 text-xs sm:text-sm"
                   onClick={() => {
                     if (!editingHtml) {
                       setHtmlDraft(newsletterData?.html || "");
@@ -456,7 +456,7 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
 
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
-                    <Button variant="outline" size="sm" className="h-9" data-testid="button-file-menu">
+                    <Button variant="outline" size="sm" className="h-8 px-2.5 text-xs sm:text-sm" data-testid="button-file-menu">
                       <Upload className="w-4 h-4 mr-1" />
                       File
                       <ChevronDown className="w-3.5 h-3.5 ml-1" />
@@ -481,7 +481,7 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
 
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
-                    <Button variant="default" size="sm" className="h-9" data-testid="button-delivery-menu">
+                    <Button variant="default" size="sm" className="h-8 px-2.5 text-xs sm:text-sm" data-testid="button-delivery-menu">
                       <Send className="w-4 h-4 mr-1" />
                       Delivery
                       <ChevronDown className="w-3.5 h-3.5 ml-1" />
@@ -521,7 +521,7 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
             </div>
           </header>
 
-          <div className="flex-1 min-h-0 relative p-4 pt-3">
+          <div className="flex-1 min-h-0 relative p-2 sm:p-4 sm:pt-3">
             {editingHtml ? (
               <div className="h-full rounded-2xl border bg-card shadow-sm overflow-hidden flex flex-col">
                 <div className="h-10 px-4 border-b bg-muted/30 flex items-center justify-between text-xs text-muted-foreground">
@@ -598,7 +598,7 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
           </div>
         </div>
 
-        <div className="w-64 xl:w-72 flex-shrink-0 border-l bg-background/70 backdrop-blur-sm">
+        <div className="hidden lg:block w-60 xl:w-72 flex-shrink-0 border-l bg-background/70 backdrop-blur-sm">
           <RightPanel
             newsletterId={newsletterId}
             status={newsletter.status}
@@ -609,14 +609,16 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
         </div>
 
         {client && (
-          <GeminiChatPanel
-            newsletterId={newsletterId}
-            clientId={client.id}
-            clientName={client.name}
-            collapsed={chatCollapsed}
-            onToggleCollapse={() => setChatCollapsed(!chatCollapsed)}
-            enableBlockSuggestions={false}
-          />
+          <div className="hidden xl:flex">
+            <GeminiChatPanel
+              newsletterId={newsletterId}
+              clientId={client.id}
+              clientName={client.name}
+              collapsed={chatCollapsed}
+              onToggleCollapse={() => setChatCollapsed(!chatCollapsed)}
+              enableBlockSuggestions={false}
+            />
+          </div>
         )}
       </div>
 

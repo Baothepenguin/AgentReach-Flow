@@ -1,9 +1,9 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, type ChangeEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Code, Plus, Monitor, Smartphone, Link2, Type, X } from "lucide-react";
+import { Code, Plus, Monitor, Smartphone, Link2, Type, X, Palette, Image as ImageIcon, Upload } from "lucide-react";
 import { registerEditorPlugin, type EditorPluginProps } from "@/lib/editor-plugins";
 
 interface HTMLPreviewFrameProps extends EditorPluginProps {
@@ -23,8 +23,13 @@ type SelectedElementState = {
   href: string;
   fontSize: string;
   fontFamily: string;
+  color: string;
+  imageSrc: string;
+  imageAlt: string;
   canEditText: boolean;
   canEditLink: boolean;
+  canEditColor: boolean;
+  canEditImage: boolean;
 };
 
 const EDIT_ATTR = "data-flow-edit-id";
@@ -43,6 +48,26 @@ function createEditId(): string {
   return `flow-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+function normalizeColorToHex(value: string): string {
+  const trimmed = (value || "").trim();
+  if (!trimmed) return "#111827";
+  if (/^#[0-9a-f]{6}$/i.test(trimmed)) return trimmed;
+  if (/^#[0-9a-f]{3}$/i.test(trimmed)) {
+    const r = trimmed.charAt(1);
+    const g = trimmed.charAt(2);
+    const b = trimmed.charAt(3);
+    return `#${r}${r}${g}${g}${b}${b}`;
+  }
+  const rgbMatch = trimmed.match(/^rgba?\(([^)]+)\)$/i);
+  if (!rgbMatch) return "#111827";
+  const [r, g, b] = rgbMatch[1]
+    .split(",")
+    .slice(0, 3)
+    .map((part) => Math.max(0, Math.min(255, Number.parseInt(part.trim(), 10) || 0)));
+  const toHex = (channel: number) => channel.toString(16).padStart(2, "0");
+  return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+}
+
 function toPixelValue(value: string): string {
   const trimmed = value.trim();
   if (!trimmed) return "";
@@ -52,11 +77,12 @@ function toPixelValue(value: string): string {
 function getEditableTarget(element: HTMLElement | null): HTMLElement | null {
   if (!element) return null;
   const candidate = element.closest<HTMLElement>(
-    "a,button,h1,h2,h3,h4,h5,h6,p,span,td,th,li"
+    "img,a,button,h1,h2,h3,h4,h5,h6,p,span,td,th,li"
   );
 
   if (!candidate) return null;
   if (candidate.tagName === "BODY" || candidate.tagName === "HTML") return null;
+  if (candidate.tagName.toLowerCase() === "img") return candidate;
   const textLength = (candidate.textContent || "").trim().length;
   const tag = candidate.tagName.toLowerCase();
   if (!["a", "button"].includes(tag) && (textLength === 0 || textLength > 600)) return null;
@@ -79,6 +105,7 @@ export function HTMLPreviewFrame({
   const selectedRef = useRef<SelectedElementState | null>(null);
   const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  const imageFileInputRef = useRef<HTMLInputElement>(null);
   const activeDeviceMode = deviceMode ?? internalDeviceMode;
   const setActiveDeviceMode = onDeviceModeChange ?? setInternalDeviceMode;
 
@@ -160,6 +187,8 @@ export function HTMLPreviewFrame({
     const computed = element.ownerDocument.defaultView?.getComputedStyle(element);
     const linkElement =
       (tag === "a" ? element : element.closest("a")) || (element.querySelector("a") as HTMLElement | null);
+    const imageElement =
+      (tag === "img" ? element : element.querySelector("img")) as HTMLImageElement | null;
 
     return {
       id,
@@ -168,8 +197,13 @@ export function HTMLPreviewFrame({
       href: linkElement?.getAttribute("href") || "",
       fontSize: element.style.fontSize || computed?.fontSize || "",
       fontFamily: element.style.fontFamily || computed?.fontFamily || "",
-      canEditText: true,
+      color: normalizeColorToHex(element.style.color || computed?.color || ""),
+      imageSrc: imageElement?.getAttribute("src") || "",
+      imageAlt: imageElement?.getAttribute("alt") || "",
+      canEditText: tag !== "img",
       canEditLink: true,
+      canEditColor: tag !== "img",
+      canEditImage: tag === "img",
     };
   }, []);
 
@@ -197,33 +231,60 @@ export function HTMLPreviewFrame({
           element.querySelector("a")
         ) as HTMLAnchorElement | null;
         const nextHref = patch.href.trim();
-        if (nextHref) {
-          if (linkElement) {
-            linkElement.setAttribute("href", nextHref);
-          } else {
-            const anchor = doc.createElement("a");
-            anchor.setAttribute("href", nextHref);
-            anchor.setAttribute("target", "_blank");
-            anchor.setAttribute("rel", "noopener noreferrer");
-            if (element.childNodes.length === 0) {
-              anchor.textContent = selectedRef.current.text || "Link";
+          if (nextHref) {
+            if (linkElement) {
+              linkElement.setAttribute("href", nextHref);
             } else {
-              while (element.firstChild) {
-                anchor.appendChild(element.firstChild);
+              const anchor = doc.createElement("a");
+              anchor.setAttribute("href", nextHref);
+              anchor.setAttribute("target", "_blank");
+              anchor.setAttribute("rel", "noopener noreferrer");
+              if (element.tagName.toLowerCase() === "img") {
+                const parent = element.parentNode;
+                if (parent) {
+                  parent.insertBefore(anchor, element);
+                  anchor.appendChild(element);
+                }
+              } else if (element.childNodes.length === 0) {
+                anchor.textContent = selectedRef.current.text || "Link";
+              } else {
+                while (element.firstChild) {
+                  anchor.appendChild(element.firstChild);
+                }
+              }
+              if (element.tagName.toLowerCase() !== "img") {
+                element.appendChild(anchor);
               }
             }
-            element.appendChild(anchor);
-          }
-        } else if (linkElement) {
-          if (linkElement === element) {
-            linkElement.removeAttribute("href");
-          } else {
+          } else if (linkElement) {
+            if (linkElement === element) {
+              linkElement.removeAttribute("href");
+            } else {
             const parent = linkElement.parentNode;
             while (linkElement.firstChild) {
               parent?.insertBefore(linkElement.firstChild, linkElement);
             }
             parent?.removeChild(linkElement);
           }
+        }
+      }
+
+      if (patch.imageSrc !== undefined && selectedRef.current.canEditImage) {
+        const imageElement =
+          (element.tagName.toLowerCase() === "img" ? element : element.querySelector("img")) as HTMLImageElement | null;
+        if (imageElement) {
+          const nextSrc = patch.imageSrc.trim();
+          if (nextSrc) {
+            imageElement.setAttribute("src", nextSrc);
+          }
+        }
+      }
+
+      if (patch.imageAlt !== undefined && selectedRef.current.canEditImage) {
+        const imageElement =
+          (element.tagName.toLowerCase() === "img" ? element : element.querySelector("img")) as HTMLImageElement | null;
+        if (imageElement) {
+          imageElement.setAttribute("alt", patch.imageAlt);
         }
       }
 
@@ -245,6 +306,15 @@ export function HTMLPreviewFrame({
         }
       }
 
+      if (patch.color !== undefined && selectedRef.current.canEditColor) {
+        const nextColor = patch.color.trim();
+        if (nextColor) {
+          element.style.color = nextColor;
+        } else {
+          element.style.removeProperty("color");
+        }
+      }
+
       const nextState = describeElement(element);
       selectedRef.current = nextState;
       setSelectedElement(nextState);
@@ -255,6 +325,25 @@ export function HTMLPreviewFrame({
     [describeElement, markSelectedElement, queuePersist, syncHeight]
   );
 
+  const handleImageFileSelected = useCallback((event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      event.target.value = "";
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = typeof reader.result === "string" ? reader.result : "";
+      if (result) {
+        applySelectedElementUpdate({ imageSrc: result });
+      }
+      event.target.value = "";
+    };
+    reader.readAsDataURL(file);
+  }, [applySelectedElementUpdate]);
+
   useEffect(() => {
     const iframe = iframeRef.current;
     if (!iframe || !html) return;
@@ -263,12 +352,12 @@ export function HTMLPreviewFrame({
 
     const markEditableElements = (doc: Document) => {
       doc
-        .querySelectorAll<HTMLElement>("a,button,h1,h2,h3,h4,h5,h6,p,span,td,th,li")
+        .querySelectorAll<HTMLElement>("img,a,button,h1,h2,h3,h4,h5,h6,p,span,td,th,li")
         .forEach((node) => {
           const tag = node.tagName.toLowerCase();
           const textLength = (node.textContent || "").trim().length;
           const hasText = (node.textContent || "").trim().length > 0;
-          const shouldMark = tag === "a" || tag === "button" || (hasText && textLength <= 600);
+          const shouldMark = tag === "img" || tag === "a" || tag === "button" || (hasText && textLength <= 600);
           if (shouldMark) {
             if (node.getAttribute(EDITABLE_ATTR) !== "true") {
               node.setAttribute(EDITABLE_ATTR, "true");
@@ -319,9 +408,13 @@ export function HTMLPreviewFrame({
       style.textContent = `
         [${EDITABLE_ATTR}="true"] {
           cursor: pointer;
+          transition: box-shadow 120ms ease;
+        }
+        [${EDITABLE_ATTR}="true"]:hover {
+          box-shadow: inset 0 0 0 1px rgba(22, 163, 74, 0.35);
         }
         [${EDIT_ATTR}][data-flow-selected="true"] {
-          box-shadow: inset 0 0 0 2px rgba(37, 99, 235, 0.82), 0 0 0 1px rgba(15, 23, 42, 0.15);
+          box-shadow: inset 0 0 0 2px rgba(22, 163, 74, 0.86), 0 0 0 1px rgba(15, 23, 42, 0.12);
         }
         [${EDIT_ATTR}] {
           scroll-margin-top: 80px;
@@ -359,6 +452,13 @@ export function HTMLPreviewFrame({
 
   return (
     <div className="flex flex-col h-full relative overflow-hidden">
+      <input
+        ref={imageFileInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={handleImageFileSelected}
+      />
       <div className={`flex-1 flex items-start justify-center overflow-y-auto overflow-x-hidden bg-muted/20 ${fullWidth ? "p-3" : "p-4"}`}>
         {isLoading ? (
           <div className="bg-white rounded-lg shadow-lg overflow-hidden" style={{ width: previewWidth }}>
@@ -432,6 +532,39 @@ export function HTMLPreviewFrame({
                     </Button>
                   </div>
                   <div className="space-y-2.5 p-3 max-h-[58vh] overflow-y-auto">
+                    {selectedElement.canEditImage && (
+                      <div className="space-y-2">
+                        <label className="text-[11px] font-medium text-muted-foreground mb-1 block">
+                          <ImageIcon className="inline w-3 h-3 mr-1" />
+                          Image
+                        </label>
+                        <Input
+                          value={selectedElement.imageSrc}
+                          onChange={(event) => applySelectedElementUpdate({ imageSrc: event.target.value })}
+                          className="h-8 text-xs bg-card"
+                          placeholder="https://..."
+                          data-testid="input-inspector-image-src"
+                        />
+                        <Input
+                          value={selectedElement.imageAlt}
+                          onChange={(event) => applySelectedElementUpdate({ imageAlt: event.target.value })}
+                          className="h-8 text-xs bg-card"
+                          placeholder="Alt text"
+                          data-testid="input-inspector-image-alt"
+                        />
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-8 w-full text-xs"
+                          onClick={() => imageFileInputRef.current?.click()}
+                          data-testid="button-inspector-image-upload"
+                        >
+                          <Upload className="w-3.5 h-3.5 mr-1.5" />
+                          Upload image
+                        </Button>
+                      </div>
+                    )}
+
                     {selectedElement.canEditText && (
                       <div>
                         <label className="text-[11px] font-medium text-muted-foreground mb-1 block">
@@ -486,6 +619,30 @@ export function HTMLPreviewFrame({
                         />
                       </div>
                     </div>
+                    {selectedElement.canEditColor && (
+                      <div>
+                        <label className="text-[11px] font-medium text-muted-foreground mb-1 block">
+                          <Palette className="inline w-3 h-3 mr-1" />
+                          Font color
+                        </label>
+                        <div className="flex items-center gap-2">
+                          <Input
+                            type="color"
+                            value={normalizeColorToHex(selectedElement.color)}
+                            onChange={(event) => applySelectedElementUpdate({ color: event.target.value })}
+                            className="h-8 w-10 p-1 bg-card"
+                            data-testid="input-inspector-font-color-picker"
+                          />
+                          <Input
+                            value={selectedElement.color}
+                            onChange={(event) => applySelectedElementUpdate({ color: event.target.value })}
+                            className="h-8 text-xs bg-card"
+                            placeholder="#111827"
+                            data-testid="input-inspector-font-color"
+                          />
+                        </div>
+                      </div>
+                    )}
                     <datalist id="flow-font-family-presets">
                       {FONT_FAMILY_PRESETS.map((font) => (
                         <option key={font} value={font} />
