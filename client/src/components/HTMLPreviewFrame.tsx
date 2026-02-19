@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Code, Plus, Monitor, Smartphone, Link2, Image as ImageIcon, Type, X } from "lucide-react";
+import { Code, Plus, Monitor, Smartphone, Link2, Image as ImageIcon, Type, X, Sparkles } from "lucide-react";
 import { registerEditorPlugin, type EditorPluginProps } from "@/lib/editor-plugins";
 
 interface HTMLPreviewFrameProps extends EditorPluginProps {
@@ -105,6 +105,23 @@ export function HTMLPreviewFrame({
     iframe.style.height = `${nextHeight}px`;
   }, []);
 
+  const markSelectedElement = useCallback((id?: string) => {
+    const doc = iframeRef.current?.contentDocument;
+    if (!doc) return;
+    doc.querySelectorAll(`[data-flow-selected="true"]`).forEach((node) => {
+      node.removeAttribute("data-flow-selected");
+    });
+    if (!id) return;
+    const node = doc.querySelector<HTMLElement>(`[${EDIT_ATTR}="${id}"]`);
+    if (node) {
+      node.setAttribute("data-flow-selected", "true");
+    }
+  }, []);
+
+  useEffect(() => {
+    markSelectedElement(selectedElement?.id);
+  }, [selectedElement?.id, markSelectedElement]);
+
   const describeElement = useCallback((element: HTMLElement): SelectedElementState => {
     const id = element.getAttribute(EDIT_ATTR) || createEditId();
     element.setAttribute(EDIT_ATTR, id);
@@ -143,6 +160,7 @@ export function HTMLPreviewFrame({
       const element = doc.querySelector<HTMLElement>(`[${EDIT_ATTR}="${selectedRef.current.id}"]`);
       if (!element) {
         setSelectedElement(null);
+        markSelectedElement();
         return;
       }
 
@@ -198,10 +216,11 @@ export function HTMLPreviewFrame({
       const nextState = describeElement(element);
       selectedRef.current = nextState;
       setSelectedElement(nextState);
+      markSelectedElement(nextState.id);
       syncHeight();
       emitHtmlChange();
     },
-    [describeElement, emitHtmlChange, syncHeight]
+    [describeElement, emitHtmlChange, markSelectedElement, syncHeight]
   );
 
   useEffect(() => {
@@ -217,7 +236,7 @@ export function HTMLPreviewFrame({
       if (saveTimer) clearTimeout(saveTimer);
       saveTimer = setTimeout(() => {
         emitHtmlChange();
-      }, 120);
+      }, 220);
     };
 
     const markEditableElements = (doc: Document) => {
@@ -244,6 +263,7 @@ export function HTMLPreviewFrame({
       const snapshot = describeElement(editable);
       selectedRef.current = snapshot;
       setSelectedElement(snapshot);
+      markSelectedElement(snapshot.id);
 
       if (snapshot.canEditText) {
         editable.setAttribute("contenteditable", "true");
@@ -253,6 +273,13 @@ export function HTMLPreviewFrame({
 
       event.preventDefault();
       scheduleSave();
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setSelectedElement(null);
+        markSelectedElement();
+      }
     };
 
     const handleInput = (event: Event) => {
@@ -296,6 +323,11 @@ export function HTMLPreviewFrame({
           outline-offset: 1px;
           cursor: text;
         }
+        [${EDIT_ATTR}][data-flow-selected="true"] {
+          outline: 2px solid hsl(143 59% 33% / 0.9);
+          outline-offset: 1px;
+          box-shadow: 0 0 0 3px hsl(143 59% 33% / 0.18);
+        }
         [${EDIT_ATTR}] {
           scroll-margin-top: 80px;
         }
@@ -307,6 +339,7 @@ export function HTMLPreviewFrame({
       doc.addEventListener("dblclick", handleDoubleClick);
       doc.addEventListener("input", handleInput, true);
       doc.addEventListener("blur", handleBlur, true);
+      doc.addEventListener("keydown", handleKeyDown, true);
 
       observer = new MutationObserver(() => {
         markEditableElements(doc);
@@ -334,11 +367,12 @@ export function HTMLPreviewFrame({
         mountedDoc.removeEventListener("dblclick", handleDoubleClick);
         mountedDoc.removeEventListener("input", handleInput, true);
         mountedDoc.removeEventListener("blur", handleBlur, true);
+        mountedDoc.removeEventListener("keydown", handleKeyDown, true);
       }
       if (observer) observer.disconnect();
       if (saveTimer) clearTimeout(saveTimer);
     };
-  }, [html, describeElement, emitHtmlChange, onHtmlChange, syncHeight]);
+  }, [html, describeElement, emitHtmlChange, markSelectedElement, onHtmlChange, syncHeight]);
 
   return (
     <div className="flex flex-col h-full relative">
@@ -353,156 +387,171 @@ export function HTMLPreviewFrame({
             </div>
           </div>
         ) : html ? (
-          <div
-            className={`relative bg-white overflow-hidden transition-all duration-300 ${
-              deviceMode === "mobile" && !fullWidth
-                ? "rounded-3xl border-4 border-gray-700 shadow-lg"
-                : fullWidth
-                  ? ""
-                  : "rounded-lg shadow-lg"
-            }`}
-            style={{ width: previewWidth, maxWidth: fullWidth ? undefined : previewWidth }}
-          >
-            <iframe
-              ref={iframeRef}
-              srcDoc={html}
-              title="Newsletter Preview"
-              className="w-full border-0 bg-white"
-              style={{ height: deviceMode === "mobile" ? "667px" : "680px" }}
-              sandbox="allow-same-origin allow-scripts"
-              data-testid="iframe-preview"
-            />
-
-            <div className="absolute left-3 top-3 z-20 flex items-center gap-1 bg-background/95 backdrop-blur-sm rounded-full p-1 shadow border">
-              <Button
-                size="icon"
-                variant={deviceMode === "desktop" ? "secondary" : "ghost"}
-                onClick={() => setDeviceMode("desktop")}
-                className="rounded-full"
-                data-testid="button-device-desktop"
-              >
-                <Monitor className="w-4 h-4" />
-              </Button>
-              <Button
-                size="icon"
-                variant={deviceMode === "mobile" ? "secondary" : "ghost"}
-                onClick={() => setDeviceMode("mobile")}
-                className="rounded-full"
-                data-testid="button-device-mobile"
-              >
-                <Smartphone className="w-4 h-4" />
-              </Button>
+          <div className="space-y-3" style={{ width: previewWidth, maxWidth: fullWidth ? undefined : previewWidth }}>
+            <div className="rounded-xl border bg-background/90 px-3 py-2 text-xs text-muted-foreground shadow-sm flex items-center justify-between gap-2">
+              <div className="inline-flex items-center gap-1.5">
+                <Sparkles className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                Double-click in preview to edit text, links, buttons, and images.
+              </div>
+              <span className="rounded-full border px-2 py-0.5 text-[11px] bg-background">
+                {selectedElement ? `Selected: ${selectedElement.tag}` : "No selection"}
+              </span>
             </div>
 
-            {selectedElement && (
-              <div className="absolute right-3 top-3 z-20 w-80 rounded-lg border bg-background/95 backdrop-blur-sm shadow-lg" data-testid="panel-element-inspector">
-                <div className="flex items-center justify-between border-b px-3 py-2">
-                  <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                    Edit {selectedElement.tag}
-                  </div>
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    className="h-7 w-7"
-                    onClick={() => setSelectedElement(null)}
-                    data-testid="button-close-inspector"
-                  >
-                    <X className="w-4 h-4" />
-                  </Button>
-                </div>
-                <div className="space-y-3 p-3 max-h-[60vh] overflow-y-auto">
-                  {selectedElement.canEditText && (
-                    <div>
-                      <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
-                        <Type className="inline w-3 h-3 mr-1" />
-                        Text
-                      </label>
-                      <Textarea
-                        value={selectedElement.text}
-                        onChange={(event) => applySelectedElementUpdate({ text: event.target.value })}
-                        className="min-h-[90px] text-xs"
-                        data-testid="input-inspector-text"
-                      />
-                    </div>
-                  )}
+            <div
+              className={`relative bg-white overflow-hidden transition-all duration-300 ${
+                deviceMode === "mobile" && !fullWidth
+                  ? "rounded-3xl border-4 border-gray-700 shadow-lg"
+                  : fullWidth
+                    ? "rounded-xl border shadow-sm"
+                    : "rounded-lg shadow-lg"
+              }`}
+            >
+              <iframe
+                ref={iframeRef}
+                srcDoc={html}
+                title="Newsletter Preview"
+                className="w-full border-0 bg-white"
+                style={{ height: deviceMode === "mobile" ? "667px" : "680px" }}
+                sandbox="allow-same-origin allow-scripts"
+                data-testid="iframe-preview"
+              />
 
-                  {selectedElement.canEditLink && (
-                    <div>
-                      <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
-                        <Link2 className="inline w-3 h-3 mr-1" />
-                        Link URL
-                      </label>
-                      <Input
-                        value={selectedElement.href}
-                        onChange={(event) => applySelectedElementUpdate({ href: event.target.value })}
-                        className="h-8 text-xs"
-                        placeholder="https://..."
-                        data-testid="input-inspector-link"
-                      />
-                    </div>
-                  )}
-
-                  {selectedElement.canEditImage && (
-                    <div>
-                      <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
-                        <ImageIcon className="inline w-3 h-3 mr-1" />
-                        Image URL
-                      </label>
-                      <Input
-                        value={selectedElement.src}
-                        onChange={(event) => applySelectedElementUpdate({ src: event.target.value })}
-                        className="h-8 text-xs"
-                        placeholder="https://..."
-                        data-testid="input-inspector-image"
-                      />
-                    </div>
-                  )}
-
-                  {selectedElement.canEditBackground && (
-                    <div>
-                      <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
-                        <ImageIcon className="inline w-3 h-3 mr-1" />
-                        Background image URL
-                      </label>
-                      <Input
-                        value={selectedElement.backgroundImage}
-                        onChange={(event) => applySelectedElementUpdate({ backgroundImage: event.target.value })}
-                        className="h-8 text-xs"
-                        placeholder="https://..."
-                        data-testid="input-inspector-background"
-                      />
-                    </div>
-                  )}
-
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Font size</label>
-                      <Input
-                        value={selectedElement.fontSize}
-                        onChange={(event) => applySelectedElementUpdate({ fontSize: event.target.value })}
-                        className="h-8 text-xs"
-                        placeholder="16px"
-                        data-testid="input-inspector-font-size"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Font family</label>
-                      <Input
-                        value={selectedElement.fontFamily}
-                        onChange={(event) => applySelectedElementUpdate({ fontFamily: event.target.value })}
-                        className="h-8 text-xs"
-                        placeholder="Arial, sans-serif"
-                        data-testid="input-inspector-font-family"
-                      />
-                    </div>
-                  </div>
-
-                  <p className="text-[11px] text-muted-foreground">
-                    Double-click any text, link, button, or image in preview to switch editing target.
-                  </p>
-                </div>
+              <div className="absolute left-3 top-3 z-20 flex items-center gap-1 bg-background/95 backdrop-blur-sm rounded-full p-1 shadow border border-border/80">
+                <Button
+                  size="icon"
+                  variant={deviceMode === "desktop" ? "secondary" : "ghost"}
+                  onClick={() => setDeviceMode("desktop")}
+                  className="rounded-full"
+                  data-testid="button-device-desktop"
+                >
+                  <Monitor className="w-4 h-4" />
+                </Button>
+                <Button
+                  size="icon"
+                  variant={deviceMode === "mobile" ? "secondary" : "ghost"}
+                  onClick={() => setDeviceMode("mobile")}
+                  className="rounded-full"
+                  data-testid="button-device-mobile"
+                >
+                  <Smartphone className="w-4 h-4" />
+                </Button>
               </div>
-            )}
+
+              {selectedElement && (
+                <div className="absolute right-3 top-14 z-20 w-80 rounded-xl border bg-background/95 backdrop-blur-sm shadow-lg" data-testid="panel-element-inspector">
+                  <div className="flex items-center justify-between border-b px-3 py-2.5">
+                    <div>
+                      <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Live inspector</div>
+                      <div className="text-xs font-medium mt-0.5">Edit {selectedElement.tag}</div>
+                    </div>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="h-7 w-7"
+                      onClick={() => {
+                        setSelectedElement(null);
+                        markSelectedElement();
+                      }}
+                      data-testid="button-close-inspector"
+                    >
+                      <X className="w-4 h-4" />
+                    </Button>
+                  </div>
+                  <div className="space-y-3 p-3 max-h-[60vh] overflow-y-auto">
+                    {selectedElement.canEditText && (
+                      <div>
+                        <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
+                          <Type className="inline w-3 h-3 mr-1" />
+                          Text
+                        </label>
+                        <Textarea
+                          value={selectedElement.text}
+                          onChange={(event) => applySelectedElementUpdate({ text: event.target.value })}
+                          className="min-h-[90px] text-xs bg-card"
+                          data-testid="input-inspector-text"
+                        />
+                      </div>
+                    )}
+
+                    {selectedElement.canEditLink && (
+                      <div>
+                        <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
+                          <Link2 className="inline w-3 h-3 mr-1" />
+                          Link URL
+                        </label>
+                        <Input
+                          value={selectedElement.href}
+                          onChange={(event) => applySelectedElementUpdate({ href: event.target.value })}
+                          className="h-8 text-xs bg-card"
+                          placeholder="https://..."
+                          data-testid="input-inspector-link"
+                        />
+                      </div>
+                    )}
+
+                    {selectedElement.canEditImage && (
+                      <div>
+                        <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
+                          <ImageIcon className="inline w-3 h-3 mr-1" />
+                          Image URL
+                        </label>
+                        <Input
+                          value={selectedElement.src}
+                          onChange={(event) => applySelectedElementUpdate({ src: event.target.value })}
+                          className="h-8 text-xs bg-card"
+                          placeholder="https://..."
+                          data-testid="input-inspector-image"
+                        />
+                      </div>
+                    )}
+
+                    {selectedElement.canEditBackground && (
+                      <div>
+                        <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
+                          <ImageIcon className="inline w-3 h-3 mr-1" />
+                          Background image URL
+                        </label>
+                        <Input
+                          value={selectedElement.backgroundImage}
+                          onChange={(event) => applySelectedElementUpdate({ backgroundImage: event.target.value })}
+                          className="h-8 text-xs bg-card"
+                          placeholder="https://..."
+                          data-testid="input-inspector-background"
+                        />
+                      </div>
+                    )}
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Font size</label>
+                        <Input
+                          value={selectedElement.fontSize}
+                          onChange={(event) => applySelectedElementUpdate({ fontSize: event.target.value })}
+                          className="h-8 text-xs bg-card"
+                          placeholder="16px"
+                          data-testid="input-inspector-font-size"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Font family</label>
+                        <Input
+                          value={selectedElement.fontFamily}
+                          onChange={(event) => applySelectedElementUpdate({ fontFamily: event.target.value })}
+                          className="h-8 text-xs bg-card"
+                          placeholder="Arial, sans-serif"
+                          data-testid="input-inspector-font-family"
+                        />
+                      </div>
+                    </div>
+
+                    <p className="text-[11px] text-muted-foreground">
+                      Tip: press Esc to close inspector. Changes are saved automatically.
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         ) : (
           <div

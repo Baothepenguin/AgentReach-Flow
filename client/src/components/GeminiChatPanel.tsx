@@ -248,7 +248,7 @@ export function GeminiChatPanel({
 
   if (collapsed) {
     return (
-      <div className="flex flex-col items-center border-l bg-background">
+      <div className="flex flex-col items-center border-l bg-background/80 backdrop-blur-sm">
         <Button
           variant="ghost"
           size="icon"
@@ -258,7 +258,7 @@ export function GeminiChatPanel({
         >
           <ChevronLeft className="w-4 h-4" />
         </Button>
-        <div className="mt-4 -rotate-90 whitespace-nowrap text-xs text-muted-foreground font-medium">
+        <div className="mt-5 -rotate-90 whitespace-nowrap text-[11px] tracking-wide text-muted-foreground font-medium">
           AI Chat
         </div>
       </div>
@@ -266,11 +266,14 @@ export function GeminiChatPanel({
   }
 
   return (
-    <div className="w-80 flex-shrink-0 border-l flex flex-col bg-background" data-testid="panel-gemini-chat">
-      <div className="flex items-center justify-between px-3 h-12 border-b">
-        <div className="flex items-center gap-2">
+    <div className="w-[22rem] flex-shrink-0 border-l flex flex-col bg-background/90 backdrop-blur-sm" data-testid="panel-gemini-chat">
+      <div className="flex items-center justify-between px-3 h-12 border-b border-border/70">
+        <div className="flex items-center gap-2 min-w-0">
           <MessageSquare className="w-4 h-4 text-primary" />
-          <span className="text-sm font-medium">AI Chat</span>
+          <div className="min-w-0">
+            <span className="text-sm font-medium block leading-tight">AI Chat</span>
+            <span className="text-[11px] text-muted-foreground">Content copilot</span>
+          </div>
         </div>
         <div className="flex items-center gap-1">
           <Button
@@ -302,7 +305,7 @@ export function GeminiChatPanel({
       </div>
 
       {aiStatus && (
-        <div className="px-3 py-2 border-b text-xs flex items-center gap-1.5">
+        <div className="px-3 py-2 border-b border-border/70 text-xs flex items-center gap-1.5 bg-muted/20">
           {aiStatus.geminiConfigured ? (
             <>
               <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
@@ -419,7 +422,7 @@ export function GeminiChatPanel({
         </div>
       )}
 
-      <div className="flex-1 min-h-0 overflow-auto" ref={scrollRef}>
+      <div className="flex-1 min-h-0 overflow-auto bg-gradient-to-b from-transparent to-muted/20" ref={scrollRef}>
         <div className="p-3 space-y-3">
           {loadingMessages ? (
             <div className="flex justify-center py-8">
@@ -439,10 +442,10 @@ export function GeminiChatPanel({
                 data-testid={`chat-message-${msg.id}`}
               >
                 <div
-                  className={`max-w-[85%] rounded-md px-3 py-2 text-sm ${
+                  className={`max-w-[85%] rounded-xl px-3 py-2 text-sm shadow-sm ${
                     msg.role === "user"
                       ? "bg-primary text-primary-foreground"
-                      : "bg-muted"
+                      : "bg-card border"
                   }`}
                 >
                   <p className="whitespace-pre-wrap break-words">{msg.content}</p>
@@ -460,7 +463,7 @@ export function GeminiChatPanel({
         </div>
       </div>
 
-      <div className="p-3 border-t">
+      <div className="p-3 border-t border-border/70 bg-background/95">
         <div className="flex gap-2">
           <Textarea
             value={message}
