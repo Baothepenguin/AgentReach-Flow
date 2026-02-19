@@ -79,6 +79,22 @@ function normalizeUploadedObjectPath(path: string): string {
   return withoutQuery;
 }
 
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = typeof reader.result === "string" ? reader.result : "";
+      if (!result) {
+        reject(new Error("Unable to read file"));
+        return;
+      }
+      resolve(result);
+    };
+    reader.onerror = () => reject(new Error("Unable to read file"));
+    reader.readAsDataURL(file);
+  });
+}
+
 function toPixelValue(value: string): string {
   const trimmed = value.trim();
   if (!trimmed) return "";
@@ -417,12 +433,21 @@ export function HTMLPreviewFrame({
       applySelectedElementUpdate({ imageSrc: src });
       toast({ title: "Image updated" });
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Upload failed";
-      toast({
-        title: "Image upload failed",
-        description: message,
-        variant: "destructive",
-      });
+      try {
+        const dataUrl = await readFileAsDataUrl(file);
+        applySelectedElementUpdate({ imageSrc: dataUrl });
+        toast({
+          title: "Image updated (local mode)",
+          description: "Object storage is unavailable, so this image is embedded in the HTML.",
+        });
+      } catch {
+        const message = error instanceof Error ? error.message : "Upload failed";
+        toast({
+          title: "Image upload failed",
+          description: message,
+          variant: "destructive",
+        });
+      }
     } finally {
       setIsUploadingImage(false);
       event.target.value = "";
