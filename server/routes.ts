@@ -284,6 +284,12 @@ function normalizeSendMode(mode: unknown): "fixed_time" | "immediate_after_appro
   return undefined;
 }
 
+function normalizeReviewCommentType(value: unknown): "change" | "addition" | "removal" | "general" | "content" | "design" | "links" {
+  const raw = typeof value === "string" ? value.trim() : "";
+  const allowed = new Set(["change", "addition", "removal", "general", "content", "design", "links"]);
+  return allowed.has(raw) ? (raw as any) : "change";
+}
+
 function buildNewsletterTitle(clientName: string): string {
   const normalizedName = clientName.trim() || "Client";
   return `${normalizedName} Newsletter`;
@@ -2781,7 +2787,7 @@ export async function registerRoutes(
         newsletterId: reviewToken.newsletterId,
         reviewTokenId: reviewToken.id,
         sectionId: sectionId || null,
-        commentType: commentType || "general",
+        commentType: normalizeReviewCommentType(commentType),
         content: comment || "Change requested",
         attachments: [],
       });
@@ -2820,7 +2826,7 @@ export async function registerRoutes(
         newsletterId: reviewToken.newsletterId,
         reviewTokenId: reviewToken.id,
         sectionId: sectionId || null,
-        commentType: commentType || "general",
+        commentType: normalizeReviewCommentType(commentType),
         content,
         attachments: attachments || [],
       });
@@ -2866,7 +2872,7 @@ export async function registerRoutes(
       const comment = await storage.createReviewComment({
         newsletterId: req.params.id,
         content: req.body.content,
-        commentType: "general",
+        commentType: "change",
         isInternal: true,
         createdById: userId,
       });
