@@ -13,7 +13,6 @@ import { useLocation } from "wouter";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { Client, Subscription, BrandingKit, Invoice, Newsletter } from "@shared/schema";
-import { ClientAudiencePanel } from "@/components/ClientAudiencePanel";
 
 interface ClientSidePanelProps {
   clientId: string;
@@ -262,8 +261,24 @@ export function ClientSidePanel({ clientId, open, onClose }: ClientSidePanelProp
     setEditingInvoiceId(invoice.id);
   };
 
+  const openWorkspacePage = (path: string) => {
+    if (typeof window !== "undefined") {
+      const opened = window.open(path, "_blank", "noopener,noreferrer");
+      if (opened) return;
+    }
+    setLocation(path);
+  };
+
+  const manageButtonClass =
+    "h-7 px-2 text-xs opacity-0 pointer-events-none transition-opacity group-hover/section:opacity-100 group-hover/section:pointer-events-auto focus-visible:opacity-100 focus-visible:pointer-events-auto";
+
   return (
-    <Sheet open={open} onOpenChange={onClose}>
+    <Sheet
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen) onClose();
+      }}
+    >
       <SheetContent className="w-[400px] sm:w-[480px] p-0 [&>button]:hidden">
         <SheetHeader className="p-4 border-b">
           <div className="flex items-center justify-between gap-2">
@@ -427,7 +442,7 @@ export function ClientSidePanel({ clientId, open, onClose }: ClientSidePanelProp
               </div>
 
               <div>
-                <div className="flex items-center justify-between mb-3">
+                <div className="group/section flex items-center justify-between mb-3">
                   <h3 className="text-sm font-medium flex items-center gap-2">
                     <Calendar className="w-4 h-4" />
                     Subscriptions
@@ -435,8 +450,8 @@ export function ClientSidePanel({ clientId, open, onClose }: ClientSidePanelProp
                   <Button
                     variant="ghost"
                     size="sm"
-                    className="h-7 px-2 text-xs"
-                    onClick={() => setLocation("/subscriptions")}
+                    className={manageButtonClass}
+                    onClick={() => openWorkspacePage("/subscriptions")}
                     data-testid="button-manage-subscriptions-client-card"
                   >
                     Manage
@@ -628,7 +643,7 @@ export function ClientSidePanel({ clientId, open, onClose }: ClientSidePanelProp
               </div>
 
               <div>
-                <div className="flex items-center justify-between mb-3">
+                <div className="group/section flex items-center justify-between mb-3">
                   <h3 className="text-sm font-medium flex items-center gap-2">
                     <Palette className="w-4 h-4" />
                     Branding Kit
@@ -636,8 +651,8 @@ export function ClientSidePanel({ clientId, open, onClose }: ClientSidePanelProp
                   <Button
                     variant="ghost"
                     size="sm"
-                    className="h-7 px-2 text-xs"
-                    onClick={() => setLocation("/branding-kits")}
+                    className={manageButtonClass}
+                    onClick={() => openWorkspacePage("/branding-kits")}
                     data-testid="button-manage-branding-client-card"
                   >
                     Manage
@@ -681,7 +696,7 @@ export function ClientSidePanel({ clientId, open, onClose }: ClientSidePanelProp
               </div>
 
               <div>
-                <div className="flex items-center justify-between mb-3">
+                <div className="group/section flex items-center justify-between mb-3">
                   <h3 className="text-sm font-medium flex items-center gap-2">
                     <CreditCard className="w-4 h-4" />
                     Invoices
@@ -689,8 +704,8 @@ export function ClientSidePanel({ clientId, open, onClose }: ClientSidePanelProp
                   <Button
                     variant="ghost"
                     size="sm"
-                    className="h-7 px-2 text-xs"
-                    onClick={() => setLocation("/orders")}
+                    className={manageButtonClass}
+                    onClick={() => openWorkspacePage("/orders")}
                     data-testid="button-manage-orders-client-card"
                   >
                     Manage
@@ -829,7 +844,7 @@ export function ClientSidePanel({ clientId, open, onClose }: ClientSidePanelProp
               </div>
 
               <div>
-                <div className="flex items-center justify-between mb-3">
+                <div className="group/section flex items-center justify-between mb-3">
                   <h3 className="text-sm font-medium flex items-center gap-2">
                     <FileText className="w-4 h-4" />
                     Newsletters
@@ -837,8 +852,8 @@ export function ClientSidePanel({ clientId, open, onClose }: ClientSidePanelProp
                   <Button
                     variant="ghost"
                     size="sm"
-                    className="h-7 px-2 text-xs"
-                    onClick={() => setLocation("/newsletters")}
+                    className={manageButtonClass}
+                    onClick={() => openWorkspacePage("/newsletters")}
                     data-testid="button-manage-newsletters-client-card"
                   >
                     Manage
@@ -850,7 +865,7 @@ export function ClientSidePanel({ clientId, open, onClose }: ClientSidePanelProp
                 ) : (
                   <div className="space-y-2">
                     {newsletters.slice(0, 5).map((nl) => (
-                      <Link key={nl.id} href={`/newsletters/${nl.id}`} onClick={onClose}>
+                      <Link key={nl.id} href={`/newsletters/${nl.id}`}>
                         <div className="p-3 rounded-md bg-muted/30 border hover-elevate cursor-pointer">
                           <div className="font-medium text-sm truncate">{nl.title}</div>
                           <div className="text-xs text-muted-foreground mt-1">
@@ -864,23 +879,22 @@ export function ClientSidePanel({ clientId, open, onClose }: ClientSidePanelProp
               </div>
 
               <div>
-                <div className="flex items-center justify-between mb-3">
+                <div className="group/section flex items-center justify-between mb-3">
                   <h3 className="text-sm font-medium">Audience (Contacts + Segments)</h3>
                   <Button
                     variant="ghost"
                     size="sm"
-                    className="h-7 px-2 text-xs"
-                    onClick={() => {
-                      setLocation(`/audience?clientId=${client.id}`);
-                      onClose();
-                    }}
+                    className={manageButtonClass}
+                    onClick={() => openWorkspacePage(`/audience?clientId=${client.id}`)}
                     data-testid="button-open-audience-workspace-client-card"
                   >
                     Open Workspace
                     <ExternalLink className="w-3 h-3 ml-1" />
                   </Button>
                 </div>
-                <ClientAudiencePanel clientId={client.id} />
+                <div className="rounded-md border bg-muted/20 p-3 text-sm text-muted-foreground">
+                  Audience tools open in Audience Manager.
+                </div>
               </div>
             </div>
           </ScrollArea>

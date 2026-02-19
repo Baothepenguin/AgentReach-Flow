@@ -4752,7 +4752,7 @@ export async function registerRoutes(
           .filter((c) => !!c.primaryEmail)
           .map((c) => [c.primaryEmail.trim().toLowerCase(), c])
       );
-      const existingByStripePaymentId = new Set(
+      const existingStripeOrderIds = new Set(
         invoices.map((invoice) => invoice.stripePaymentId).filter((id): id is string => !!id)
       );
 
@@ -4817,14 +4817,17 @@ export async function registerRoutes(
           continue;
         }
 
-        const stripePaymentId =
+        const paymentIntentId =
           (typeof session.payment_intent === "string" && session.payment_intent) ||
           (typeof session.payment_intent !== "string" && session.payment_intent?.id) ||
-          session.id;
-        if (existingByStripePaymentId.has(stripePaymentId)) {
+          "";
+        const sessionId = session.id || "";
+        const dedupeIds = [paymentIntentId, sessionId].filter((id): id is string => !!id);
+        if (dedupeIds.some((id) => existingStripeOrderIds.has(id))) {
           skippedCount += 1;
           continue;
         }
+        const stripePaymentId = paymentIntentId || sessionId;
 
         const amount = ((session.amount_total || 0) / 100).toFixed(2);
         const currency = (session.currency || "usd").toUpperCase();
@@ -4839,7 +4842,9 @@ export async function registerRoutes(
           stripePaymentId,
           paidAt,
         });
-        existingByStripePaymentId.add(stripePaymentId);
+        for (const dedupeId of dedupeIds) {
+          existingStripeOrderIds.add(dedupeId);
+        }
         importedCount += 1;
       }
 

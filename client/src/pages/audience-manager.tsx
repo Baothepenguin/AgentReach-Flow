@@ -7,21 +7,8 @@ import { ClientAudiencePanel } from "@/components/ClientAudiencePanel";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Search, UserSquare2, Users, FolderTree } from "lucide-react";
-import type { Client, Contact, ContactSegment } from "@shared/schema";
-
-function formatFrequency(frequency: string) {
-  switch (frequency) {
-    case "weekly":
-      return "Weekly";
-    case "biweekly":
-      return "Biweekly";
-    case "monthly":
-      return "Monthly";
-    default:
-      return frequency;
-  }
-}
+import { Search, UserSquare2 } from "lucide-react";
+import type { Client, Contact } from "@shared/schema";
 
 export default function AudienceManagerPage() {
   const [searchQuery, setSearchQuery] = useState("");
@@ -72,12 +59,8 @@ export default function AudienceManagerPage() {
     enabled: !!selectedClientId,
   });
 
-  const { data: segments = [] } = useQuery<ContactSegment[]>({
-    queryKey: ["/api/clients", selectedClientId, "segments"],
-    enabled: !!selectedClientId,
-  });
-
   const activeContacts = useMemo(() => contacts.filter((contact) => contact.isActive).length, [contacts]);
+  const unsubscribedContacts = Math.max(0, contacts.length - activeContacts);
 
   return (
     <div className="min-h-screen bg-background">
@@ -86,9 +69,6 @@ export default function AudienceManagerPage() {
       <div className="px-8 py-6">
         <div className="mb-5">
           <h1 className="text-xl font-semibold">Audience Manager</h1>
-          <p className="text-sm text-muted-foreground mt-0.5">
-            Bulk CSV upload, contact cleanup, and per-client segments.
-          </p>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-[320px_1fr] gap-5">
@@ -131,12 +111,7 @@ export default function AudienceManagerPage() {
                       data-testid={`button-select-audience-client-${client.id}`}
                     >
                       <div className="font-medium text-sm truncate">{client.name}</div>
-                      <div className="text-xs text-muted-foreground truncate mt-0.5">{client.primaryEmail}</div>
-                      <div className="mt-1.5">
-                        <Badge variant="outline" className="text-[10px]">
-                          {formatFrequency(client.newsletterFrequency)}
-                        </Badge>
-                      </div>
+                      <div className="text-xs text-muted-foreground truncate">{client.primaryEmail}</div>
                     </button>
                   );
                 })
@@ -157,16 +132,12 @@ export default function AudienceManagerPage() {
                     <div className="text-sm text-muted-foreground">{selectedClient.primaryEmail}</div>
                   </div>
                   <div className="flex items-center gap-2">
-                    <Badge variant="secondary" className="inline-flex items-center gap-1 text-xs">
-                      <Users className="w-3 h-3" />
-                      {contacts.length} contacts
-                    </Badge>
-                    <Badge variant="secondary" className="inline-flex items-center gap-1 text-xs">
-                      <FolderTree className="w-3 h-3" />
-                      {segments.length} segments
-                    </Badge>
+                    <Badge variant="secondary" className="text-xs">{contacts.length} total</Badge>
                     <Badge variant="outline" className="text-xs">
                       {activeContacts} active
+                    </Badge>
+                    <Badge variant="outline" className="text-xs">
+                      {unsubscribedContacts} unsubscribed
                     </Badge>
                     <Button
                       variant="outline"
