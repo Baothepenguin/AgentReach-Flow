@@ -2805,7 +2805,9 @@ export async function registerRoutes(
 
       res.json({ success: true, comment: reviewComment });
     } catch (error) {
-      res.status(500).json({ error: "Request failed" });
+      const detail = error instanceof Error ? error.message : String(error);
+      console.error("Request changes error:", error);
+      res.status(500).json({ error: "Request failed", detail });
     }
   });
 
@@ -2852,8 +2854,9 @@ export async function registerRoutes(
       await storage.updateNewsletter(reviewToken.newsletterId, { status: "changes_requested" });
       res.status(201).json(comment);
     } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
       console.error("Create review comment error:", error);
-      res.status(500).json({ error: "Failed to create comment" });
+      res.status(500).json({ error: "Failed to create comment", detail });
     }
   });
 
