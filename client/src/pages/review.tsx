@@ -157,7 +157,16 @@ export default function ReviewPage() {
           continue;
         }
 
-        const { uploadURL, objectPath } = await urlRes.json();
+        const payload = await urlRes.json();
+        const uploadURL = typeof payload?.uploadURL === "string" ? payload.uploadURL : "";
+        const objectPath = typeof payload?.objectPath === "string" ? payload.objectPath : "";
+        const objectUrl = typeof payload?.objectUrl === "string" ? payload.objectUrl : "";
+        const attachmentPath = objectUrl || objectPath;
+
+        if (!uploadURL || !attachmentPath) {
+          toast({ title: "Upload response invalid", variant: "destructive" });
+          continue;
+        }
 
         const uploadRes = await fetch(uploadURL, {
           method: "PUT",
@@ -170,7 +179,7 @@ export default function ReviewPage() {
           continue;
         }
 
-        setAttachments(prev => [...prev, { name: file.name, objectPath, type: file.type }]);
+        setAttachments(prev => [...prev, { name: file.name, objectPath: attachmentPath, type: file.type }]);
       }
     } finally {
       setUploading(false);

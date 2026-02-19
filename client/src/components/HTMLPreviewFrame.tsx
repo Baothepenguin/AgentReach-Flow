@@ -385,6 +385,8 @@ export function HTMLPreviewFrame({
         typeof uploadPayload?.uploadURL === "string" ? uploadPayload.uploadURL : "";
       const objectPath =
         typeof uploadPayload?.objectPath === "string" ? uploadPayload.objectPath : "";
+      const uploadToken =
+        typeof uploadPayload?.uploadToken === "string" ? uploadPayload.uploadToken : undefined;
       if (!uploadURL || !objectPath) {
         throw new Error("Upload response missing required fields");
       }
@@ -407,6 +409,7 @@ export function HTMLPreviewFrame({
         body: JSON.stringify({
           objectPath,
           visibility: "public",
+          ...(uploadToken ? { uploadToken } : {}),
         }),
       });
 
