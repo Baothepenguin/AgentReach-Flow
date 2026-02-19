@@ -2,8 +2,9 @@ import { useState, useEffect, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation, useSearch } from "wouter";
 import { TopNav } from "@/components/TopNav";
+import { ClientSidePanel } from "@/components/ClientSidePanel";
 import { Button } from "@/components/ui/button";
-import { Receipt, X, Mail, Plus, ExternalLink, CreditCard, RefreshCw } from "lucide-react";
+import { Receipt, X, Mail, Plus, ExternalLink, CreditCard, RefreshCw, UserSquare2 } from "lucide-react";
 import { format } from "date-fns";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -142,10 +143,12 @@ function OrderPreview({
   order, 
   onClose,
   onCreateNewsletter,
+  onOpenClientCard,
 }: { 
   order: OrderWithRelations; 
   onClose: () => void;
   onCreateNewsletter: (order: OrderWithRelations) => void;
+  onOpenClientCard: (clientId: string) => void;
 }) {
   const [, setLocation] = useLocation();
   
@@ -186,9 +189,21 @@ function OrderPreview({
         
         <div className="pt-4 border-t border-border/30">
           <h4 className="text-xs font-medium text-muted-foreground mb-3">Client</h4>
-          <div className="py-2">
-            <p className="font-medium">{order.client.name}</p>
-            <p className="text-sm text-muted-foreground">{order.client.primaryEmail}</p>
+          <div className="py-2 space-y-2">
+            <div>
+              <p className="font-medium">{order.client.name}</p>
+              <p className="text-sm text-muted-foreground">{order.client.primaryEmail}</p>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 text-xs"
+              onClick={() => onOpenClientCard(order.client.id)}
+              data-testid={`button-open-client-card-order-preview-${order.id}`}
+            >
+              <UserSquare2 className="w-3.5 h-3.5 mr-1.5" />
+              Open Client Card
+            </Button>
           </div>
         </div>
         
@@ -244,6 +259,7 @@ export default function OrdersPage() {
   const searchString = useSearch();
   const { toast } = useToast();
   const [selectedOrder, setSelectedOrder] = useState<OrderWithRelations | null>(null);
+  const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
 
   const { data: orders = [], isLoading } = useQuery<OrderWithRelations[]>({
     queryKey: ["/api/invoices"],
@@ -436,7 +452,23 @@ export default function OrdersPage() {
                       data-testid={`order-row-${order.id}`}
                     >
                       <td className="p-3 font-mono text-xs text-muted-foreground">{order.id.slice(0, 8)}</td>
-                      <td className="p-3 font-medium">{order.client.name}</td>
+                      <td className="p-3">
+                        <div className="flex flex-col items-start gap-1">
+                          <span className="font-medium">{order.client.name}</span>
+                          <button
+                            type="button"
+                            className="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setSelectedClientId(order.client.id);
+                            }}
+                            data-testid={`button-open-client-card-order-row-${order.id}`}
+                          >
+                            <UserSquare2 className="w-3 h-3" />
+                            Client Card
+                          </button>
+                        </div>
+                      </td>
                       <td className="p-3 text-muted-foreground">
                         {format(new Date(order.createdAt), "MMM d, yyyy")}
                       </td>
@@ -459,9 +491,18 @@ export default function OrdersPage() {
             order={selectedOrder} 
             onClose={() => setSelectedOrder(null)}
             onCreateNewsletter={handleCreateNewsletter}
+            onOpenClientCard={setSelectedClientId}
           />
         )}
       </div>
+
+      {selectedClientId && (
+        <ClientSidePanel
+          clientId={selectedClientId}
+          open={!!selectedClientId}
+          onClose={() => setSelectedClientId(null)}
+        />
+      )}
     </div>
   );
 }

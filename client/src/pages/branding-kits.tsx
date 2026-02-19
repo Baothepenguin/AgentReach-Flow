@@ -1,12 +1,13 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { TopNav } from "@/components/TopNav";
+import { ClientSidePanel } from "@/components/ClientSidePanel";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
-import { Palette, Plus, Trash2 } from "lucide-react";
+import { Palette, Plus, Trash2, UserSquare2 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { BrandingKit, Client } from "@shared/schema";
@@ -35,6 +36,7 @@ export default function BrandingKitsPage() {
 
   const [createOpen, setCreateOpen] = useState(false);
   const [editKit, setEditKit] = useState<BrandingKitWithClient | null>(null);
+  const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
 
   const [formClientId, setFormClientId] = useState("");
   const [formPrimaryColor, setFormPrimaryColor] = useState("#1a5f4a");
@@ -169,7 +171,23 @@ export default function BrandingKitsPage() {
                       onClick={() => openEdit(kit)}
                       data-testid={`branding-kit-row-${kit.id}`}
                     >
-                      <td className="p-3 font-medium">{kit.client.name}</td>
+                      <td className="p-3 font-medium">
+                        <div className="flex flex-col items-start gap-1">
+                          <span>{kit.client.name}</span>
+                          <button
+                            type="button"
+                            className="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setSelectedClientId(kit.client.id);
+                            }}
+                            data-testid={`button-open-client-card-branding-${kit.id}`}
+                          >
+                            <UserSquare2 className="w-3 h-3" />
+                            Client Card
+                          </button>
+                        </div>
+                      </td>
                       <td className="p-3">
                         <div className="flex items-center gap-2">
                           <span
@@ -191,6 +209,14 @@ export default function BrandingKitsPage() {
           )}
         </div>
       </div>
+
+      {selectedClientId && (
+        <ClientSidePanel
+          clientId={selectedClientId}
+          open={!!selectedClientId}
+          onClose={() => setSelectedClientId(null)}
+        />
+      )}
 
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogContent>

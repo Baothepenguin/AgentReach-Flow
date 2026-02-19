@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { TopNav } from "@/components/TopNav";
+import { ClientSidePanel } from "@/components/ClientSidePanel";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
@@ -27,6 +28,7 @@ interface SubscriptionWithClient extends Subscription {
 
 export default function MasterDashboard() {
   const [, setLocation] = useLocation();
+  const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
 
   const { data: clients } = useQuery<Client[]>({
     queryKey: ["/api/clients"],
@@ -181,7 +183,17 @@ export default function MasterDashboard() {
                     <div className="flex items-center gap-3 min-w-0 flex-1">
                       <div className={`w-2 h-2 rounded-full flex-shrink-0 ${getUrgencyDot(nl.expectedSendDate) || 'bg-muted'}`} />
                       <div className="min-w-0">
-                        <span className="font-medium text-sm">{nl.clientName}</span>
+                        <button
+                          type="button"
+                          className="font-medium text-sm hover:underline"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setSelectedClientId(nl.clientId);
+                          }}
+                          data-testid={`button-open-client-card-dashboard-newsletter-${nl.id}`}
+                        >
+                          {nl.clientName}
+                        </button>
                         <span className="text-muted-foreground text-sm ml-2">{nl.title}</span>
                       </div>
                     </div>
@@ -234,9 +246,17 @@ export default function MasterDashboard() {
                       data-testid={`order-row-${inv.id}`}
                     >
                       <div className="min-w-0 flex-1">
-                        <div className="text-sm font-medium truncate">
+                        <button
+                          type="button"
+                          className="text-sm font-medium truncate hover:underline"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setSelectedClientId(inv.clientId);
+                          }}
+                          data-testid={`button-open-client-card-dashboard-order-${inv.id}`}
+                        >
                           {inv.clientName || "Client"}
-                        </div>
+                        </button>
                         <div className="text-xs text-muted-foreground">
                           ${parseFloat(inv.amount || "0").toFixed(2)}
                         </div>
@@ -282,9 +302,17 @@ export default function MasterDashboard() {
                       data-testid={`subscription-row-${sub.id}`}
                     >
                       <div className="min-w-0 flex-1">
-                        <div className="text-sm font-medium truncate" data-testid={`text-subscription-client-${sub.id}`}>
+                        <button
+                          type="button"
+                          className="text-sm font-medium truncate hover:underline"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setSelectedClientId(sub.client.id);
+                          }}
+                          data-testid={`button-open-client-card-dashboard-subscription-${sub.id}`}
+                        >
                           {sub.client.name}
-                        </div>
+                        </button>
                         <div className="text-xs text-muted-foreground" data-testid={`text-subscription-details-${sub.id}`}>
                           {formatFrequency(sub.frequency)} &middot; {sub.currency} ${Number(sub.amount).toFixed(2)}
                         </div>
@@ -300,6 +328,14 @@ export default function MasterDashboard() {
           </div>
         </div>
       </main>
+
+      {selectedClientId && (
+        <ClientSidePanel
+          clientId={selectedClientId}
+          open={!!selectedClientId}
+          onClose={() => setSelectedClientId(null)}
+        />
+      )}
     </div>
   );
 }
