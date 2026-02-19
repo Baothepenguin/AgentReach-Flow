@@ -11,6 +11,7 @@ import { SendConfirmDialog } from "@/components/SendConfirmDialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { Sheet, SheetContent } from "@/components/ui/sheet";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -81,6 +82,7 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
   const { toast } = useToast();
   const [, setLocation] = useLocation();
   const [showClientPanel, setShowClientPanel] = useState(false);
+  const [mobileRailOpen, setMobileRailOpen] = useState(false);
   const [rightRailMode, setRightRailMode] = useState<"ai" | "client">("client");
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [sendDialogOpen, setSendDialogOpen] = useState(false);
@@ -217,6 +219,23 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
 
   const hasContent = !!newsletterData?.html;
 
+  const openRightRail = (mode: "ai" | "client", options?: { openClientSheet?: boolean }) => {
+    setRightRailMode(mode);
+    if (mode === "ai") {
+      setShowClientPanel(false);
+      setChatCollapsed(false);
+    } else {
+      setChatCollapsed(true);
+      if (options?.openClientSheet) {
+        setShowClientPanel(true);
+      }
+    }
+
+    if (typeof window !== "undefined" && window.innerWidth < 1024) {
+      setMobileRailOpen(true);
+    }
+  };
+
   const handleExportHtml = async () => {
     if (!newsletterData?.html) return;
     try {
@@ -267,12 +286,25 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
     const toEmail = window.prompt("Send test email to:");
     if (!toEmail) return;
     try {
-      const res = await apiRequest("POST", `/api/newsletters/${newsletterId}/send-test`, { toEmail });
-      const data = await res.json();
+      const res = await fetch(`/api/newsletters/${newsletterId}/send-test`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ toEmail }),
+      });
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        throw new Error(data?.error || "Failed to send test email");
+        const blockerMessage = Array.isArray(data?.blockers) && data.blockers.length > 0
+          ? data.blockers[0]?.message
+          : null;
+        throw new Error(blockerMessage || data?.error || "Failed to send test email");
       }
-      toast({ title: "Test email sent", description: `Sent to ${toEmail}` });
+
+      const warnings = Array.isArray(data?.warnings) ? data.warnings : [];
+      const warningText = warnings.length > 0
+        ? `Sent to ${toEmail}. Warning: ${warnings[0]?.message || "Review QA warnings."}`
+        : `Sent to ${toEmail}`;
+      toast({ title: "Test email sent", description: warningText });
     } catch (error: any) {
       toast({
         title: "Test email failed",
@@ -320,7 +352,7 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
     <div className="flex flex-col h-screen w-full bg-background">
       <TopNav />
       <div className="flex flex-1 overflow-hidden bg-background">
-        <div className="hidden lg:block w-60 xl:w-72 flex-shrink-0 border-r bg-background/70 backdrop-blur-sm">
+        <div className="hidden lg:block w-60 xl:w-72 flex-shrink-0 border-r bg-background">
           <RightPanel
             newsletterId={newsletterId}
             status={newsletter.status}
@@ -331,7 +363,7 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
         </div>
 
         <div className="flex-1 flex flex-col min-w-0">
-          <header className="border-b border-border/70 bg-background/90 backdrop-blur px-3 sm:px-5 py-2.5">
+          <header className="border-b bg-background px-3 sm:px-5 py-2.5">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex min-w-0 flex-1 items-center gap-2">
                 <Button
@@ -401,8 +433,7 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
                           type="button"
                           className="text-xs text-muted-foreground hover:text-foreground transition-colors inline-flex items-center gap-1"
                           onClick={() => {
-                            setRightRailMode("client");
-                            setShowClientPanel(true);
+                            openRightRail("client", { openClientSheet: true });
                           }}
                           data-testid="link-client-name"
                         >
@@ -563,28 +594,26 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
                     <Button
                       size="sm"
                       variant={rightRailMode === "client" ? "secondary" : "ghost"}
-                      className="h-8 rounded-none text-xs"
+                      className="h-8 rounded-none text-xs px-2.5"
                       onClick={() => {
-                        setRightRailMode("client");
-                        setShowClientPanel(true);
-                        setChatCollapsed(true);
+                        openRightRail("client");
                       }}
+                      data-testid="button-open-client-rail"
                     >
                       <UserSquare2 className="w-3.5 h-3.5 mr-1.5" />
-                      Client
+                      <span className="hidden sm:inline">Client</span>
                     </Button>
                     <Button
                       size="sm"
                       variant={rightRailMode === "ai" ? "secondary" : "ghost"}
-                      className="h-8 rounded-none text-xs"
+                      className="h-8 rounded-none text-xs px-2.5"
                       onClick={() => {
-                        setRightRailMode("ai");
-                        setShowClientPanel(false);
-                        setChatCollapsed(false);
+                        openRightRail("ai");
                       }}
+                      data-testid="button-open-ai-rail"
                     >
                       <Bot className="w-3.5 h-3.5 mr-1.5" />
-                      AI
+                      <span className="hidden sm:inline">AI</span>
                     </Button>
                   </div>
                 )}
@@ -594,7 +623,7 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
 
           <div className="flex-1 min-h-0 relative p-2 sm:p-4 sm:pt-3">
             {editingHtml ? (
-              <div className="h-full rounded-2xl border bg-card shadow-sm overflow-hidden flex flex-col">
+              <div className="h-full rounded-xl border bg-card overflow-hidden flex flex-col">
                 <div className="h-10 px-4 border-b bg-muted/30 flex items-center justify-between text-xs text-muted-foreground">
                   <span>Raw HTML editor</span>
                   <span>Use this for full control over imported Postcards code.</span>
@@ -633,7 +662,7 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
             ) : (
               <>
                 {hasContent ? (
-                  <div className="h-full rounded-2xl border bg-card shadow-sm overflow-hidden">
+                  <div className="h-full rounded-xl border bg-card overflow-hidden">
                     <HTMLPreviewFrame
                       html={newsletterData?.html || ""}
                       isLoading={loadingNewsletter}
@@ -646,7 +675,7 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
                     />
                   </div>
                 ) : (
-                  <div className="flex-1 rounded-2xl border bg-card shadow-sm flex items-center justify-center">
+                  <div className="flex-1 rounded-xl border bg-card flex items-center justify-center">
                     <div className="flex flex-col items-center justify-center text-center p-12 rounded-md border-2 border-dashed border-muted-foreground/20 max-w-md">
                       <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center mb-4">
                         <Code className="w-8 h-8 text-primary/60" />
@@ -670,7 +699,7 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
         </div>
 
         {client && (
-          <div className="hidden xl:flex w-[360px] flex-shrink-0 border-l bg-background/70 backdrop-blur-sm">
+          <div className="hidden lg:flex w-[340px] xl:w-[360px] flex-shrink-0 border-l bg-background">
             {rightRailMode === "ai" ? (
               <GeminiChatPanel
                 newsletterId={newsletterId}
@@ -679,19 +708,130 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
                 collapsed={chatCollapsed}
                 onToggleCollapse={() => setChatCollapsed(!chatCollapsed)}
                 enableBlockSuggestions={false}
+                fullWidth
+                hideOuterBorder
+                className="h-full"
               />
             ) : (
               <div className="w-full p-4 space-y-3">
                 <div className="text-sm font-medium">Client Context</div>
-                <div className="rounded-md border p-3 space-y-1">
+                <div className="rounded-md border bg-card p-3 space-y-2">
                   <div className="text-sm font-semibold">{client.name}</div>
                   <div className="text-xs text-muted-foreground">{client.primaryEmail}</div>
+                  {client.locationCity || client.locationRegion ? (
+                    <div className="text-xs text-muted-foreground">
+                      {[client.locationCity, client.locationRegion].filter(Boolean).join(", ")}
+                    </div>
+                  ) : null}
+                  <div className="flex items-center gap-2 pt-1">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-8 text-xs"
+                      onClick={() => setShowClientPanel(true)}
+                      data-testid="button-open-client-card"
+                    >
+                      Open Client Card
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-8 text-xs"
+                      onClick={() => setLocation(`/clients?clientId=${client.id}`)}
+                      data-testid="button-open-in-clients"
+                    >
+                      Open in Clients
+                    </Button>
+                  </div>
                 </div>
               </div>
             )}
           </div>
         )}
       </div>
+
+      {client && (
+        <Sheet open={mobileRailOpen} onOpenChange={setMobileRailOpen}>
+          <SheetContent side="right" className="w-[94vw] max-w-[420px] p-0 lg:hidden">
+            <div className="flex h-full flex-col bg-background">
+              <div className="flex items-center justify-between border-b px-3 py-2">
+                <div className="text-sm font-medium">{rightRailMode === "ai" ? "AI Chat" : "Client Context"}</div>
+                <div className="inline-flex items-center rounded-md border border-border bg-background overflow-hidden">
+                  <Button
+                    size="sm"
+                    variant={rightRailMode === "client" ? "secondary" : "ghost"}
+                    className="h-8 rounded-none text-xs px-2.5"
+                    onClick={() => openRightRail("client")}
+                  >
+                    <UserSquare2 className="w-3.5 h-3.5 mr-1.5" />
+                    Client
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant={rightRailMode === "ai" ? "secondary" : "ghost"}
+                    className="h-8 rounded-none text-xs px-2.5"
+                    onClick={() => openRightRail("ai")}
+                  >
+                    <Bot className="w-3.5 h-3.5 mr-1.5" />
+                    AI
+                  </Button>
+                </div>
+              </div>
+              <div className="flex-1 min-h-0">
+                {rightRailMode === "ai" ? (
+                  <GeminiChatPanel
+                    newsletterId={newsletterId}
+                    clientId={client.id}
+                    clientName={client.name}
+                    collapsed={false}
+                    onToggleCollapse={() => setMobileRailOpen(false)}
+                    enableBlockSuggestions={false}
+                    fullWidth
+                    hideOuterBorder
+                    className="h-full"
+                  />
+                ) : (
+                  <div className="p-4 space-y-3">
+                    <div className="rounded-md border bg-card p-3 space-y-2">
+                      <div className="text-sm font-semibold">{client.name}</div>
+                      <div className="text-xs text-muted-foreground">{client.primaryEmail}</div>
+                      {client.locationCity || client.locationRegion ? (
+                        <div className="text-xs text-muted-foreground">
+                          {[client.locationCity, client.locationRegion].filter(Boolean).join(", ")}
+                        </div>
+                      ) : null}
+                      <div className="flex items-center gap-2 pt-1">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-8 text-xs"
+                          onClick={() => {
+                            setShowClientPanel(true);
+                            setMobileRailOpen(false);
+                          }}
+                        >
+                          Open Client Card
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-8 text-xs"
+                          onClick={() => {
+                            setMobileRailOpen(false);
+                            setLocation(`/clients?clientId=${client.id}`);
+                          }}
+                        >
+                          Open in Clients
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </SheetContent>
+        </Sheet>
+      )}
 
       {client && (
         <ClientSidePanel

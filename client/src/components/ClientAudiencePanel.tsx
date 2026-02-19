@@ -133,9 +133,6 @@ export function ClientAudiencePanel({ clientId }: ClientAudiencePanelProps) {
     });
   }, [viewContacts, contactSearch]);
 
-  const activeCount = useMemo(() => summaryContacts.filter((contact) => !!contact.isActive).length, [summaryContacts]);
-  const unsubscribedCount = Math.max(0, summaryContacts.length - activeCount);
-
   const availableTags = PRESET_TAGS.map((tag) => normalizeTag(tag));
 
   const importMutation = useMutation({
@@ -338,70 +335,73 @@ export function ClientAudiencePanel({ clientId }: ClientAudiencePanelProps) {
     toast({ title: "Bulk add complete", description: `${payloads.length} contacts added` });
   };
 
+  const toggleActionPanel = (panel: "single" | "bulk" | "import" | "history") => {
+    const current =
+      panel === "single"
+        ? showSingleAdd
+        : panel === "bulk"
+          ? showBulkAdd
+          : panel === "import"
+            ? showImportPanel
+            : showImportHistory;
+    const next = !current;
+    setShowSingleAdd(panel === "single" ? next : false);
+    setShowBulkAdd(panel === "bulk" ? next : false);
+    setShowImportPanel(panel === "import" ? next : false);
+    setShowImportHistory(panel === "history" ? next : false);
+  };
+
   return (
     <div className="space-y-3">
-      <div className="grid grid-cols-3 gap-2">
-        <div className="rounded-md border p-2">
-          <div className="text-[11px] text-muted-foreground">Total</div>
-          <div className="text-sm font-semibold">{summaryContacts.length}</div>
-        </div>
-        <div className="rounded-md border p-2">
-          <div className="text-[11px] text-muted-foreground">Active</div>
-          <div className="text-sm font-semibold">{activeCount}</div>
-        </div>
-        <div className="rounded-md border p-2">
-          <div className="text-[11px] text-muted-foreground">Unsubscribed</div>
-          <div className="text-sm font-semibold">{unsubscribedCount}</div>
-        </div>
-      </div>
-
-      <div className="flex flex-wrap items-center gap-2">
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button size="sm" variant="outline" className="h-8 text-xs">
-              <Plus className="w-3.5 h-3.5 mr-1.5" />
-              Add Contact
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="inline-flex items-center rounded-md border bg-background">
+          {(["all", "active", "unsubscribed", "archived"] as const).map((tab) => (
+            <Button
+              key={tab}
+              size="sm"
+              variant={view === tab ? "secondary" : "ghost"}
+              className="h-7 rounded-none first:rounded-l-md last:rounded-r-md text-xs"
+              onClick={() => setView(tab)}
+              data-testid={`button-audience-tab-${tab}`}
+            >
+              {toTitleCase(tab)}
             </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="start">
-            <DropdownMenuItem onClick={() => { setShowSingleAdd((prev) => !prev); setShowBulkAdd(false); }}>
-              Single Add
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => { setShowBulkAdd((prev) => !prev); setShowSingleAdd(false); }}>
-              Bulk Add
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button size="sm" variant="outline" className="h-8 text-xs">
-              <Upload className="w-3.5 h-3.5 mr-1.5" />
-              Import
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="start">
-            <DropdownMenuItem onClick={() => { setShowImportPanel((prev) => !prev); setShowImportHistory(false); }}>
-              Import CSV
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => { setShowImportHistory((prev) => !prev); setShowImportPanel(false); }}>
-              Import History
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-
-        <Button
-          size="sm"
-          variant={view === "archived" ? "secondary" : "ghost"}
-          className="h-8 text-xs"
-          onClick={() => setView((prev) => (prev === "archived" ? "all" : "archived"))}
-        >
-          {view === "archived" ? "Back to Active Views" : "Archive"}
-        </Button>
+          ))}
+        </div>
+        <div className="flex items-center gap-2">
+          <Input
+            value={contactSearch}
+            onChange={(event) => setContactSearch(event.target.value)}
+            className="h-8 w-[220px] text-xs"
+            placeholder="Search contacts"
+          />
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button size="sm" variant="outline" className="h-8 text-xs">
+                <Plus className="w-3.5 h-3.5 mr-1.5" />
+                Add Contact
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={() => toggleActionPanel("single")}>
+                Single Add
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => toggleActionPanel("bulk")}>
+                Bulk Add
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => toggleActionPanel("import")}>
+                Import CSV
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => toggleActionPanel("history")}>
+                Import History
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
       </div>
 
       {showSingleAdd && (
-        <div className="rounded-md border p-3 space-y-2">
+        <div className="rounded-md border bg-muted/20 p-3 space-y-2">
           <div className="grid grid-cols-2 gap-2">
             <Input
               value={newContact.email}
@@ -450,7 +450,7 @@ export function ClientAudiencePanel({ clientId }: ClientAudiencePanelProps) {
       )}
 
       {showBulkAdd && (
-        <div className="rounded-md border p-3 space-y-2">
+        <div className="rounded-md border bg-muted/20 p-3 space-y-2">
           <Textarea
             value={bulkEmails}
             onChange={(event) => setBulkEmails(event.target.value)}
@@ -469,7 +469,7 @@ export function ClientAudiencePanel({ clientId }: ClientAudiencePanelProps) {
       )}
 
       {showImportPanel && (
-        <div className="rounded-md border p-3 space-y-2">
+        <div className="rounded-md border bg-muted/20 p-3 space-y-2">
           <input
             ref={csvFileInputRef}
             type="file"
@@ -552,7 +552,7 @@ export function ClientAudiencePanel({ clientId }: ClientAudiencePanelProps) {
       )}
 
       {showImportHistory && (
-        <div className="rounded-md border p-3 space-y-2">
+        <div className="rounded-md border bg-muted/20 p-3 space-y-2">
           {importJobs.length === 0 ? (
             <div className="text-xs text-muted-foreground">No import history yet</div>
           ) : (
@@ -561,7 +561,7 @@ export function ClientAudiencePanel({ clientId }: ClientAudiencePanelProps) {
                 const createdAt = new Date(job.createdAt);
                 const hasValidDate = !Number.isNaN(createdAt.getTime());
                 return (
-                  <div key={job.id} className="rounded border p-2 space-y-1">
+                  <div key={job.id} className="rounded-md border bg-background px-2 py-1.5 space-y-1">
                     <div className="flex items-center justify-between gap-2">
                       <div className="text-[11px] font-medium">{toTitleCase(job.status)}</div>
                       <span className="text-[11px] text-muted-foreground">
@@ -582,90 +582,34 @@ export function ClientAudiencePanel({ clientId }: ClientAudiencePanelProps) {
         </div>
       )}
 
-      <div className="rounded-md border p-2 space-y-2">
-        <div className="flex items-center justify-between gap-2">
-          <div className="inline-flex items-center rounded-md border">
-            {(["all", "active", "unsubscribed"] as const).map((tab) => (
-              <Button
-                key={tab}
-                size="sm"
-                variant={view === tab ? "secondary" : "ghost"}
-                className="h-7 rounded-none first:rounded-l-md last:rounded-r-md text-xs"
-                onClick={() => setView(tab)}
-              >
-                {toTitleCase(tab)}
-              </Button>
-            ))}
-          </div>
-          <Input
-            value={contactSearch}
-            onChange={(event) => setContactSearch(event.target.value)}
-            className="h-8 max-w-[220px] text-xs"
-            placeholder="Search contacts"
-          />
+      <div className="rounded-md border">
+        <div className="flex items-center justify-end gap-2 border-b px-2 py-1.5">
+          {selectedContactIds.length > 0 ? (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button size="sm" variant="outline" className="h-7 text-xs">
+                  {selectedContactIds.length} selected
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                {view === "archived" ? (
+                  <DropdownMenuItem onClick={() => runBulkAction("restore")}>Restore</DropdownMenuItem>
+                ) : (
+                  <>
+                    <DropdownMenuItem onClick={() => runBulkAction("activate")}>Activate</DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => runBulkAction("deactivate")}>Unsubscribe</DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => runBulkAction("archive")}>Archive</DropdownMenuItem>
+                  </>
+                )}
+                <DropdownMenuItem onClick={() => setSelectedContactIds([])}>Clear selection</DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          ) : null}
         </div>
 
-        <div className="flex flex-wrap items-center gap-1.5">
-          {selectedContactIds.length > 0 && (
-            <Badge variant="secondary" className="text-xs">{selectedContactIds.length} selected</Badge>
-          )}
-          {view !== "archived" ? (
-            <>
-              <Button
-                size="sm"
-                variant="ghost"
-                className="h-7 px-2 text-xs"
-                onClick={() => runBulkAction("activate")}
-                disabled={selectedContactIds.length === 0 || bulkContactActionMutation.isPending}
-              >
-                Activate
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                className="h-7 px-2 text-xs"
-                onClick={() => runBulkAction("deactivate")}
-                disabled={selectedContactIds.length === 0 || bulkContactActionMutation.isPending}
-              >
-                Unsubscribe
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                className="h-7 px-2 text-xs"
-                onClick={() => runBulkAction("archive")}
-                disabled={selectedContactIds.length === 0 || bulkContactActionMutation.isPending}
-              >
-                Archive
-              </Button>
-            </>
-          ) : (
-            <>
-              <Button
-                size="sm"
-                variant="ghost"
-                className="h-7 px-2 text-xs"
-                onClick={() => runBulkAction("restore")}
-                disabled={selectedContactIds.length === 0 || bulkContactActionMutation.isPending}
-              >
-                Restore
-              </Button>
-            </>
-          )}
-          <Button
-            size="sm"
-            variant="ghost"
-            className="h-7 px-2 text-xs"
-            onClick={() => setSelectedContactIds([])}
-            disabled={selectedContactIds.length === 0}
-          >
-            Clear
-          </Button>
-        </div>
-
-        <div className="max-h-[420px] overflow-y-auto pr-1 space-y-1">
+        <div className="max-h-[430px] overflow-y-auto divide-y">
           {filteredContacts.length === 0 ? (
-            <div className="text-xs text-muted-foreground py-3">
+            <div className="text-xs text-muted-foreground py-3 px-2">
               {viewContacts.length === 0 ? "No contacts in this view" : "No contacts match this search"}
             </div>
           ) : (
@@ -674,7 +618,7 @@ export function ClientAudiencePanel({ clientId }: ClientAudiencePanelProps) {
               const isEditing = editingContactId === contact.id;
 
               return (
-                <div key={contact.id} className="rounded border px-2 py-1.5">
+                <div key={contact.id} className="px-2 py-2 hover:bg-muted/20">
                   {isEditing ? (
                     <div className="space-y-1.5">
                       <Input
@@ -760,9 +704,9 @@ export function ClientAudiencePanel({ clientId }: ClientAudiencePanelProps) {
                         <div className="text-xs font-medium truncate">{contactName(contact)}</div>
                         <div className="text-[11px] text-muted-foreground truncate">{contact.email}</div>
                       </div>
-                      <Badge variant="outline" className="text-[10px]">
+                      <span className="text-[10px] text-muted-foreground">
                         {contact.isActive ? "Active" : "Unsubscribed"}
-                      </Badge>
+                      </span>
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                           <Button variant="ghost" size="icon" className="h-7 w-7">
@@ -779,7 +723,9 @@ export function ClientAudiencePanel({ clientId }: ClientAudiencePanelProps) {
                               <DropdownMenuItem
                                 className="text-red-600"
                                 onClick={() => {
-                                  const ok = window.confirm(`Permanently delete ${contact.email}?`);
+                                  const ok = window.confirm(
+                                    `Delete ${contact.email} permanently? This cannot be undone.`
+                                  );
                                   if (!ok) return;
                                   deleteContactMutation.mutate(contact.id);
                                 }}

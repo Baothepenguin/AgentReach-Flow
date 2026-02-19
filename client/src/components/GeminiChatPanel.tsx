@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
+import { cn } from "@/lib/utils";
 import {
   MessageSquare,
   Send,
@@ -29,6 +30,9 @@ interface GeminiChatPanelProps {
   onToggleCollapse: () => void;
   enableBlockSuggestions?: boolean;
   onApplyBlockEdits?: (operations: BlockEditOperation[], summary?: string) => Promise<{ appliedCount: number } | void>;
+  className?: string;
+  fullWidth?: boolean;
+  hideOuterBorder?: boolean;
 }
 
 function describeOperation(operation: BlockEditOperation): string {
@@ -54,6 +58,9 @@ export function GeminiChatPanel({
   onToggleCollapse,
   enableBlockSuggestions = false,
   onApplyBlockEdits,
+  className,
+  fullWidth = false,
+  hideOuterBorder = false,
 }: GeminiChatPanelProps) {
   const [message, setMessage] = useState("");
   const [showPromptEditor, setShowPromptEditor] = useState(false);
@@ -266,7 +273,15 @@ export function GeminiChatPanel({
   }
 
   return (
-    <div className="w-[22rem] flex-shrink-0 border-l flex flex-col bg-background/90 backdrop-blur-sm" data-testid="panel-gemini-chat">
+    <div
+      className={cn(
+        fullWidth ? "w-full" : "w-[22rem] flex-shrink-0",
+        hideOuterBorder ? "border-l-0" : "border-l",
+        "flex flex-col bg-background/90 backdrop-blur-sm",
+        className
+      )}
+      data-testid="panel-gemini-chat"
+    >
       <div className="flex items-center justify-between px-3 h-12 border-b border-border/70">
         <div className="flex items-center gap-2 min-w-0">
           <MessageSquare className="w-4 h-4 text-primary" />

@@ -112,7 +112,8 @@ function getEditableTarget(element: HTMLElement | null): HTMLElement | null {
   if (candidate.tagName.toLowerCase() === "img") return candidate;
   const textLength = (candidate.textContent || "").trim().length;
   const tag = candidate.tagName.toLowerCase();
-  if (!["a", "button"].includes(tag) && (textLength === 0 || textLength > 600)) return null;
+  if (textLength === 0 || textLength > 1200) return null;
+  if ((tag === "a" || tag === "button") && textLength > 500) return null;
 
   return candidate;
 }
@@ -182,7 +183,7 @@ export function HTMLPreviewFrame({
     if (!iframe || !doc) return;
     const bodyHeight = doc.body?.scrollHeight || 0;
     const htmlHeight = doc.documentElement?.scrollHeight || 0;
-    const nextHeight = Math.max(bodyHeight, htmlHeight, 640);
+    const nextHeight = Math.max(bodyHeight, htmlHeight, 420);
     iframe.style.height = `${nextHeight}px`;
   }, []);
 
@@ -494,9 +495,11 @@ export function HTMLPreviewFrame({
       }
 
       const frameWidth = iframe.clientWidth || 680;
+      const frameHeight = iframe.clientHeight || 680;
       const panelWidth = 288;
-      const nextX = Math.max(12, Math.min(event.clientX + 14, frameWidth - panelWidth - 12));
-      const nextY = Math.max(12, event.clientY + 14);
+      const panelHeight = 340;
+      const nextX = Math.max(10, Math.min(event.clientX + 14, frameWidth - panelWidth - 10));
+      const nextY = Math.max(10, Math.min(event.clientY + 14, frameHeight - panelHeight - 10));
       setInspectorPosition({ x: nextX, y: nextY });
 
       const snapshot = describeElement(editable);
@@ -520,23 +523,28 @@ export function HTMLPreviewFrame({
       if (!doc) return;
       mountedDoc = doc;
 
-      doc.body.style.margin = doc.body.style.margin || "0";
+      doc.documentElement.style.margin = "0";
+      doc.documentElement.style.padding = "0";
+      doc.body.style.margin = "0";
+      doc.body.style.padding = "0";
       doc.body.style.background = "#ffffff";
 
       const style = doc.createElement("style");
       style.setAttribute(STYLE_ATTR, "true");
       style.textContent = `
+        html, body {
+          margin: 0;
+          padding: 0;
+        }
         [${EDITABLE_ATTR}="true"] {
           cursor: pointer;
-          transition: outline-color 100ms ease, outline-width 100ms ease;
+          transition: box-shadow 120ms ease;
         }
         [${EDITABLE_ATTR}="true"]:hover {
-          outline: 1px solid rgba(22, 163, 74, 0.28);
-          outline-offset: -1px;
+          box-shadow: inset 0 0 0 1px rgba(34, 197, 94, 0.25);
         }
         [${EDIT_ATTR}][data-flow-selected="true"] {
-          outline: 2px solid rgba(22, 163, 74, 0.75);
-          outline-offset: -2px;
+          box-shadow: inset 0 0 0 2px rgba(22, 163, 74, 0.58);
         }
         [${EDIT_ATTR}] {
           scroll-margin-top: 80px;
@@ -547,7 +555,26 @@ export function HTMLPreviewFrame({
       markEditableElements(doc);
 
       doc.addEventListener("click", handleSelect, true);
+      doc.addEventListener("dblclick", handleSelect, true);
       doc.addEventListener("keydown", handleKeyDown, true);
+
+      const observer = new MutationObserver(() => {
+        syncHeight();
+      });
+      observer.observe(doc.documentElement, {
+        childList: true,
+        subtree: true,
+        characterData: true,
+        attributes: true,
+      });
+
+      doc.querySelectorAll("img").forEach((img) => {
+        if (!img.complete) {
+          img.addEventListener("load", syncHeight, { once: true });
+          img.addEventListener("error", syncHeight, { once: true });
+        }
+      });
+      (doc as any).__flowResizeObserver = observer;
 
       syncHeight();
       setTimeout(syncHeight, 50);
@@ -562,7 +589,10 @@ export function HTMLPreviewFrame({
       window.removeEventListener("resize", syncHeight);
       if (mountedDoc) {
         mountedDoc.removeEventListener("click", handleSelect, true);
+        mountedDoc.removeEventListener("dblclick", handleSelect, true);
         mountedDoc.removeEventListener("keydown", handleKeyDown, true);
+        const observer = (mountedDoc as any).__flowResizeObserver as MutationObserver | undefined;
+        observer?.disconnect();
       }
       if (persistTimerRef.current) {
         clearTimeout(persistTimerRef.current);
@@ -592,12 +622,8 @@ export function HTMLPreviewFrame({
         ) : html ? (
           <div className="space-y-3" style={{ width: previewWidth, maxWidth: previewMaxWidth }}>
             <div
-              className={`relative bg-white overflow-hidden transition-all duration-300 ${
-                activeDeviceMode === "mobile"
-                  ? "rounded-3xl border-4 border-gray-700 shadow-lg"
-                  : fullWidth
-                    ? "rounded-xl shadow-sm"
-                    : "rounded-lg shadow-lg"
+              className={`relative bg-white overflow-hidden transition-all duration-200 ${
+                fullWidth ? "rounded-xl border shadow-sm" : "rounded-lg border shadow"
               }`}
             >
               <iframe
@@ -605,7 +631,7 @@ export function HTMLPreviewFrame({
                 srcDoc={html}
                 title="Newsletter Preview"
                 className="w-full border-0 bg-white"
-                style={{ height: activeDeviceMode === "mobile" ? "667px" : "680px" }}
+                style={{ height: "680px" }}
                 sandbox="allow-same-origin allow-scripts"
                 scrolling="no"
                 data-testid="iframe-preview"

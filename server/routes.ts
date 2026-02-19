@@ -4278,11 +4278,26 @@ export async function registerRoutes(
         return res.status(404).json({ error: "Newsletter not found" });
       }
 
-      const blockers = qa.blockers.filter((blocker) => blocker.code !== "sender_not_verified");
+      const softWarningCodes = new Set(["sender_not_verified", "malformed_urls"]);
+      const blockers = qa.blockers.filter((blocker) => !softWarningCodes.has(blocker.code));
+      const warnings = [
+        ...qa.warnings,
+        ...qa.blockers
+          .filter((blocker) => softWarningCodes.has(blocker.code))
+          .map((blocker) =>
+            blocker.code === "malformed_urls"
+              ? {
+                  ...blocker,
+                  message: `${blocker.message} Test email will still send, but fix URLs before schedule/send.`,
+                }
+              : blocker
+          ),
+      ];
       if (blockers.length > 0) {
         return res.status(400).json({
           error: "Cannot send test email until blockers are resolved.",
           blockers,
+          warnings,
         });
       }
 
@@ -4340,6 +4355,7 @@ export async function registerRoutes(
         ok: true,
         toEmail,
         status: "test_sent",
+        warnings,
       });
     } catch (error) {
       console.error("Send test error:", error);

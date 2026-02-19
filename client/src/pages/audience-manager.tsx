@@ -100,12 +100,11 @@ export default function AudienceManagerPage() {
                     <button
                       key={client.id}
                       type="button"
-                      className={`w-full rounded-md border px-3 py-2 text-left transition-colors ${
-                        isSelected ? "border-primary/50 bg-muted/40" : "hover:bg-muted/20"
+                      className={`w-full rounded-md px-3 py-2 text-left transition-colors ${
+                        isSelected ? "bg-muted/50" : "hover:bg-muted/25"
                       }`}
                       onClick={() => {
                         setSelectedClientId(client.id);
-                        setPreviewClientId(client.id);
                         setLocation(`/audience?clientId=${client.id}`);
                       }}
                       data-testid={`button-select-audience-client-${client.id}`}
@@ -128,7 +127,14 @@ export default function AudienceManagerPage() {
               <div className="space-y-4">
                 <div className="flex items-center justify-between gap-3 flex-wrap">
                   <div>
-                    <div className="text-base font-semibold">{selectedClient.name}</div>
+                    <button
+                      type="button"
+                      className="text-base font-semibold hover:underline"
+                      onClick={() => setPreviewClientId(selectedClient.id)}
+                      data-testid="button-open-audience-client-panel"
+                    >
+                      {selectedClient.name}
+                    </button>
                     <div className="text-sm text-muted-foreground">{selectedClient.primaryEmail}</div>
                   </div>
                   <div className="flex items-center gap-2">
