@@ -47,7 +47,10 @@ const NEWSLETTER_STATUSES = [
   { value: "scheduled", label: "Scheduled", color: "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400" },
   { value: "sent", label: "Sent", color: "bg-primary/10 text-primary" },
 ] as const;
-const EDITABLE_NEWSLETTER_STATUSES = NEWSLETTER_STATUSES.filter((s) => s.value !== "sent");
+const EDITABLE_NEWSLETTER_STATUSES = NEWSLETTER_STATUSES.filter(
+  (s) => s.value !== "scheduled" && s.value !== "sent"
+);
+const EDITABLE_STATUS_VALUES = new Set<string>(EDITABLE_NEWSLETTER_STATUSES.map((status) => status.value));
 
 type NewsletterWithClient = Newsletter & { client: Client };
 
@@ -86,9 +89,18 @@ function DraggableNewsletterCard({ newsletter }: { newsletter: NewsletterWithCli
   );
 }
 
-function StatusColumn({ status, newsletters }: { status: typeof NEWSLETTER_STATUSES[number]; newsletters: NewsletterWithClient[] }) {
+function StatusColumn({
+  status,
+  newsletters,
+  isDroppable,
+}: {
+  status: typeof NEWSLETTER_STATUSES[number];
+  newsletters: NewsletterWithClient[];
+  isDroppable: boolean;
+}) {
   const { setNodeRef, isOver } = useDroppable({
     id: status.value,
+    disabled: !isDroppable,
   });
 
   const dotColor = STATUS_DOT_COLORS[status.value] || "bg-gray-300";
@@ -139,6 +151,7 @@ function BoardView({ newsletters, onStatusChange }: { newsletters: NewsletterWit
     if (over && active.id !== over.id) {
       const newStatus = over.id as string;
       const currentNewsletter = newsletters.find(n => n.id === active.id);
+      if (!EDITABLE_STATUS_VALUES.has(newStatus)) return;
       if (currentNewsletter && currentNewsletter.status !== newStatus) {
         onStatusChange(active.id as string, newStatus);
       }
@@ -151,7 +164,12 @@ function BoardView({ newsletters, onStatusChange }: { newsletters: NewsletterWit
         {ongoingStatuses.map((status) => {
           const statusNewsletters = newsletters.filter(n => n.status === status.value);
           return (
-            <StatusColumn key={status.value} status={status} newsletters={statusNewsletters} />
+            <StatusColumn
+              key={status.value}
+              status={status}
+              newsletters={statusNewsletters}
+              isDroppable={EDITABLE_STATUS_VALUES.has(status.value)}
+            />
           );
         })}
       </div>
@@ -199,10 +217,10 @@ function TableView({ newsletters, onStatusChange }: { newsletters: NewsletterWit
                 {format(new Date(newsletter.expectedSendDate), "MMM d, yyyy")}
               </td>
               <td className="p-3">
-                {newsletter.status === "sent" ? (
+                {newsletter.status === "sent" || newsletter.status === "scheduled" ? (
                   <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-                    <span className={`w-2 h-2 rounded-full ${STATUS_DOT_COLORS.sent}`} />
-                    Sent
+                    <span className={`w-2 h-2 rounded-full ${STATUS_DOT_COLORS[newsletter.status] || "bg-gray-300"}`} />
+                    {newsletter.status === "scheduled" ? "Scheduled" : "Sent"}
                   </span>
                 ) : (
                   <Select

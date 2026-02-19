@@ -295,12 +295,55 @@ function buildNewsletterTitle(clientName: string): string {
   return `${normalizedName} Newsletter`;
 }
 
+const PATCH_FORBIDDEN_STATUSES = new Set<NewsletterStatus>(["scheduled", "sent"]);
+const ALLOWED_STATUS_TRANSITIONS: Record<NewsletterStatus, readonly NewsletterStatus[]> = {
+  draft: ["draft", "in_review", "approved"],
+  in_review: ["draft", "in_review", "changes_requested", "approved"],
+  changes_requested: ["draft", "in_review", "changes_requested", "approved"],
+  approved: ["in_review", "changes_requested", "approved", "scheduled", "sent"],
+  scheduled: ["in_review", "changes_requested", "approved", "scheduled", "sent"],
+  sent: ["sent"],
+};
+
+function canTransitionNewsletterStatus(
+  currentStatus: NewsletterStatus,
+  nextStatus: NewsletterStatus
+): boolean {
+  const allowedTargets = ALLOWED_STATUS_TRANSITIONS[currentStatus];
+  return !!allowedTargets && allowedTargets.includes(nextStatus);
+}
+
+function getPatchStatusTransitionError(
+  currentStatusRaw: unknown,
+  nextStatus: NewsletterStatus | undefined
+): string | null {
+  if (!nextStatus) return null;
+
+  const currentStatus = normalizeNewsletterStatus(currentStatusRaw) || "draft";
+  if (currentStatus === "sent" && nextStatus !== "sent") {
+    return "Sent newsletters are locked and cannot move back to earlier stages.";
+  }
+  if (PATCH_FORBIDDEN_STATUSES.has(nextStatus)) {
+    return nextStatus === "scheduled"
+      ? "Use Schedule Delivery to move a newsletter into 'scheduled'."
+      : "Status 'sent' is set automatically only after a successful send.";
+  }
+  if (!canTransitionNewsletterStatus(currentStatus, nextStatus)) {
+    return `Invalid status transition from '${currentStatus}' to '${nextStatus}'.`;
+  }
+  return null;
+}
+
 function applyNewsletterStatusSideEffects(
   status: NewsletterStatus | undefined,
   updateData: Record<string, unknown>,
   expectedSendDate?: string | null
 ): void {
   if (!status) return;
+
+  if (status !== "scheduled" && status !== "sent" && updateData.scheduledAt === undefined) {
+    updateData.scheduledAt = null;
+  }
 
   if (status === "scheduled" && !updateData.scheduledAt) {
     if (expectedSendDate) {
@@ -1387,11 +1430,9 @@ export async function registerRoutes(
         if (!newsletter) {
           return res.status(404).json({ error: "Newsletter not found" });
         }
-        if (newsletter.status === "sent" && normalizedStatus && normalizedStatus !== "sent") {
-          return res.status(400).json({ error: "Sent newsletters are locked and cannot move back to earlier stages." });
-        }
-        if (normalizedStatus === "sent") {
-          return res.status(400).json({ error: "Status 'sent' is set automatically only after a successful send." });
+        const transitionError = getPatchStatusTransitionError(newsletter.status, normalizedStatus);
+        if (transitionError) {
+          return res.status(400).json({ error: transitionError });
         }
 
         const versions = await storage.getVersionsByNewsletter(newsletter.id);
@@ -1448,11 +1489,9 @@ export async function registerRoutes(
       if (!existingNewsletter) {
         return res.status(404).json({ error: "Newsletter not found" });
       }
-      if (existingNewsletter.status === "sent" && normalizedStatus && normalizedStatus !== "sent") {
-        return res.status(400).json({ error: "Sent newsletters are locked and cannot move back to earlier stages." });
-      }
-      if (normalizedStatus === "sent") {
-        return res.status(400).json({ error: "Status 'sent' is set automatically only after a successful send." });
+      const transitionError = getPatchStatusTransitionError(existingNewsletter.status, normalizedStatus);
+      if (transitionError) {
+        return res.status(400).json({ error: transitionError });
       }
 
       const updateData: any = {
@@ -2763,11 +2802,24 @@ export async function registerRoutes(
       if (!reviewToken) {
         return res.status(404).json({ error: "Invalid or expired token" });
       }
+      const newsletter = await storage.getNewsletter(reviewToken.newsletterId);
+      if (!newsletter) {
+        return res.status(404).json({ error: "Newsletter not found" });
+      }
+      if (!canTransitionNewsletterStatus(newsletter.status as NewsletterStatus, "approved")) {
+        return res.status(400).json({
+          error: `Cannot approve while newsletter is in '${newsletter.status}' status.`,
+        });
+      }
+
+      await storage.updateNewsletter(reviewToken.newsletterId, {
+        status: "approved",
+        scheduledAt: newsletter.status === "scheduled" ? null : newsletter.scheduledAt,
+      });
 
       if (reviewToken.singleUse) {
         await storage.markTokenUsed(reviewToken.id);
       }
-      await storage.updateNewsletter(reviewToken.newsletterId, { status: "approved" });
 
       res.json({ success: true });
     } catch (error) {
@@ -2783,6 +2835,14 @@ export async function registerRoutes(
         return res.status(404).json({ error: "Invalid or expired token" });
       }
       const newsletter = await storage.getNewsletter(reviewToken.newsletterId);
+      if (!newsletter) {
+        return res.status(404).json({ error: "Newsletter not found" });
+      }
+      if (!canTransitionNewsletterStatus(newsletter.status as NewsletterStatus, "changes_requested")) {
+        return res.status(400).json({
+          error: `Cannot request changes while newsletter is in '${newsletter.status}' status.`,
+        });
+      }
       const users = await storage.getUsers();
       const fallbackCreatedById = newsletter?.createdById || newsletter?.lastEditedById || users[0]?.id;
       if (!fallbackCreatedById) {
@@ -2808,7 +2868,10 @@ export async function registerRoutes(
         reviewComment = await storage.createReviewComment(baseComment as any);
       }
 
-      await storage.updateNewsletter(reviewToken.newsletterId, { status: "changes_requested" });
+      await storage.updateNewsletter(reviewToken.newsletterId, {
+        status: "changes_requested",
+        scheduledAt: newsletter.status === "scheduled" ? null : newsletter.scheduledAt,
+      });
 
       res.json({ success: true, comment: reviewComment });
     } catch (error) {
@@ -2839,6 +2902,14 @@ export async function registerRoutes(
         return res.status(404).json({ error: "Invalid or expired token" });
       }
       const newsletter = await storage.getNewsletter(reviewToken.newsletterId);
+      if (!newsletter) {
+        return res.status(404).json({ error: "Newsletter not found" });
+      }
+      if (!canTransitionNewsletterStatus(newsletter.status as NewsletterStatus, "changes_requested")) {
+        return res.status(400).json({
+          error: `Cannot request changes while newsletter is in '${newsletter.status}' status.`,
+        });
+      }
       const users = await storage.getUsers();
       const fallbackCreatedById = newsletter?.createdById || newsletter?.lastEditedById || users[0]?.id;
       if (!fallbackCreatedById) {
@@ -2864,7 +2935,10 @@ export async function registerRoutes(
         comment = await storage.createReviewComment(baseComment as any);
       }
 
-      await storage.updateNewsletter(reviewToken.newsletterId, { status: "changes_requested" });
+      await storage.updateNewsletter(reviewToken.newsletterId, {
+        status: "changes_requested",
+        scheduledAt: newsletter.status === "scheduled" ? null : newsletter.scheduledAt,
+      });
       res.status(201).json(comment);
     } catch (error) {
       console.error("Create review comment error:", error);
@@ -2925,7 +2999,70 @@ export async function registerRoutes(
     }
   });
 
-  const buildNewsletterQaReport = async (newsletterId: string) => {
+  type QaReportOptions = {
+    audienceTag?: unknown;
+    includeAudience?: boolean;
+    requireRecipients?: boolean;
+  };
+
+  const normalizeAudienceTag = (value: unknown): string => {
+    if (typeof value !== "string") return "";
+    const trimmed = value.trim();
+    return trimmed;
+  };
+
+  const resolveAudienceRecipients = async (clientId: string, audienceTagRaw: unknown) => {
+    const normalizedTag = normalizeAudienceTag(audienceTagRaw) || "all";
+    const contacts = await storage.getContactsByClient(clientId);
+    const recipients = contacts.filter((c: any) => {
+      if (!c?.isActive) return false;
+      if (normalizedTag === "all") return true;
+      const tags = Array.isArray(c?.tags) ? c.tags : [];
+      return tags.includes(normalizedTag);
+    });
+    return { audienceTag: normalizedTag, recipients };
+  };
+
+  const queueAudienceDeliveries = async (
+    newsletterId: string,
+    clientId: string,
+    audienceTag: string,
+    recipients: any[]
+  ) => {
+    const { db } = await import("./db");
+    const { and, eq } = await import("drizzle-orm");
+    const { newsletterDeliveries } = await import("@shared/schema");
+
+    await db
+      .delete(newsletterDeliveries)
+      .where(
+        and(
+          eq((newsletterDeliveries as any).newsletterId, newsletterId),
+          eq((newsletterDeliveries as any).status, "queued")
+        )
+      );
+
+    if (!recipients.length) return [];
+
+    const rows = recipients
+      .map((contact: any) => ({
+        newsletterId,
+        clientId,
+        contactId: contact.id || null,
+        email: String(contact?.email || "").trim(),
+        audienceTag,
+        status: "queued" as const,
+        error: null,
+        sentAt: null,
+        postmarkMessageId: null,
+      }))
+      .filter((row) => row.email.length > 0);
+
+    if (!rows.length) return [];
+    return db.insert(newsletterDeliveries).values(rows as any).returning();
+  };
+
+  const buildNewsletterQaReport = async (newsletterId: string, options: QaReportOptions = {}) => {
     const newsletter = await storage.getNewsletter(newsletterId);
     if (!newsletter) return null;
 
@@ -2937,6 +3074,7 @@ export async function registerRoutes(
     );
     const html = compileNewsletterToHtml(document);
     const comments = await storage.getReviewCommentsByNewsletter(newsletter.id);
+    const unresolvedClientChanges = comments.filter((c) => !c.isInternal && !c.isCompleted).length;
 
     const resolvedSubject =
       (newsletter.subject || document.meta?.subject || newsletter.title || "").trim();
@@ -2944,11 +3082,16 @@ export async function registerRoutes(
       (newsletter.previewText || document.meta?.previewText || "").trim();
     const resolvedFromEmail =
       (newsletter.fromEmail || document.meta?.fromEmail || client?.primaryEmail || "").trim();
-    const unresolvedClientChanges = comments.filter((c) => !c.isInternal && !c.isCompleted).length;
 
     const blockers: Array<{ code: string; message: string }> = [];
     const warnings: Array<{ code: string; message: string }> = [];
 
+    if (newsletter.status === "sent") {
+      blockers.push({
+        code: "already_sent",
+        message: "This newsletter has already been sent and is locked.",
+      });
+    }
     if (!client?.isVerified) {
       blockers.push({
         code: "sender_not_verified",
@@ -3014,6 +3157,23 @@ export async function registerRoutes(
       });
     }
 
+    let audienceTag =
+      normalizeAudienceTag(options.audienceTag) ||
+      normalizeAudienceTag((document as any)?.meta?.audienceTag) ||
+      "all";
+    let recipients: any[] = [];
+    if (options.includeAudience || options.requireRecipients) {
+      const audienceResolution = await resolveAudienceRecipients(newsletter.clientId, audienceTag);
+      audienceTag = audienceResolution.audienceTag;
+      recipients = audienceResolution.recipients;
+      if (options.requireRecipients && recipients.length === 0) {
+        blockers.push({
+          code: "no_recipients",
+          message: `No active contacts found for tag "${audienceTag}".`,
+        });
+      }
+    }
+
     return {
       newsletter,
       document,
@@ -3024,13 +3184,10 @@ export async function registerRoutes(
       blockers,
       warnings,
       canSend: blockers.length === 0,
+      audienceTag,
+      recipients,
+      recipientsCount: recipients.length,
     };
-  };
-
-  const normalizeAudienceTag = (value: unknown): string => {
-    if (typeof value !== "string") return "";
-    const trimmed = value.trim();
-    return trimmed;
   };
 
   const personalizeNewsletterHtml = (html: string, contact: any): string => {
@@ -3050,7 +3207,11 @@ export async function registerRoutes(
     return out;
   };
 
-  const sendNewsletterViaPostmark = async (qa: any, audienceTag: string) => {
+  const sendNewsletterViaPostmark = async (
+    qa: any,
+    audienceTag: string,
+    recipientsHint: any[] = []
+  ) => {
     const postmarkToken = process.env.POSTMARK_SERVER_TOKEN || "";
     if (!postmarkToken) {
       return {
@@ -3059,57 +3220,93 @@ export async function registerRoutes(
       };
     }
 
-    const contacts = await storage.getContactsByClient(qa.newsletter.clientId);
-    const normalizedTag = audienceTag && audienceTag.trim() ? audienceTag.trim() : "all";
-    const recipients = contacts.filter((c: any) => {
-      if (!c?.isActive) return false;
-      if (normalizedTag === "all") return true;
-      const tags = Array.isArray(c?.tags) ? c.tags : [];
-      return tags.includes(normalizedTag);
-    });
-
-    if (recipients.length === 0) {
-      return {
-        ok: false,
-        error: `No active contacts found for tag "${normalizedTag}".`,
-      };
-    }
-
     const { ServerClient } = await import("postmark");
     const pm = new ServerClient(postmarkToken);
     const messageStream = process.env.POSTMARK_MESSAGE_STREAM || "outbound";
 
     const { db } = await import("./db");
+    const { and, eq } = await import("drizzle-orm");
     const { newsletterDeliveries } = await import("@shared/schema");
+    const normalizedTag = audienceTag && audienceTag.trim() ? audienceTag.trim() : "all";
 
-    const now = new Date();
+    let queuedDeliveries = await db
+      .select()
+      .from(newsletterDeliveries)
+      .where(
+        and(
+          eq((newsletterDeliveries as any).newsletterId, qa.newsletter.id),
+          eq((newsletterDeliveries as any).status, "queued"),
+          eq((newsletterDeliveries as any).audienceTag, normalizedTag)
+        )
+      );
+
+    if (!queuedDeliveries.length) {
+      const recipients =
+        recipientsHint.length > 0
+          ? recipientsHint
+          : (await resolveAudienceRecipients(qa.newsletter.clientId, normalizedTag)).recipients;
+      if (!recipients.length) {
+        return {
+          ok: false,
+          error: `No active contacts found for tag "${normalizedTag}".`,
+        };
+      }
+      queuedDeliveries = await queueAudienceDeliveries(
+        qa.newsletter.id,
+        qa.newsletter.clientId,
+        normalizedTag,
+        recipients
+      );
+    }
+    if (!queuedDeliveries.length) {
+      return {
+        ok: false,
+        error: "No queued recipients available for delivery.",
+      };
+    }
+
+    const contacts = await storage.getContactsByClient(qa.newsletter.clientId);
+    const contactById = new Map(contacts.map((c: any) => [c.id, c]));
+    const contactByEmail = new Map(
+      contacts
+        .filter((c: any) => typeof c?.email === "string" && c.email.trim())
+        .map((c: any) => [String(c.email).toLowerCase(), c])
+    );
+
     let sentCount = 0;
     let failedCount = 0;
-    const deliveryRows: any[] = [];
 
     // Keep batches modest for serverless timeouts and Postmark API limits.
-    const batches = chunkArray(recipients, 400);
-    for (const batchRecipients of batches) {
-      const batchMessages = batchRecipients.map((contact: any) => ({
-        From: qa.fromEmail,
-        To: contact.email,
-        Subject: qa.subject,
-        HtmlBody: personalizeNewsletterHtml(qa.html, contact),
-        MessageStream: messageStream,
-        TrackOpens: true,
-        TrackLinks: "HtmlAndText",
-        Tag: qa.newsletter.id,
-        Metadata: {
-          newsletterId: qa.newsletter.id,
-          clientId: qa.newsletter.clientId,
-          contactId: contact.id,
-          audienceTag: normalizedTag,
-        },
-      }));
+    const batches = chunkArray(queuedDeliveries as any[], 400);
+    for (const batchDeliveries of batches) {
+      const batchMessages = batchDeliveries.map((delivery: any) => {
+        const contact =
+          contactById.get(delivery.contactId) ||
+          contactByEmail.get(String(delivery.email || "").toLowerCase()) ||
+          null;
+        return {
+          From: qa.fromEmail,
+          To: delivery.email,
+          Subject: qa.subject,
+          HtmlBody: personalizeNewsletterHtml(qa.html, contact),
+          MessageStream: messageStream,
+          TrackOpens: true,
+          TrackLinks: "HtmlAndText",
+          Tag: qa.newsletter.id,
+          Metadata: {
+            newsletterId: qa.newsletter.id,
+            clientId: qa.newsletter.clientId,
+            contactId: delivery.contactId || contact?.id || null,
+            audienceTag: normalizedTag,
+          },
+        };
+      });
 
       const results = await pm.sendEmailBatch(batchMessages as any);
-      for (let i = 0; i < batchRecipients.length; i++) {
-        const contact = batchRecipients[i];
+      const now = new Date();
+      const writeOps = [];
+      for (let i = 0; i < batchDeliveries.length; i++) {
+        const delivery = batchDeliveries[i];
         const result = (results as any[])?.[i] || {};
         const errorCode = typeof result?.ErrorCode === "number" ? result.ErrorCode : 0;
         const isFailed = errorCode !== 0;
@@ -3119,30 +3316,30 @@ export async function registerRoutes(
         if (isFailed) failedCount += 1;
         else sentCount += 1;
 
-        deliveryRows.push({
-          newsletterId: qa.newsletter.id,
-          clientId: qa.newsletter.clientId,
-          contactId: contact.id,
-          email: contact.email,
-          audienceTag: normalizedTag,
-          postmarkMessageId,
-          status: isFailed ? "failed" : "sent",
-          error: isFailed ? message : null,
-          sentAt: isFailed ? null : now,
-        });
+        writeOps.push(
+          db
+            .update(newsletterDeliveries)
+            .set({
+              status: isFailed ? "failed" : "sent",
+              error: isFailed ? message : null,
+              postmarkMessageId,
+              sentAt: isFailed ? null : now,
+            } as any)
+            .where(eq((newsletterDeliveries as any).id, delivery.id))
+        );
       }
-    }
-
-    if (deliveryRows.length) {
-      await db.insert(newsletterDeliveries).values(deliveryRows);
+      if (writeOps.length) {
+        await Promise.all(writeOps);
+      }
     }
 
     return {
       ok: true,
       audienceTag: normalizedTag,
-      recipientsCount: recipients.length,
+      recipientsCount: queuedDeliveries.length,
       sentCount,
       failedCount,
+      queuedCount: queuedDeliveries.length,
     };
   };
 
@@ -3166,31 +3363,20 @@ export async function registerRoutes(
   // Used by the send/schedule confirmation UI to show QA results and recipient count before sending.
   app.post("/api/newsletters/:id/send-preview", requireAuth, async (req: Request, res: Response) => {
     try {
-      const qa = await buildNewsletterQaReport(req.params.id);
+      const requestedAudienceTag = normalizeAudienceTag(req.body.audienceTag) || normalizeAudienceTag(req.body.segmentTag);
+      const qa = await buildNewsletterQaReport(req.params.id, {
+        audienceTag: requestedAudienceTag,
+        includeAudience: true,
+      });
       if (!qa) {
         return res.status(404).json({ error: "Newsletter not found" });
       }
 
-      const requestedAudienceTag =
-        normalizeAudienceTag(req.body.audienceTag) ||
-        normalizeAudienceTag(req.body.segmentTag) ||
-        normalizeAudienceTag((qa.document as any)?.meta?.audienceTag);
-      const audienceTag = requestedAudienceTag || "all";
-
-      const contacts = await storage.getContactsByClient(qa.newsletter.clientId);
-      const normalizedTag = audienceTag && audienceTag.trim() ? audienceTag.trim() : "all";
-      const recipients = contacts.filter((c: any) => {
-        if (!c?.isActive) return false;
-        if (normalizedTag === "all") return true;
-        const tags = Array.isArray(c?.tags) ? c.tags : [];
-        return tags.includes(normalizedTag);
-      });
-
       res.json({
         newsletterId: qa.newsletter.id,
         status: qa.newsletter.status,
-        audienceTag: normalizedTag,
-        recipientsCount: recipients.length,
+        audienceTag: qa.audienceTag,
+        recipientsCount: qa.recipientsCount,
         blockers: qa.blockers,
         warnings: qa.warnings,
         canSend: qa.canSend,
@@ -3207,13 +3393,18 @@ export async function registerRoutes(
   app.post("/api/newsletters/:id/schedule", requireAuth, async (req: Request, res: Response) => {
     try {
       const userId = (req as Request & { userId: string }).userId;
-      const qa = await buildNewsletterQaReport(req.params.id);
+      const requestedAudienceTag = normalizeAudienceTag(req.body.audienceTag) || normalizeAudienceTag(req.body.segmentTag);
+      const qa = await buildNewsletterQaReport(req.params.id, {
+        audienceTag: requestedAudienceTag,
+        includeAudience: true,
+        requireRecipients: true,
+      });
       if (!qa) {
         return res.status(404).json({ error: "Newsletter not found" });
       }
-      if (qa.newsletter.status !== "approved" && qa.newsletter.status !== "scheduled") {
+      if (!canTransitionNewsletterStatus(qa.newsletter.status as NewsletterStatus, "scheduled")) {
         return res.status(400).json({
-          error: "Newsletter must be approved before scheduling.",
+          error: "Newsletter is not in a schedulable state.",
           status: qa.newsletter.status,
         });
       }
@@ -3230,33 +3421,37 @@ export async function registerRoutes(
         ? req.body.timezone.trim()
         : qa.newsletter.timezone || "America/New_York";
       const requestedDate = req.body.scheduledAt ? new Date(req.body.scheduledAt) : null;
+      if (req.body.scheduledAt && (!requestedDate || Number.isNaN(requestedDate.getTime()))) {
+        return res.status(400).json({ error: "Invalid schedule time." });
+      }
       const fallbackDate = qa.newsletter.expectedSendDate
         ? new Date(`${qa.newsletter.expectedSendDate}T09:00:00`)
         : new Date();
-      const scheduledAt = requestedDate && !Number.isNaN(requestedDate.getTime()) ? requestedDate : fallbackDate;
+      let scheduledAt = requestedDate && !Number.isNaN(requestedDate.getTime()) ? requestedDate : fallbackDate;
+      if (scheduledAt.getTime() < Date.now()) {
+        if (requestedDate) {
+          return res.status(400).json({
+            error: "Schedule time must be in the future.",
+            blockers: qa.blockers,
+            warnings: qa.warnings,
+          });
+        }
+        scheduledAt = new Date(Date.now() + 5 * 60 * 1000);
+      }
 
-      const requestedAudienceTag =
-        normalizeAudienceTag(req.body.audienceTag) ||
-        normalizeAudienceTag(req.body.segmentTag) ||
-        normalizeAudienceTag((qa.document as any)?.meta?.audienceTag);
-      const audienceTag = requestedAudienceTag || "all";
-
-      // Validate audience has recipients at schedule time to avoid "scheduled but can't send" surprises.
-      const contacts = await storage.getContactsByClient(qa.newsletter.clientId);
-      const normalizedTag = audienceTag && audienceTag.trim() ? audienceTag.trim() : "all";
-      const recipients = contacts.filter((c: any) => {
-        if (!c?.isActive) return false;
-        if (normalizedTag === "all") return true;
-        const tags = Array.isArray(c?.tags) ? c.tags : [];
-        return tags.includes(normalizedTag);
-      });
-      if (recipients.length === 0) {
+      if (qa.recipientsCount === 0) {
         return res.status(400).json({
-          error: `No active contacts found for tag "${normalizedTag}".`,
+          error: `No active contacts found for tag "${qa.audienceTag}".`,
           blockers: qa.blockers,
           warnings: qa.warnings,
         });
       }
+      const queuedRecipients = await queueAudienceDeliveries(
+        qa.newsletter.id,
+        qa.newsletter.clientId,
+        qa.audienceTag,
+        qa.recipients
+      );
 
       const nextDoc = {
         ...qa.document,
@@ -3267,7 +3462,7 @@ export async function registerRoutes(
           fromEmail: qa.fromEmail,
           sendMode,
           timezone,
-          audienceTag,
+          audienceTag: qa.audienceTag,
         },
       };
 
@@ -3289,6 +3484,7 @@ export async function registerRoutes(
         blockers: qa.blockers,
         warnings: qa.warnings,
         canSend: true,
+        queuedCount: queuedRecipients.length,
       });
     } catch (error) {
       console.error("Schedule newsletter error:", error);
@@ -3299,13 +3495,18 @@ export async function registerRoutes(
   app.post("/api/newsletters/:id/send-now", requireAuth, async (req: Request, res: Response) => {
     try {
       const userId = (req as Request & { userId: string }).userId;
-      const qa = await buildNewsletterQaReport(req.params.id);
+      const requestedAudienceTag = normalizeAudienceTag(req.body.audienceTag) || normalizeAudienceTag(req.body.segmentTag);
+      const qa = await buildNewsletterQaReport(req.params.id, {
+        audienceTag: requestedAudienceTag,
+        includeAudience: true,
+        requireRecipients: true,
+      });
       if (!qa) {
         return res.status(404).json({ error: "Newsletter not found" });
       }
-      if (qa.newsletter.status !== "approved" && qa.newsletter.status !== "scheduled") {
+      if (!canTransitionNewsletterStatus(qa.newsletter.status as NewsletterStatus, "sent")) {
         return res.status(400).json({
-          error: "Newsletter must be approved before sending.",
+          error: "Newsletter is not in a sendable state.",
           status: qa.newsletter.status,
         });
       }
@@ -3317,13 +3518,7 @@ export async function registerRoutes(
         });
       }
 
-      const requestedAudienceTag =
-        normalizeAudienceTag(req.body.audienceTag) ||
-        normalizeAudienceTag(req.body.segmentTag) ||
-        normalizeAudienceTag((qa.document as any)?.meta?.audienceTag);
-      const audienceTag = requestedAudienceTag || "all";
-
-      const sendResult = await sendNewsletterViaPostmark(qa, audienceTag);
+      const sendResult = await sendNewsletterViaPostmark(qa, qa.audienceTag, qa.recipients);
       if (!sendResult.ok) {
         return res.status(400).json({
           error: sendResult.error || "Failed to send via Postmark",
@@ -3342,13 +3537,14 @@ export async function registerRoutes(
           fromEmail: qa.fromEmail,
           sendMode: qa.newsletter.sendMode || "ai_recommended",
           timezone: qa.newsletter.timezone || "America/New_York",
-          audienceTag: (sendResult as any).audienceTag || audienceTag,
+          audienceTag: (sendResult as any).audienceTag || qa.audienceTag,
         },
       };
 
       const updated = await storage.updateNewsletter(req.params.id, {
         status: "sent",
         sentAt: sendAt,
+        scheduledAt: null,
         sendDate: sendAt.toISOString().split("T")[0],
         subject: qa.subject,
         previewText: qa.previewText || null,
@@ -3517,19 +3713,45 @@ export async function registerRoutes(
       });
 
       let processed = 0;
+      let skipped = 0;
+      let failed = 0;
       const results: any[] = [];
       for (const nl of dueNewsletters) {
-        const qa = await buildNewsletterQaReport(nl.id);
-        if (!qa || !qa.canSend) continue;
-        const audienceTag =
-          normalizeAudienceTag((qa.document as any)?.meta?.audienceTag) || "all";
-        const sendResult = await sendNewsletterViaPostmark(qa, audienceTag);
-        if (!sendResult.ok) continue;
+        const qa = await buildNewsletterQaReport(nl.id, {
+          includeAudience: true,
+          requireRecipients: true,
+        });
+        if (!qa) {
+          skipped += 1;
+          results.push({ newsletterId: nl.id, skipped: true, reason: "missing_newsletter" });
+          continue;
+        }
+        if (!qa.canSend) {
+          skipped += 1;
+          results.push({
+            newsletterId: nl.id,
+            skipped: true,
+            reason: "qa_blocked",
+            blockers: qa.blockers.map((b) => b.code),
+          });
+          continue;
+        }
+        const sendResult = await sendNewsletterViaPostmark(qa, qa.audienceTag, qa.recipients);
+        if (!sendResult.ok) {
+          failed += 1;
+          results.push({
+            newsletterId: nl.id,
+            failed: true,
+            error: sendResult.error || "Failed to send via Postmark",
+          });
+          continue;
+        }
 
         const sendAt = new Date();
         await storage.updateNewsletter(nl.id, {
           status: "sent",
           sentAt: sendAt,
+          scheduledAt: null,
           sendDate: sendAt.toISOString().split("T")[0],
           subject: qa.subject,
           previewText: qa.previewText || null,
@@ -3541,7 +3763,7 @@ export async function registerRoutes(
               subject: qa.subject,
               previewText: qa.previewText || undefined,
               fromEmail: qa.fromEmail,
-              audienceTag: (sendResult as any).audienceTag || audienceTag,
+              audienceTag: (sendResult as any).audienceTag || qa.audienceTag,
             },
           },
           lastEditedAt: sendAt,
@@ -3551,7 +3773,7 @@ export async function registerRoutes(
         results.push({ newsletterId: nl.id, send: sendResult });
       }
 
-      res.json({ ok: true, dueCount: dueNewsletters.length, processed, results });
+      res.json({ ok: true, dueCount: dueNewsletters.length, processed, skipped, failed, results });
     } catch (error) {
       console.error("Cron send-due error:", error);
       const detail = error instanceof Error ? error.message : String(error);
@@ -3569,6 +3791,11 @@ export async function registerRoutes(
       if (!newsletter) {
         return res.status(404).json({ error: "Newsletter not found" });
       }
+      if (!canTransitionNewsletterStatus(newsletter.status as NewsletterStatus, "in_review")) {
+        return res.status(400).json({
+          error: `Cannot move newsletter from '${newsletter.status}' to in_review.`,
+        });
+      }
 
       const token = randomUUID();
       const expiresAt = new Date();
@@ -3581,7 +3808,10 @@ export async function registerRoutes(
         singleUse: true,
       });
 
-      await storage.updateNewsletter(newsletter.id, { status: "in_review" });
+      await storage.updateNewsletter(newsletter.id, {
+        status: "in_review",
+        scheduledAt: newsletter.status === "scheduled" ? null : newsletter.scheduledAt,
+      });
 
       const reviewUrl = `${req.protocol}://${req.get("host")}/review/${token}`;
 
