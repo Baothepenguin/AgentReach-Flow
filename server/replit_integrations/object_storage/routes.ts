@@ -88,8 +88,14 @@ function decodeUploadToken(token: string): UploadTokenPayload | null {
 }
 
 function getSupabaseStorageConfig(): SupabaseStorageConfig | null {
-  const rawUrl = (process.env.SUPABASE_URL || "").trim();
-  const serviceKey = (process.env.SUPABASE_SERVICE_KEY || "").trim();
+  const normalizeEnvValue = (value: string): string =>
+    value
+      .replace(/\\n/g, "")
+      .replace(/^['"]+|['"]+$/g, "")
+      .trim();
+
+  const rawUrl = normalizeEnvValue(process.env.SUPABASE_URL || "");
+  const serviceKey = normalizeEnvValue(process.env.SUPABASE_SERVICE_KEY || "");
   const bucket = (process.env.SUPABASE_STORAGE_BUCKET || "flow-assets").trim();
 
   if (!rawUrl || !serviceKey || !bucket) return null;
@@ -167,8 +173,17 @@ async function ensureSupabaseBucket(config: SupabaseStorageConfig): Promise<void
 
   const bucketUrl = `${config.url}/storage/v1/bucket/${encodeURIComponent(config.bucket)}`;
   const getBucketRes = await fetch(bucketUrl, { headers });
+  let bucketMissing = getBucketRes.status === 404;
+  if (!bucketMissing && getBucketRes.status === 400) {
+    const body = await getBucketRes.text().catch(() => "");
+    if (/bucket not found/i.test(body) || /"statusCode"\s*:\s*"404"/i.test(body)) {
+      bucketMissing = true;
+    } else {
+      throw new Error(`Supabase bucket check failed (${getBucketRes.status}): ${body.slice(0, 240)}`);
+    }
+  }
 
-  if (getBucketRes.status === 404) {
+  if (bucketMissing) {
     const createRes = await fetch(`${config.url}/storage/v1/bucket`, {
       method: "POST",
       headers,
