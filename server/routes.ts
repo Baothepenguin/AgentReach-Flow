@@ -284,9 +284,9 @@ function normalizeSendMode(mode: unknown): "fixed_time" | "immediate_after_appro
   return undefined;
 }
 
-function normalizeReviewCommentType(value: unknown): "change" | "addition" | "removal" | "general" | "content" | "design" | "links" {
+function normalizeReviewCommentType(value: unknown): "change" | "addition" | "removal" {
   const raw = typeof value === "string" ? value.trim() : "";
-  const allowed = new Set(["change", "addition", "removal", "general", "content", "design", "links"]);
+  const allowed = new Set(["change", "addition", "removal"]);
   return allowed.has(raw) ? (raw as any) : "change";
 }
 
