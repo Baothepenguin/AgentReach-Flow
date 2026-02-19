@@ -188,10 +188,15 @@ export interface IStorage {
   // Contacts / Audience
   getContactsByClient(clientId: string): Promise<Contact[]>;
   getContactByEmail(clientId: string, email: string): Promise<Contact | undefined>;
+  getContact(id: string): Promise<Contact | undefined>;
   createContact(data: InsertContact): Promise<Contact>;
   upsertContactByEmail(clientId: string, email: string, data: Partial<InsertContact>): Promise<{ contact: Contact; created: boolean }>;
+  updateContact(id: string, data: Partial<InsertContact>): Promise<Contact | undefined>;
+  deleteContact(id: string): Promise<void>;
   getContactSegmentsByClient(clientId: string): Promise<ContactSegment[]>;
   createContactSegment(data: InsertContactSegment): Promise<ContactSegment>;
+  updateContactSegment(id: string, data: Partial<InsertContactSegment>): Promise<ContactSegment | undefined>;
+  deleteContactSegment(id: string): Promise<void>;
   getContactImportJobsByClient(clientId: string): Promise<ContactImportJob[]>;
   createContactImportJob(data: InsertContactImportJob): Promise<ContactImportJob>;
   updateContactImportJob(id: string, data: Partial<InsertContactImportJob>): Promise<ContactImportJob | undefined>;
@@ -780,6 +785,11 @@ export class DatabaseStorage implements IStorage {
     return contact;
   }
 
+  async getContact(id: string): Promise<Contact | undefined> {
+    const [contact] = await db.select().from(contacts).where(eq(contacts.id, id));
+    return contact;
+  }
+
   async createContact(data: InsertContact): Promise<Contact> {
     const [contact] = await db.insert(contacts).values(data).returning();
     return contact;
@@ -814,6 +824,19 @@ export class DatabaseStorage implements IStorage {
     return { contact: created, created: true };
   }
 
+  async updateContact(id: string, data: Partial<InsertContact>): Promise<Contact | undefined> {
+    const [updated] = await db
+      .update(contacts)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(contacts.id, id))
+      .returning();
+    return updated;
+  }
+
+  async deleteContact(id: string): Promise<void> {
+    await db.delete(contacts).where(eq(contacts.id, id));
+  }
+
   async getContactSegmentsByClient(clientId: string): Promise<ContactSegment[]> {
     return db
       .select()
@@ -825,6 +848,19 @@ export class DatabaseStorage implements IStorage {
   async createContactSegment(data: InsertContactSegment): Promise<ContactSegment> {
     const [segment] = await db.insert(contactSegments).values(data).returning();
     return segment;
+  }
+
+  async updateContactSegment(id: string, data: Partial<InsertContactSegment>): Promise<ContactSegment | undefined> {
+    const [updated] = await db
+      .update(contactSegments)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(contactSegments.id, id))
+      .returning();
+    return updated;
+  }
+
+  async deleteContactSegment(id: string): Promise<void> {
+    await db.delete(contactSegments).where(eq(contactSegments.id, id));
   }
 
   async getContactImportJobsByClient(clientId: string): Promise<ContactImportJob[]> {

@@ -82,7 +82,8 @@ export function HTMLPreviewFrame({
   const activeDeviceMode = deviceMode ?? internalDeviceMode;
   const setActiveDeviceMode = onDeviceModeChange ?? setInternalDeviceMode;
 
-  const previewWidth = fullWidth ? "100%" : activeDeviceMode === "mobile" ? 375 : 680;
+  const previewWidth = activeDeviceMode === "mobile" ? 390 : fullWidth ? "100%" : 680;
+  const previewMaxWidth = activeDeviceMode === "mobile" ? 390 : fullWidth ? 980 : 680;
 
   useEffect(() => {
     selectedRef.current = selectedElement;
@@ -144,6 +145,12 @@ export function HTMLPreviewFrame({
   useEffect(() => {
     markSelectedElement(selectedElement?.id);
   }, [selectedElement?.id, markSelectedElement]);
+
+  useEffect(() => {
+    // Reflow iframe after device mode switches so desktop/mobile toggles don't keep stale sizing.
+    const timeout = setTimeout(() => syncHeight(), 50);
+    return () => clearTimeout(timeout);
+  }, [activeDeviceMode, syncHeight, html]);
 
   const describeElement = useCallback((element: HTMLElement): SelectedElementState => {
     const id = element.getAttribute(EDIT_ATTR) || createEditId();
@@ -363,10 +370,10 @@ export function HTMLPreviewFrame({
             </div>
           </div>
         ) : html ? (
-          <div className="space-y-3" style={{ width: previewWidth, maxWidth: fullWidth ? undefined : previewWidth }}>
+          <div className="space-y-3" style={{ width: previewWidth, maxWidth: previewMaxWidth }}>
             <div
               className={`relative bg-white overflow-hidden transition-all duration-300 ${
-                activeDeviceMode === "mobile" && !fullWidth
+                activeDeviceMode === "mobile"
                   ? "rounded-3xl border-4 border-gray-700 shadow-lg"
                   : fullWidth
                     ? "rounded-xl shadow-sm"

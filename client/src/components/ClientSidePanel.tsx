@@ -6,12 +6,14 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Mail, Phone, MapPin, Calendar, CreditCard, Palette, FileText, Pencil, Check, X } from "lucide-react";
+import { Mail, Phone, MapPin, Calendar, CreditCard, Palette, FileText, Pencil, Check, X, ExternalLink } from "lucide-react";
 import { format } from "date-fns";
 import { Link } from "wouter";
+import { useLocation } from "wouter";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { Client, Subscription, BrandingKit, Invoice, Newsletter } from "@shared/schema";
+import { ClientAudiencePanel } from "@/components/ClientAudiencePanel";
 
 interface ClientSidePanelProps {
   clientId: string;
@@ -36,6 +38,7 @@ function getStatusBadge(status: string) {
 
 export function ClientSidePanel({ clientId, open, onClose }: ClientSidePanelProps) {
   const { toast } = useToast();
+  const [, setLocation] = useLocation();
   const [isEditing, setIsEditing] = useState(false);
   const [form, setForm] = useState({
     primaryEmail: "",
@@ -133,49 +136,60 @@ export function ClientSidePanel({ clientId, open, onClose }: ClientSidePanelProp
 
   return (
     <Sheet open={open} onOpenChange={onClose}>
-      <SheetContent className="w-[400px] sm:w-[480px] p-0">
+      <SheetContent className="w-[400px] sm:w-[480px] p-0 [&>button]:hidden">
         <SheetHeader className="p-4 border-b">
           <div className="flex items-center justify-between gap-2">
             <SheetTitle className="text-left">
               {isLoading ? <Skeleton className="h-6 w-32" /> : client?.name}
             </SheetTitle>
-            {!isLoading && client && (
-              <div className="flex items-center gap-1">
-                {!isEditing ? (
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-8 w-8"
-                    onClick={() => setIsEditing(true)}
-                    data-testid="button-edit-client-card"
-                  >
-                    <Pencil className="w-4 h-4" />
-                  </Button>
-                ) : (
-                  <>
+            <div className="flex items-center gap-1">
+              {!isLoading && client && (
+                <>
+                  {!isEditing ? (
                     <Button
                       variant="ghost"
                       size="icon"
                       className="h-8 w-8"
-                      onClick={() => updateClientMutation.mutate()}
-                      disabled={updateClientMutation.isPending}
-                      data-testid="button-save-client-card"
+                      onClick={() => setIsEditing(true)}
+                      data-testid="button-edit-client-card"
                     >
-                      <Check className="w-4 h-4" />
+                      <Pencil className="w-4 h-4" />
                     </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8"
-                      onClick={() => setIsEditing(false)}
-                      data-testid="button-cancel-client-card"
-                    >
-                      <X className="w-4 h-4" />
-                    </Button>
-                  </>
-                )}
-              </div>
-            )}
+                  ) : (
+                    <>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8"
+                        onClick={() => updateClientMutation.mutate()}
+                        disabled={updateClientMutation.isPending}
+                        data-testid="button-save-client-card"
+                      >
+                        <Check className="w-4 h-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8"
+                        onClick={() => setIsEditing(false)}
+                        data-testid="button-cancel-client-card"
+                      >
+                        <X className="w-4 h-4" />
+                      </Button>
+                    </>
+                  )}
+                </>
+              )}
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8"
+                onClick={onClose}
+                data-testid="button-close-client-card"
+              >
+                <X className="w-4 h-4" />
+              </Button>
+            </div>
           </div>
         </SheetHeader>
 
@@ -285,10 +299,22 @@ export function ClientSidePanel({ clientId, open, onClose }: ClientSidePanelProp
               </div>
 
               <div>
-                <h3 className="text-sm font-medium mb-3 flex items-center gap-2">
-                  <Calendar className="w-4 h-4" />
-                  Subscriptions
-                </h3>
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-sm font-medium flex items-center gap-2">
+                    <Calendar className="w-4 h-4" />
+                    Subscriptions
+                  </h3>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 px-2 text-xs"
+                    onClick={() => setLocation("/subscriptions")}
+                    data-testid="button-manage-subscriptions-client-card"
+                  >
+                    Manage
+                    <ExternalLink className="w-3 h-3 ml-1" />
+                  </Button>
+                </div>
                 {subscriptions.length === 0 ? (
                   <p className="text-sm text-muted-foreground">No subscriptions</p>
                 ) : (
@@ -309,10 +335,22 @@ export function ClientSidePanel({ clientId, open, onClose }: ClientSidePanelProp
               </div>
 
               <div>
-                <h3 className="text-sm font-medium mb-3 flex items-center gap-2">
-                  <Palette className="w-4 h-4" />
-                  Branding Kit
-                </h3>
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-sm font-medium flex items-center gap-2">
+                    <Palette className="w-4 h-4" />
+                    Branding Kit
+                  </h3>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 px-2 text-xs"
+                    onClick={() => setLocation("/branding-kits")}
+                    data-testid="button-manage-branding-client-card"
+                  >
+                    Manage
+                    <ExternalLink className="w-3 h-3 ml-1" />
+                  </Button>
+                </div>
                 {!brandingKit ? (
                   <p className="text-sm text-muted-foreground">No branding kit configured</p>
                 ) : (
@@ -350,10 +388,22 @@ export function ClientSidePanel({ clientId, open, onClose }: ClientSidePanelProp
               </div>
 
               <div>
-                <h3 className="text-sm font-medium mb-3 flex items-center gap-2">
-                  <CreditCard className="w-4 h-4" />
-                  Invoices
-                </h3>
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-sm font-medium flex items-center gap-2">
+                    <CreditCard className="w-4 h-4" />
+                    Invoices
+                  </h3>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 px-2 text-xs"
+                    onClick={() => setLocation("/orders")}
+                    data-testid="button-manage-orders-client-card"
+                  >
+                    Manage
+                    <ExternalLink className="w-3 h-3 ml-1" />
+                  </Button>
+                </div>
                 {invoices.length === 0 ? (
                   <p className="text-sm text-muted-foreground">No invoices</p>
                 ) : (
@@ -376,10 +426,22 @@ export function ClientSidePanel({ clientId, open, onClose }: ClientSidePanelProp
               </div>
 
               <div>
-                <h3 className="text-sm font-medium mb-3 flex items-center gap-2">
-                  <FileText className="w-4 h-4" />
-                  Newsletters
-                </h3>
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-sm font-medium flex items-center gap-2">
+                    <FileText className="w-4 h-4" />
+                    Newsletters
+                  </h3>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 px-2 text-xs"
+                    onClick={() => setLocation("/newsletters")}
+                    data-testid="button-manage-newsletters-client-card"
+                  >
+                    Manage
+                    <ExternalLink className="w-3 h-3 ml-1" />
+                  </Button>
+                </div>
                 {newsletters.length === 0 ? (
                   <p className="text-sm text-muted-foreground">No newsletters</p>
                 ) : (
@@ -396,6 +458,11 @@ export function ClientSidePanel({ clientId, open, onClose }: ClientSidePanelProp
                     ))}
                   </div>
                 )}
+              </div>
+
+              <div>
+                <h3 className="text-sm font-medium mb-3">Audience (Contacts + Segments)</h3>
+                <ClientAudiencePanel clientId={client.id} />
               </div>
             </div>
           </ScrollArea>

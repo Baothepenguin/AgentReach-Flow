@@ -44,9 +44,9 @@ import {
   FileText,
   Clock3,
   Send,
-  AlertTriangle,
   Monitor,
   Smartphone,
+  PanelRightOpen,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import type {
@@ -104,7 +104,6 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
 
   const newsletter = newsletterData?.newsletter;
   const client = newsletter?.client;
-  const isDeliveryStage = newsletter?.status === "approved" || newsletter?.status === "scheduled";
 
   // Keep HTML as-is. Email builders (e.g. Postcards) rely on conditional comments (Outlook),
   // and "minifying" by stripping comments can break rendering.
@@ -213,21 +212,6 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
   });
 
   const hasContent = !!newsletterData?.html;
-
-  const sendReadinessQuery = useQuery<SendReadinessPreview>({
-    queryKey: ["/api/newsletters", newsletterId, "send-preview", "all"],
-    enabled: !!newsletterId && !!isDeliveryStage,
-    queryFn: async () => {
-      const res = await apiRequest("POST", `/api/newsletters/${newsletterId}/send-preview`, {
-        audienceTag: "all",
-      });
-      return res.json();
-    },
-    refetchInterval: 30000,
-  });
-  const deliveryBlockers = sendReadinessQuery.data?.blockers || [];
-  const deliveryWarnings = sendReadinessQuery.data?.warnings || [];
-  const unresolvedChangesWarning = deliveryWarnings.find((w) => w.code === "pending_change_requests");
 
   const handleExportHtml = async () => {
     if (!newsletterData?.html) return;
@@ -375,14 +359,26 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
                     )}
 
                     {client && (
-                      <Link
-                        href={`/clients/${client.id}`}
-                        className="text-xs text-muted-foreground hover:text-foreground transition-colors inline-flex items-center gap-1"
-                        data-testid="link-client-name"
-                      >
-                        <User className="w-3.5 h-3.5" />
-                        {client.name}
-                      </Link>
+                      <div className="inline-flex items-center gap-2">
+                        <Link
+                          href={`/clients/${client.id}`}
+                          className="text-xs text-muted-foreground hover:text-foreground transition-colors inline-flex items-center gap-1"
+                          data-testid="link-client-name"
+                        >
+                          <User className="w-3.5 h-3.5" />
+                          {client.name}
+                        </Link>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 px-2 text-xs"
+                          onClick={() => setShowClientPanel(true)}
+                          data-testid="button-open-client-panel"
+                        >
+                          <PanelRightOpen className="w-3.5 h-3.5 mr-1" />
+                          Client Card
+                        </Button>
+                      </div>
                     )}
 
                     {saveStatus === "saving" && (
@@ -524,62 +520,6 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
               </div>
             </div>
           </header>
-
-          {isDeliveryStage && (
-            <div
-              className="mx-4 mt-3 rounded-xl border border-amber-200/80 bg-amber-50/80 px-4 py-3 flex items-center justify-between gap-3 shadow-sm dark:border-amber-900/60 dark:bg-amber-950/20"
-              data-testid="delivery-action-strip"
-            >
-              <div className="min-w-0">
-                <div className="text-sm font-medium flex items-center gap-2">
-                  <AlertTriangle className="w-4 h-4 text-amber-600" />
-                  Manual delivery required
-                </div>
-                <div className="text-xs text-muted-foreground mt-0.5 flex items-center gap-3 flex-wrap">
-                  <span>
-                    Status: <span className="font-medium">{newsletter.status === "approved" ? "Approved" : "Scheduled"}</span>
-                  </span>
-                  <span>
-                    Recipients:{" "}
-                    {sendReadinessQuery.isLoading ? "..." : (sendReadinessQuery.data?.recipientsCount ?? 0)}
-                  </span>
-                  <span>
-                    Blockers: <span className={deliveryBlockers.length > 0 ? "text-destructive font-medium" : "font-medium"}>{deliveryBlockers.length}</span>
-                  </span>
-                  <span>
-                    Warnings: <span className={deliveryWarnings.length > 0 ? "text-amber-700 dark:text-amber-400 font-medium" : "font-medium"}>{deliveryWarnings.length}</span>
-                  </span>
-                </div>
-                {(deliveryBlockers.length > 0 || deliveryWarnings.length > 0) && (
-                  <div className="mt-2 space-y-1">
-                    {deliveryBlockers.slice(0, 2).map((blocker) => (
-                      <div key={blocker.code} className="text-xs text-destructive">
-                        Blocker: {blocker.message}
-                      </div>
-                    ))}
-                    {deliveryWarnings.slice(0, 2).map((warning) => (
-                      <div key={warning.code} className="text-xs text-amber-700 dark:text-amber-400">
-                        Warning: {warning.message}
-                      </div>
-                    ))}
-                    {deliveryWarnings.length > 2 && (
-                      <div className="text-xs text-muted-foreground">
-                        +{deliveryWarnings.length - 2} more warning(s) in delivery dialog.
-                      </div>
-                    )}
-                    {unresolvedChangesWarning && (
-                      <div className="text-xs text-amber-700 dark:text-amber-400">
-                        {unresolvedChangesWarning.message}
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-              <div className="flex items-center gap-2 flex-shrink-0 text-xs text-amber-800/90 dark:text-amber-200/80">
-                Manual click required for every send.
-              </div>
-            </div>
-          )}
 
           <div className="flex-1 min-h-0 relative p-4 pt-3">
             {editingHtml ? (

@@ -381,6 +381,23 @@ function extractUrlsFromHtml(html: string): string[] {
     .filter((url) => !!url);
 }
 
+function normalizeTagList(input: unknown, fallback: string[] = ["all"]): string[] {
+  const raw =
+    Array.isArray(input)
+      ? input
+      : typeof input === "string"
+        ? input.split(",")
+        : [];
+  const normalized = Array.from(
+    new Set(
+      raw
+        .map((value) => String(value || "").trim().toLowerCase())
+        .filter(Boolean)
+    )
+  );
+  return normalized.length ? normalized : fallback;
+}
+
 function parseCsvLine(line: string): string[] {
   const cells: string[] = [];
   let current = "";
@@ -768,6 +785,77 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/clients/:id/contacts", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const client = await storage.getClient(req.params.id);
+      if (!client) {
+        return res.status(404).json({ error: "Client not found" });
+      }
+
+      const email = String(req.body?.email || "").trim().toLowerCase();
+      if (!email) {
+        return res.status(400).json({ error: "Email is required" });
+      }
+
+      const result = await storage.upsertContactByEmail(client.id, email, {
+        firstName: req.body?.firstName ? String(req.body.firstName).trim() : null,
+        lastName: req.body?.lastName ? String(req.body.lastName).trim() : null,
+        tags: normalizeTagList(req.body?.tags),
+        isActive: typeof req.body?.isActive === "boolean" ? req.body.isActive : true,
+      });
+
+      res.status(result.created ? 201 : 200).json(result.contact);
+    } catch (error) {
+      console.error("Create contact error:", error);
+      res.status(500).json({ error: "Failed to create contact" });
+    }
+  });
+
+  app.patch("/api/contacts/:id", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const existing = await storage.getContact(req.params.id);
+      if (!existing) {
+        return res.status(404).json({ error: "Contact not found" });
+      }
+
+      const emailRaw = req.body?.email;
+      const nextEmail =
+        typeof emailRaw === "string" && emailRaw.trim().length > 0
+          ? emailRaw.trim().toLowerCase()
+          : undefined;
+
+      const updated = await storage.updateContact(req.params.id, {
+        ...(nextEmail ? { email: nextEmail } : {}),
+        ...(req.body?.firstName !== undefined ? { firstName: req.body.firstName ? String(req.body.firstName).trim() : null } : {}),
+        ...(req.body?.lastName !== undefined ? { lastName: req.body.lastName ? String(req.body.lastName).trim() : null } : {}),
+        ...(req.body?.tags !== undefined ? { tags: normalizeTagList(req.body.tags) } : {}),
+        ...(typeof req.body?.isActive === "boolean" ? { isActive: req.body.isActive } : {}),
+      });
+
+      if (!updated) {
+        return res.status(404).json({ error: "Contact not found" });
+      }
+      res.json(updated);
+    } catch (error) {
+      console.error("Update contact error:", error);
+      res.status(500).json({ error: "Failed to update contact" });
+    }
+  });
+
+  app.delete("/api/contacts/:id", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const existing = await storage.getContact(req.params.id);
+      if (!existing) {
+        return res.status(404).json({ error: "Contact not found" });
+      }
+      await storage.deleteContact(req.params.id);
+      res.status(204).send();
+    } catch (error) {
+      console.error("Delete contact error:", error);
+      res.status(500).json({ error: "Failed to delete contact" });
+    }
+  });
+
   app.get("/api/clients/:id/segments", requireAuth, async (req: Request, res: Response) => {
     try {
       const client = await storage.getClient(req.params.id);
@@ -807,6 +895,70 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Get segments error:", error);
       res.status(500).json({ error: "Failed to fetch segments" });
+    }
+  });
+
+  app.post("/api/clients/:id/segments", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const client = await storage.getClient(req.params.id);
+      if (!client) {
+        return res.status(404).json({ error: "Client not found" });
+      }
+
+      const name = String(req.body?.name || "").trim();
+      if (!name) {
+        return res.status(400).json({ error: "Segment name is required" });
+      }
+      const tags = normalizeTagList(req.body?.tags, [name.toLowerCase()]);
+
+      const segment = await storage.createContactSegment({
+        clientId: client.id,
+        name,
+        tags,
+        isDefault: !!req.body?.isDefault,
+      });
+      res.status(201).json(segment);
+    } catch (error) {
+      console.error("Create segment error:", error);
+      res.status(500).json({ error: "Failed to create segment" });
+    }
+  });
+
+  app.patch("/api/segments/:id", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const updateData: Record<string, unknown> = {};
+      if (req.body?.name !== undefined) {
+        const name = String(req.body.name || "").trim();
+        if (!name) {
+          return res.status(400).json({ error: "Segment name cannot be empty" });
+        }
+        updateData.name = name;
+      }
+      if (req.body?.tags !== undefined) {
+        updateData.tags = normalizeTagList(req.body.tags);
+      }
+      if (req.body?.isDefault !== undefined) {
+        updateData.isDefault = !!req.body.isDefault;
+      }
+
+      const updated = await storage.updateContactSegment(req.params.id, updateData as any);
+      if (!updated) {
+        return res.status(404).json({ error: "Segment not found" });
+      }
+      res.json(updated);
+    } catch (error) {
+      console.error("Update segment error:", error);
+      res.status(500).json({ error: "Failed to update segment" });
+    }
+  });
+
+  app.delete("/api/segments/:id", requireAuth, async (req: Request, res: Response) => {
+    try {
+      await storage.deleteContactSegment(req.params.id);
+      res.status(204).send();
+    } catch (error) {
+      console.error("Delete segment error:", error);
+      res.status(500).json({ error: "Failed to delete segment" });
     }
   });
 
@@ -4187,10 +4339,17 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/stripe/pull-orders", requireAuth, async (_req: Request, res: Response) => {
+  app.post("/api/stripe/pull-orders", requireAuth, async (req: Request, res: Response) => {
     try {
       const { getUncachableStripeClient } = await import("./stripeClient");
       const stripe = await getUncachableStripeClient();
+      const requestedProductId =
+        typeof req.body?.productId === "string" ? req.body.productId.trim() : "";
+      const requestedPriceId =
+        typeof req.body?.priceId === "string" ? req.body.priceId.trim() : "";
+      const requestedCustomerEmail =
+        typeof req.body?.customerEmail === "string" ? req.body.customerEmail.trim().toLowerCase() : "";
+      const needsLineItemFilter = !!requestedProductId || !!requestedPriceId;
       const [clients, invoices] = await Promise.all([
         storage.getClients(),
         storage.getAllInvoices(),
@@ -4212,6 +4371,7 @@ export async function registerRoutes(
 
       let importedCount = 0;
       let skippedCount = 0;
+      let filteredOutCount = 0;
 
       for (const session of sessions.data) {
         const expandedCustomer =
@@ -4226,6 +4386,29 @@ export async function registerRoutes(
           skippedCount += 1;
           continue;
         }
+        if (requestedCustomerEmail && customerEmail.trim().toLowerCase() !== requestedCustomerEmail) {
+          filteredOutCount += 1;
+          continue;
+        }
+
+        if (needsLineItemFilter) {
+          const lineItems = await stripe.checkout.sessions.listLineItems(session.id, { limit: 100 });
+          const matchesFilter = lineItems.data.some((item) => {
+            const priceId = typeof item.price === "string" ? item.price : item.price?.id || "";
+            const productId =
+              typeof item.price !== "string" && item.price?.product
+                ? (typeof item.price.product === "string" ? item.price.product : item.price.product.id)
+                : "";
+            if (requestedPriceId && priceId !== requestedPriceId) return false;
+            if (requestedProductId && productId !== requestedProductId) return false;
+            return true;
+          });
+          if (!matchesFilter) {
+            filteredOutCount += 1;
+            continue;
+          }
+        }
+
         const client = clientByEmail.get(customerEmail.trim().toLowerCase());
         if (!client) {
           skippedCount += 1;
@@ -4263,6 +4446,12 @@ export async function registerRoutes(
         scanned: sessions.data.length,
         importedCount,
         skippedCount,
+        filteredOutCount,
+        filters: {
+          productId: requestedProductId || null,
+          priceId: requestedPriceId || null,
+          customerEmail: requestedCustomerEmail || null,
+        },
       });
     } catch (error: any) {
       console.error("Stripe order pull error:", error);
@@ -4270,10 +4459,16 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/stripe/pull-subscriptions", requireAuth, async (_req: Request, res: Response) => {
+  app.post("/api/stripe/pull-subscriptions", requireAuth, async (req: Request, res: Response) => {
     try {
       const { getUncachableStripeClient } = await import("./stripeClient");
       const stripe = await getUncachableStripeClient();
+      const requestedProductId =
+        typeof req.body?.productId === "string" ? req.body.productId.trim() : "";
+      const requestedPriceId =
+        typeof req.body?.priceId === "string" ? req.body.priceId.trim() : "";
+      const requestedCustomerEmail =
+        typeof req.body?.customerEmail === "string" ? req.body.customerEmail.trim().toLowerCase() : "";
       const [clients, subscriptions] = await Promise.all([
         storage.getClients(),
         storage.getAllSubscriptions(),
@@ -4299,6 +4494,7 @@ export async function registerRoutes(
       let createdCount = 0;
       let updatedCount = 0;
       let skippedCount = 0;
+      let filteredOutCount = 0;
       const touchedClientIds = new Set<string>();
 
       const toLocalFrequency = (interval?: string | null, intervalCount?: number | null): "weekly" | "biweekly" | "monthly" => {
@@ -4326,10 +4522,29 @@ export async function registerRoutes(
           skippedCount += 1;
           continue;
         }
+        if (requestedCustomerEmail && customerEmail.trim().toLowerCase() !== requestedCustomerEmail) {
+          filteredOutCount += 1;
+          continue;
+        }
 
         const client = clientByEmail.get(customerEmail.trim().toLowerCase());
         if (!client) {
           skippedCount += 1;
+          continue;
+        }
+
+        const hasMatchingLine = sub.items.data.some((item) => {
+          const priceId = item.price?.id || "";
+          const productId =
+            item.price?.product
+              ? (typeof item.price.product === "string" ? item.price.product : item.price.product.id)
+              : "";
+          if (requestedPriceId && priceId !== requestedPriceId) return false;
+          if (requestedProductId && productId !== requestedProductId) return false;
+          return true;
+        });
+        if ((requestedPriceId || requestedProductId) && !hasMatchingLine) {
+          filteredOutCount += 1;
           continue;
         }
 
@@ -4387,6 +4602,12 @@ export async function registerRoutes(
         createdCount,
         updatedCount,
         skippedCount,
+        filteredOutCount,
+        filters: {
+          productId: requestedProductId || null,
+          priceId: requestedPriceId || null,
+          customerEmail: requestedCustomerEmail || null,
+        },
       });
     } catch (error: any) {
       console.error("Stripe subscription pull error:", error);

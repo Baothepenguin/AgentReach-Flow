@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { TopNav } from "@/components/TopNav";
+import { ClientSidePanel } from "@/components/ClientSidePanel";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -11,7 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { LayoutGrid, List, Calendar, ChevronRight, Plus, Search, Loader2 } from "lucide-react";
+import { LayoutGrid, List, Calendar, ChevronRight, Plus, Search, Loader2, UserSquare2 } from "lucide-react";
 import { format } from "date-fns";
 import { Link } from "wouter";
 import { queryClient, apiRequest } from "@/lib/queryClient";
@@ -54,7 +55,37 @@ const EDITABLE_STATUS_VALUES = new Set<string>(EDITABLE_NEWSLETTER_STATUSES.map(
 
 type NewsletterWithClient = Newsletter & { client: Client };
 
-function DraggableNewsletterCard({ newsletter }: { newsletter: NewsletterWithClient }) {
+function getSlaStatus(expectedSendDate?: string | null) {
+  if (!expectedSendDate) return null;
+  const start = new Date(expectedSendDate);
+  if (Number.isNaN(start.getTime())) return null;
+  start.setHours(0, 0, 0, 0);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const diffDays = Math.round((start.getTime() - today.getTime()) / 86400000);
+
+  if (diffDays < 0) {
+    return { label: `${Math.abs(diffDays)}d overdue`, tone: "overdue" as const };
+  }
+  if (diffDays === 0) {
+    return { label: "Due today", tone: "today" as const };
+  }
+  return { label: `${diffDays}d left`, tone: "upcoming" as const };
+}
+
+function getSlaBadgeClass(tone: "overdue" | "today" | "upcoming") {
+  if (tone === "overdue") return "bg-red-500/10 text-red-700 dark:text-red-400";
+  if (tone === "today") return "bg-amber-500/10 text-amber-700 dark:text-amber-400";
+  return "bg-blue-500/10 text-blue-700 dark:text-blue-400";
+}
+
+function DraggableNewsletterCard({
+  newsletter,
+  onOpenClient,
+}: {
+  newsletter: NewsletterWithClient;
+  onOpenClient: (clientId: string) => void;
+}) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: newsletter.id,
   });
@@ -67,24 +98,48 @@ function DraggableNewsletterCard({ newsletter }: { newsletter: NewsletterWithCli
 
   return (
     <div ref={setNodeRef} style={style} {...listeners} {...attributes}>
-      <Link href={`/newsletters/${newsletter.id}`}>
-        <Card
-          className="p-3 hover-elevate cursor-pointer"
-          data-testid={`newsletter-card-${newsletter.id}`}
-        >
+      <Card
+        className="p-3 hover-elevate cursor-pointer"
+        data-testid={`newsletter-card-${newsletter.id}`}
+      >
+        <Link href={`/newsletters/${newsletter.id}`} className="block">
           <div className="flex flex-col gap-1.5">
-            <div className="flex items-center gap-1">
-              <p className="font-medium text-sm line-clamp-1">{newsletter.client.name}</p>
-            </div>
+            <p className="font-medium text-sm line-clamp-1">{newsletter.title}</p>
             <p className="text-xs text-muted-foreground">
-              {newsletter.expectedSendDate 
+              {newsletter.expectedSendDate
                 ? format(new Date(newsletter.expectedSendDate), "MMM d")
-                : "No date set"
-              }
+                : "No date set"}
             </p>
+            {getSlaStatus(newsletter.expectedSendDate) && newsletter.status !== "sent" && (
+              <Badge
+                variant="secondary"
+                className={`w-fit px-1.5 py-0 text-[10px] ${getSlaBadgeClass(
+                  getSlaStatus(newsletter.expectedSendDate)!.tone
+                )}`}
+              >
+                {getSlaStatus(newsletter.expectedSendDate)!.label}
+              </Badge>
+            )}
           </div>
-        </Card>
-      </Link>
+        </Link>
+        <button
+          type="button"
+          className="mt-2 inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+          onPointerDown={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+          }}
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            onOpenClient(newsletter.client.id);
+          }}
+          data-testid={`button-open-client-card-${newsletter.id}`}
+        >
+          <UserSquare2 className="w-3 h-3" />
+          {newsletter.client.name}
+        </button>
+      </Card>
     </div>
   );
 }
@@ -93,10 +148,12 @@ function StatusColumn({
   status,
   newsletters,
   isDroppable,
+  onOpenClient,
 }: {
   status: typeof NEWSLETTER_STATUSES[number];
   newsletters: NewsletterWithClient[];
   isDroppable: boolean;
+  onOpenClient: (clientId: string) => void;
 }) {
   const { setNodeRef, isOver } = useDroppable({
     id: status.value,
@@ -118,14 +175,26 @@ function StatusColumn({
       </div>
       <div className="space-y-2">
         {newsletters.map((newsletter) => (
-          <DraggableNewsletterCard key={newsletter.id} newsletter={newsletter} />
+          <DraggableNewsletterCard
+            key={newsletter.id}
+            newsletter={newsletter}
+            onOpenClient={onOpenClient}
+          />
         ))}
       </div>
     </div>
   );
 }
 
-function BoardView({ newsletters, onStatusChange }: { newsletters: NewsletterWithClient[]; onStatusChange: (id: string, status: string) => void }) {
+function BoardView({
+  newsletters,
+  onStatusChange,
+  onOpenClient,
+}: {
+  newsletters: NewsletterWithClient[];
+  onStatusChange: (id: string, status: string) => void;
+  onOpenClient: (clientId: string) => void;
+}) {
   const ongoingStatuses = NEWSLETTER_STATUSES.filter(s => s.value !== "sent");
   const [activeNewsletter, setActiveNewsletter] = useState<NewsletterWithClient | null>(null);
 
@@ -169,6 +238,7 @@ function BoardView({ newsletters, onStatusChange }: { newsletters: NewsletterWit
               status={status}
               newsletters={statusNewsletters}
               isDroppable={EDITABLE_STATUS_VALUES.has(status.value)}
+              onOpenClient={onOpenClient}
             />
           );
         })}
@@ -192,7 +262,15 @@ function BoardView({ newsletters, onStatusChange }: { newsletters: NewsletterWit
   );
 }
 
-function TableView({ newsletters, onStatusChange }: { newsletters: NewsletterWithClient[]; onStatusChange: (id: string, status: string) => void }) {
+function TableView({
+  newsletters,
+  onStatusChange,
+  onOpenClient,
+}: {
+  newsletters: NewsletterWithClient[];
+  onStatusChange: (id: string, status: string) => void;
+  onOpenClient: (clientId: string) => void;
+}) {
   return (
     <div className="rounded-lg overflow-hidden">
       <table className="w-full text-sm">
@@ -201,6 +279,7 @@ function TableView({ newsletters, onStatusChange }: { newsletters: NewsletterWit
             <th className="text-left p-3 text-xs font-medium text-muted-foreground">Client</th>
             <th className="text-left p-3 text-xs font-medium text-muted-foreground">Title</th>
             <th className="text-left p-3 text-xs font-medium text-muted-foreground">Due Date</th>
+            <th className="text-left p-3 text-xs font-medium text-muted-foreground">SLA</th>
             <th className="text-left p-3 text-xs font-medium text-muted-foreground">Status</th>
           </tr>
         </thead>
@@ -208,13 +287,40 @@ function TableView({ newsletters, onStatusChange }: { newsletters: NewsletterWit
           {newsletters.map((newsletter) => (
             <tr key={newsletter.id} className="border-b border-border/50 hover:bg-muted/20" data-testid={`newsletter-row-${newsletter.id}`}>
               <td className="p-3">
-                <Link href={`/newsletters/${newsletter.id}`} className="hover:underline font-medium">
-                  {newsletter.client.name}
-                </Link>
+                <div className="flex flex-col items-start gap-1">
+                  <Link href={`/newsletters/${newsletter.id}`} className="hover:underline font-medium">
+                    {newsletter.client.name}
+                  </Link>
+                  <button
+                    type="button"
+                    className="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
+                    onClick={() => onOpenClient(newsletter.client.id)}
+                    data-testid={`button-open-client-card-table-${newsletter.id}`}
+                  >
+                    <UserSquare2 className="w-3 h-3" />
+                    Client Card
+                  </button>
+                </div>
               </td>
               <td className="p-3 text-muted-foreground">{newsletter.title}</td>
               <td className="p-3 text-muted-foreground">
                 {format(new Date(newsletter.expectedSendDate), "MMM d, yyyy")}
+              </td>
+              <td className="p-3">
+                {newsletter.status === "sent" ? (
+                  <span className="text-xs text-muted-foreground">Completed</span>
+                ) : getSlaStatus(newsletter.expectedSendDate) ? (
+                  <Badge
+                    variant="secondary"
+                    className={`px-1.5 py-0 text-[10px] ${getSlaBadgeClass(
+                      getSlaStatus(newsletter.expectedSendDate)!.tone
+                    )}`}
+                  >
+                    {getSlaStatus(newsletter.expectedSendDate)!.label}
+                  </Badge>
+                ) : (
+                  <span className="text-xs text-muted-foreground">—</span>
+                )}
               </td>
               <td className="p-3">
                 {newsletter.status === "sent" || newsletter.status === "scheduled" ? (
@@ -262,6 +368,7 @@ export default function NewslettersPage() {
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [importedHtml, setImportedHtml] = useState("");
+  const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
 
   const { data: newsletters = [], isLoading } = useQuery<NewsletterWithClient[]>({
     queryKey: ["/api/newsletters"],
@@ -414,12 +521,28 @@ export default function NewslettersPage() {
           </div>
         ) : view === "board" ? (
           <div className="h-[calc(100vh-200px)] overflow-auto">
-            <BoardView newsletters={filteredNewsletters} onStatusChange={handleStatusChange} />
+            <BoardView
+              newsletters={filteredNewsletters}
+              onStatusChange={handleStatusChange}
+              onOpenClient={setSelectedClientId}
+            />
           </div>
         ) : (
-          <TableView newsletters={filteredNewsletters} onStatusChange={handleStatusChange} />
+          <TableView
+            newsletters={filteredNewsletters}
+            onStatusChange={handleStatusChange}
+            onOpenClient={setSelectedClientId}
+          />
         )}
       </div>
+
+      {selectedClientId && (
+        <ClientSidePanel
+          clientId={selectedClientId}
+          open={!!selectedClientId}
+          onClose={() => setSelectedClientId(null)}
+        />
+      )}
 
       <Dialog open={showCreateDialog} onOpenChange={(open) => {
         setShowCreateDialog(open);

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation, useSearch } from "wouter";
 import { TopNav } from "@/components/TopNav";
@@ -13,6 +13,14 @@ type OrderWithRelations = Invoice & {
   client: Client;
   newsletters?: Newsletter[];
   subscription?: Subscription;
+};
+
+type StripeProductRow = {
+  id: string;
+  name?: string | null;
+  price_id?: string | null;
+  unit_amount?: number | null;
+  currency?: string | null;
 };
 
 function getOrderStatus(order: OrderWithRelations): "new" | "in_progress" | "complete" {
@@ -240,17 +248,55 @@ export default function OrdersPage() {
   const { data: orders = [], isLoading } = useQuery<OrderWithRelations[]>({
     queryKey: ["/api/invoices"],
   });
+  const { data: stripeProductsData } = useQuery<{ data: StripeProductRow[] }>({
+    queryKey: ["/api/stripe/products"],
+  });
+  const stripeProducts = stripeProductsData?.data || [];
+  const [stripeFilterProductId, setStripeFilterProductId] = useState("");
+  const [stripeFilterPriceId, setStripeFilterPriceId] = useState("");
+  const [stripeFilterCustomerEmail, setStripeFilterCustomerEmail] = useState("");
+
+  const stripeProductOptions = useMemo(() => {
+    const grouped = new Map<string, { id: string; name: string; prices: StripeProductRow[] }>();
+    for (const row of stripeProducts) {
+      if (!row.id) continue;
+      if (!grouped.has(row.id)) {
+        grouped.set(row.id, {
+          id: row.id,
+          name: row.name || row.id,
+          prices: [],
+        });
+      }
+      if (row.price_id) {
+        grouped.get(row.id)!.prices.push(row);
+      }
+    }
+    return Array.from(grouped.values());
+  }, [stripeProducts]);
+
+  const stripePriceOptions = useMemo(() => {
+    if (!stripeFilterProductId) return [];
+    return stripeProductOptions.find((product) => product.id === stripeFilterProductId)?.prices || [];
+  }, [stripeProductOptions, stripeFilterProductId]);
 
   const pullStripeOrdersMutation = useMutation({
     mutationFn: async () => {
-      const res = await apiRequest("POST", "/api/stripe/pull-orders", {});
+      const payload: Record<string, string> = {};
+      if (stripeFilterProductId) payload.productId = stripeFilterProductId;
+      if (stripeFilterPriceId) payload.priceId = stripeFilterPriceId;
+      if (stripeFilterCustomerEmail.trim()) payload.customerEmail = stripeFilterCustomerEmail.trim();
+      const res = await apiRequest("POST", "/api/stripe/pull-orders", payload);
       return res.json();
     },
     onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/invoices"] });
       const imported = data?.importedCount ?? 0;
       const scanned = data?.scanned ?? 0;
-      toast({ title: "Stripe orders synced", description: `Imported ${imported} from ${scanned} checked sessions.` });
+      const filteredOut = data?.filteredOutCount ?? 0;
+      toast({
+        title: "Stripe orders synced",
+        description: `Imported ${imported} from ${scanned} scanned (${filteredOut} filtered out).`,
+      });
     },
     onError: (error: Error) => {
       toast({ title: "Stripe sync failed", description: error.message, variant: "destructive" });
@@ -312,6 +358,49 @@ export default function OrdersPage() {
               )}
               Pull from Stripe
             </Button>
+          </div>
+
+          <div className="rounded-lg border p-3 mb-5 space-y-2">
+            <div className="text-xs font-medium text-muted-foreground">Stripe Pull Filters (Optional)</div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+              <select
+                className="h-9 rounded-md border bg-background px-3 text-sm"
+                value={stripeFilterProductId}
+                onChange={(event) => {
+                  setStripeFilterProductId(event.target.value);
+                  setStripeFilterPriceId("");
+                }}
+                data-testid="select-stripe-orders-product"
+              >
+                <option value="">All products</option>
+                {stripeProductOptions.map((product) => (
+                  <option key={product.id} value={product.id}>
+                    {product.name}
+                  </option>
+                ))}
+              </select>
+              <select
+                className="h-9 rounded-md border bg-background px-3 text-sm"
+                value={stripeFilterPriceId}
+                onChange={(event) => setStripeFilterPriceId(event.target.value)}
+                data-testid="select-stripe-orders-price"
+              >
+                <option value="">All prices</option>
+                {stripePriceOptions.map((price) => (
+                  <option key={price.price_id || `${price.id}-${price.unit_amount}`} value={price.price_id || ""}>
+                    {(price.currency || "USD").toUpperCase()} {(Number(price.unit_amount || 0) / 100).toFixed(2)}
+                  </option>
+                ))}
+              </select>
+              <input
+                type="email"
+                className="h-9 rounded-md border bg-background px-3 text-sm"
+                value={stripeFilterCustomerEmail}
+                onChange={(event) => setStripeFilterCustomerEmail(event.target.value)}
+                placeholder="Customer email"
+                data-testid="input-stripe-orders-customer-email"
+              />
+            </div>
           </div>
 
           {isLoading ? (

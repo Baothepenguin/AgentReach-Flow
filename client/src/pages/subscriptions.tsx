@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { TopNav } from "@/components/TopNav";
@@ -14,6 +14,13 @@ import { useToast } from "@/hooks/use-toast";
 import type { Subscription, Client } from "@shared/schema";
 
 type SubscriptionWithClient = Subscription & { client: Client };
+type StripeProductRow = {
+  id: string;
+  name?: string | null;
+  price_id?: string | null;
+  unit_amount?: number | null;
+  currency?: string | null;
+};
 
 function StatusDot({ color }: { color: string }) {
   return <span className={`inline-block w-1.5 h-1.5 rounded-full ${color}`} />;
@@ -235,6 +242,36 @@ export default function SubscriptionsPage() {
   const { data: subscriptions = [], isLoading } = useQuery<SubscriptionWithClient[]>({
     queryKey: ["/api/subscriptions"],
   });
+  const { data: stripeProductsData } = useQuery<{ data: StripeProductRow[] }>({
+    queryKey: ["/api/stripe/products"],
+  });
+  const stripeProducts = stripeProductsData?.data || [];
+  const [stripeFilterProductId, setStripeFilterProductId] = useState("");
+  const [stripeFilterPriceId, setStripeFilterPriceId] = useState("");
+  const [stripeFilterCustomerEmail, setStripeFilterCustomerEmail] = useState("");
+
+  const stripeProductOptions = useMemo(() => {
+    const grouped = new Map<string, { id: string; name: string; prices: StripeProductRow[] }>();
+    for (const row of stripeProducts) {
+      if (!row.id) continue;
+      if (!grouped.has(row.id)) {
+        grouped.set(row.id, {
+          id: row.id,
+          name: row.name || row.id,
+          prices: [],
+        });
+      }
+      if (row.price_id) {
+        grouped.get(row.id)!.prices.push(row);
+      }
+    }
+    return Array.from(grouped.values());
+  }, [stripeProducts]);
+
+  const stripePriceOptions = useMemo(() => {
+    if (!stripeFilterProductId) return [];
+    return stripeProductOptions.find((product) => product.id === stripeFilterProductId)?.prices || [];
+  }, [stripeProductOptions, stripeFilterProductId]);
 
   const { data: clients = [] } = useQuery<Client[]>({
     queryKey: ["/api/clients"],
@@ -273,7 +310,11 @@ export default function SubscriptionsPage() {
 
   const pullStripeSubscriptionsMutation = useMutation({
     mutationFn: async () => {
-      const res = await apiRequest("POST", "/api/stripe/pull-subscriptions", {});
+      const payload: Record<string, string> = {};
+      if (stripeFilterProductId) payload.productId = stripeFilterProductId;
+      if (stripeFilterPriceId) payload.priceId = stripeFilterPriceId;
+      if (stripeFilterCustomerEmail.trim()) payload.customerEmail = stripeFilterCustomerEmail.trim();
+      const res = await apiRequest("POST", "/api/stripe/pull-subscriptions", payload);
       return res.json();
     },
     onSuccess: (data: any) => {
@@ -281,9 +322,10 @@ export default function SubscriptionsPage() {
       queryClient.invalidateQueries({ queryKey: ["/api/clients"] });
       const created = data?.createdCount ?? 0;
       const updated = data?.updatedCount ?? 0;
+      const filteredOut = data?.filteredOutCount ?? 0;
       toast({
         title: "Stripe subscriptions synced",
-        description: `Created ${created}, updated ${updated}.`,
+        description: `Created ${created}, updated ${updated} (${filteredOut} filtered out).`,
       });
     },
     onError: (error: Error) => {
@@ -317,6 +359,49 @@ export default function SubscriptionsPage() {
                 <Plus className="w-4 h-4 mr-1.5" />
                 New Subscription
               </Button>
+            </div>
+          </div>
+
+          <div className="rounded-lg border p-3 mb-5 space-y-2">
+            <div className="text-xs font-medium text-muted-foreground">Stripe Pull Filters (Optional)</div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+              <select
+                className="h-9 rounded-md border bg-background px-3 text-sm"
+                value={stripeFilterProductId}
+                onChange={(event) => {
+                  setStripeFilterProductId(event.target.value);
+                  setStripeFilterPriceId("");
+                }}
+                data-testid="select-stripe-subscriptions-product"
+              >
+                <option value="">All products</option>
+                {stripeProductOptions.map((product) => (
+                  <option key={product.id} value={product.id}>
+                    {product.name}
+                  </option>
+                ))}
+              </select>
+              <select
+                className="h-9 rounded-md border bg-background px-3 text-sm"
+                value={stripeFilterPriceId}
+                onChange={(event) => setStripeFilterPriceId(event.target.value)}
+                data-testid="select-stripe-subscriptions-price"
+              >
+                <option value="">All prices</option>
+                {stripePriceOptions.map((price) => (
+                  <option key={price.price_id || `${price.id}-${price.unit_amount}`} value={price.price_id || ""}>
+                    {(price.currency || "USD").toUpperCase()} {(Number(price.unit_amount || 0) / 100).toFixed(2)}
+                  </option>
+                ))}
+              </select>
+              <input
+                type="email"
+                className="h-9 rounded-md border bg-background px-3 text-sm"
+                value={stripeFilterCustomerEmail}
+                onChange={(event) => setStripeFilterCustomerEmail(event.target.value)}
+                placeholder="Customer email"
+                data-testid="input-stripe-subscriptions-customer-email"
+              />
             </div>
           </div>
 
