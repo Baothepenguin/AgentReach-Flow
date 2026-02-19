@@ -46,6 +46,8 @@ import {
   Clock3,
   Send,
   AlertTriangle,
+  Monitor,
+  Smartphone,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import type {
@@ -86,6 +88,7 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
   const [editedTitle, setEditedTitle] = useState("");
   const [chatCollapsed, setChatCollapsed] = useState(false);
   const [editingHtml, setEditingHtml] = useState(false);
+  const [previewDevice, setPreviewDevice] = useState<"desktop" | "mobile">("desktop");
   const [htmlDraft, setHtmlDraft] = useState("");
   const [showImportDialog, setShowImportDialog] = useState(false);
   const [importHtml, setImportHtml] = useState("");
@@ -398,7 +401,7 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
                       </button>
                     )}
 
-                    <span className="inline-flex items-center rounded-full border border-emerald-300/80 bg-emerald-100 px-2 py-0.5 text-[11px] font-medium text-emerald-900 dark:border-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300">
+                    <span className="inline-flex items-center rounded-full border border-border px-2 py-0.5 text-[11px] font-medium text-foreground bg-muted/60">
                       {newsletter.status.replace("_", " ")}
                     </span>
 
@@ -427,9 +430,6 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
                         {client.name}
                       </Link>
                     )}
-                    <span className="hidden sm:inline">•</span>
-                    <span>Hybrid workflow: import from Postcards, then edit on preview.</span>
-                    <span className="hidden sm:inline">•</span>
                     <Popover open={showDatePicker} onOpenChange={setShowDatePicker}>
                       <PopoverTrigger asChild>
                         <Button variant="ghost" size="sm" className="h-7 px-2 text-muted-foreground" data-testid="button-edit-date">
@@ -468,6 +468,27 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
                   <Code className="w-4 h-4 mr-1" />
                   {editingHtml ? "Preview" : "Edit HTML"}
                 </Button>
+
+                <div className="inline-flex items-center rounded-md border border-border bg-background overflow-hidden">
+                  <Button
+                    size="icon"
+                    variant={previewDevice === "desktop" ? "secondary" : "ghost"}
+                    className="h-8 w-8 rounded-none"
+                    onClick={() => setPreviewDevice("desktop")}
+                    data-testid="button-device-desktop-topbar"
+                  >
+                    <Monitor className="w-3.5 h-3.5" />
+                  </Button>
+                  <Button
+                    size="icon"
+                    variant={previewDevice === "mobile" ? "secondary" : "ghost"}
+                    className="h-8 w-8 rounded-none"
+                    onClick={() => setPreviewDevice("mobile")}
+                    data-testid="button-device-mobile-topbar"
+                  >
+                    <Smartphone className="w-3.5 h-3.5" />
+                  </Button>
+                </div>
 
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
@@ -629,6 +650,9 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
                       title={newsletter.title}
                       onHtmlChange={debouncedSaveHtml}
                       fullWidth
+                      deviceMode={previewDevice}
+                      onDeviceModeChange={setPreviewDevice}
+                      showDeviceToggle={false}
                     />
                   </div>
                 ) : (

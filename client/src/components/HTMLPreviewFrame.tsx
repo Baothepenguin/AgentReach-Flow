@@ -3,12 +3,15 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Code, Plus, Monitor, Smartphone, Link2, Image as ImageIcon, Type, X, Sparkles } from "lucide-react";
+import { Code, Plus, Monitor, Smartphone, Link2, Type, X } from "lucide-react";
 import { registerEditorPlugin, type EditorPluginProps } from "@/lib/editor-plugins";
 
 interface HTMLPreviewFrameProps extends EditorPluginProps {
   title?: string;
   onCreateCampaign?: () => void;
+  deviceMode?: DeviceMode;
+  onDeviceModeChange?: (mode: DeviceMode) => void;
+  showDeviceToggle?: boolean;
 }
 
 type DeviceMode = "desktop" | "mobile";
@@ -18,26 +21,16 @@ type SelectedElementState = {
   tag: string;
   text: string;
   href: string;
-  src: string;
-  backgroundImage: string;
   fontSize: string;
   fontFamily: string;
   canEditText: boolean;
   canEditLink: boolean;
-  canEditImage: boolean;
-  canEditBackground: boolean;
 };
 
 const EDIT_ATTR = "data-flow-edit-id";
 
 function createEditId(): string {
   return `flow-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-}
-
-function extractUrl(value: string): string {
-  if (!value || value === "none") return "";
-  const match = value.match(/url\(["']?(.*?)["']?\)/i);
-  return match?.[1] || "";
 }
 
 function toPixelValue(value: string): string {
@@ -49,7 +42,7 @@ function toPixelValue(value: string): string {
 function getEditableTarget(element: HTMLElement | null): HTMLElement | null {
   if (!element) return null;
   const candidate = element.closest<HTMLElement>(
-    "img,a,button,h1,h2,h3,h4,h5,h6,p,span,td,th,li,div"
+    "a,button,h1,h2,h3,h4,h5,h6,p,span,td,th,li,div"
   );
 
   if (!candidate) return null;
@@ -71,14 +64,19 @@ export function HTMLPreviewFrame({
   isLoading,
   onHtmlChange,
   onCreateCampaign,
+  deviceMode,
+  onDeviceModeChange,
+  showDeviceToggle = true,
   fullWidth = false,
 }: HTMLPreviewFrameProps) {
-  const [deviceMode, setDeviceMode] = useState<DeviceMode>("desktop");
+  const [internalDeviceMode, setInternalDeviceMode] = useState<DeviceMode>("desktop");
   const [selectedElement, setSelectedElement] = useState<SelectedElementState | null>(null);
   const selectedRef = useRef<SelectedElementState | null>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  const activeDeviceMode = deviceMode ?? internalDeviceMode;
+  const setActiveDeviceMode = onDeviceModeChange ?? setInternalDeviceMode;
 
-  const previewWidth = fullWidth ? "100%" : deviceMode === "mobile" ? 375 : 680;
+  const previewWidth = fullWidth ? "100%" : activeDeviceMode === "mobile" ? 375 : 680;
 
   useEffect(() => {
     selectedRef.current = selectedElement;
@@ -128,25 +126,18 @@ export function HTMLPreviewFrame({
 
     const tag = element.tagName.toLowerCase();
     const computed = element.ownerDocument.defaultView?.getComputedStyle(element);
-    const linkElement = tag === "a" ? element : element.closest("a");
-    const inlineBg = element.style.backgroundImage;
-    const backgroundImage = extractUrl(
-      inlineBg && inlineBg !== "none" ? inlineBg : computed?.backgroundImage || ""
-    );
+    const linkElement =
+      (tag === "a" ? element : element.closest("a")) || (element.querySelector("a") as HTMLElement | null);
 
     return {
       id,
       tag,
-      text: tag === "img" ? "" : (element.textContent || ""),
+      text: element.textContent || "",
       href: linkElement?.getAttribute("href") || "",
-      src: tag === "img" ? ((element as HTMLImageElement).getAttribute("src") || "") : "",
-      backgroundImage,
       fontSize: element.style.fontSize || computed?.fontSize || "",
       fontFamily: element.style.fontFamily || computed?.fontFamily || "",
-      canEditText: tag !== "img",
-      canEditLink: Boolean(linkElement),
-      canEditImage: tag === "img",
-      canEditBackground: Boolean(backgroundImage) || ["td", "div", "section"].includes(tag),
+      canEditText: true,
+      canEditLink: true,
     };
   }, []);
 
@@ -169,30 +160,39 @@ export function HTMLPreviewFrame({
       }
 
       if (patch.href !== undefined && selectedRef.current.canEditLink) {
-        const linkElement = (element.tagName.toLowerCase() === "a" ? element : element.closest("a")) as
-          | HTMLAnchorElement
-          | null;
-        if (linkElement) {
-          const nextHref = patch.href.trim();
-          if (nextHref) {
+        const linkElement = (
+          (element.tagName.toLowerCase() === "a" ? element : element.closest("a")) ||
+          element.querySelector("a")
+        ) as HTMLAnchorElement | null;
+        const nextHref = patch.href.trim();
+        if (nextHref) {
+          if (linkElement) {
             linkElement.setAttribute("href", nextHref);
           } else {
+            const anchor = doc.createElement("a");
+            anchor.setAttribute("href", nextHref);
+            anchor.setAttribute("target", "_blank");
+            anchor.setAttribute("rel", "noopener noreferrer");
+            if (element.childNodes.length === 0) {
+              anchor.textContent = selectedRef.current.text || "Link";
+            } else {
+              while (element.firstChild) {
+                anchor.appendChild(element.firstChild);
+              }
+            }
+            element.appendChild(anchor);
+          }
+        } else if (linkElement) {
+          if (linkElement === element) {
             linkElement.removeAttribute("href");
+          } else {
+            const parent = linkElement.parentNode;
+            while (linkElement.firstChild) {
+              parent?.insertBefore(linkElement.firstChild, linkElement);
+            }
+            parent?.removeChild(linkElement);
           }
         }
-      }
-
-      if (patch.src !== undefined && selectedRef.current.canEditImage) {
-        const image = element as HTMLImageElement;
-        const nextSrc = patch.src.trim();
-        if (nextSrc) {
-          image.setAttribute("src", nextSrc);
-        }
-      }
-
-      if (patch.backgroundImage !== undefined && selectedRef.current.canEditBackground) {
-        const nextBg = patch.backgroundImage.trim();
-        element.style.backgroundImage = nextBg ? `url("${nextBg}")` : "none";
       }
 
       if (patch.fontSize !== undefined) {
@@ -241,12 +241,10 @@ export function HTMLPreviewFrame({
 
     const markEditableElements = (doc: Document) => {
       doc
-        .querySelectorAll<HTMLElement>("img,a,button,h1,h2,h3,h4,h5,h6,p,span,td,th,li,div")
+        .querySelectorAll<HTMLElement>("a,button,h1,h2,h3,h4,h5,h6,p,span,td,th,li,div")
         .forEach((node) => {
-          const tag = node.tagName.toLowerCase();
           const hasText = (node.textContent || "").trim().length > 0;
-          const hasBg = Boolean(node.style.backgroundImage && node.style.backgroundImage !== "none");
-          const shouldMark = tag === "img" || hasText || hasBg || Boolean(node.closest("a"));
+          const shouldMark = hasText || Boolean(node.closest("a"));
           if (shouldMark) {
             node.setAttribute("data-flow-editable", "true");
           }
@@ -388,19 +386,9 @@ export function HTMLPreviewFrame({
           </div>
         ) : html ? (
           <div className="space-y-3" style={{ width: previewWidth, maxWidth: fullWidth ? undefined : previewWidth }}>
-            <div className="rounded-xl border bg-background/90 px-3 py-2 text-xs text-muted-foreground shadow-sm flex items-center justify-between gap-2">
-              <div className="inline-flex items-center gap-1.5">
-                <Sparkles className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
-                Double-click in preview to edit text, links, buttons, and images.
-              </div>
-              <span className="rounded-full border px-2 py-0.5 text-[11px] bg-background">
-                {selectedElement ? `Selected: ${selectedElement.tag}` : "No selection"}
-              </span>
-            </div>
-
             <div
               className={`relative bg-white overflow-hidden transition-all duration-300 ${
-                deviceMode === "mobile" && !fullWidth
+                activeDeviceMode === "mobile" && !fullWidth
                   ? "rounded-3xl border-4 border-gray-700 shadow-lg"
                   : fullWidth
                     ? "rounded-xl border shadow-sm"
@@ -412,31 +400,33 @@ export function HTMLPreviewFrame({
                 srcDoc={html}
                 title="Newsletter Preview"
                 className="w-full border-0 bg-white"
-                style={{ height: deviceMode === "mobile" ? "667px" : "680px" }}
+                style={{ height: activeDeviceMode === "mobile" ? "667px" : "680px" }}
                 sandbox="allow-same-origin allow-scripts"
                 data-testid="iframe-preview"
               />
 
-              <div className="absolute left-3 top-3 z-20 flex items-center gap-1 bg-background/95 backdrop-blur-sm rounded-full p-1 shadow border border-border/80">
-                <Button
-                  size="icon"
-                  variant={deviceMode === "desktop" ? "secondary" : "ghost"}
-                  onClick={() => setDeviceMode("desktop")}
-                  className="rounded-full"
-                  data-testid="button-device-desktop"
-                >
-                  <Monitor className="w-4 h-4" />
-                </Button>
-                <Button
-                  size="icon"
-                  variant={deviceMode === "mobile" ? "secondary" : "ghost"}
-                  onClick={() => setDeviceMode("mobile")}
-                  className="rounded-full"
-                  data-testid="button-device-mobile"
-                >
-                  <Smartphone className="w-4 h-4" />
-                </Button>
-              </div>
+              {showDeviceToggle && (
+                <div className="absolute left-3 top-3 z-20 flex items-center gap-1 bg-background/95 backdrop-blur-sm rounded-full p-1 shadow border border-border/80">
+                  <Button
+                    size="icon"
+                    variant={activeDeviceMode === "desktop" ? "secondary" : "ghost"}
+                    onClick={() => setActiveDeviceMode("desktop")}
+                    className="rounded-full"
+                    data-testid="button-device-desktop"
+                  >
+                    <Monitor className="w-4 h-4" />
+                  </Button>
+                  <Button
+                    size="icon"
+                    variant={activeDeviceMode === "mobile" ? "secondary" : "ghost"}
+                    onClick={() => setActiveDeviceMode("mobile")}
+                    className="rounded-full"
+                    data-testid="button-device-mobile"
+                  >
+                    <Smartphone className="w-4 h-4" />
+                  </Button>
+                </div>
+              )}
 
               {selectedElement && (
                 <div className="absolute right-3 top-14 z-20 w-80 rounded-xl border bg-background/95 backdrop-blur-sm shadow-lg" data-testid="panel-element-inspector">
@@ -476,48 +466,16 @@ export function HTMLPreviewFrame({
 
                     {selectedElement.canEditLink && (
                       <div>
-                        <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
-                          <Link2 className="inline w-3 h-3 mr-1" />
-                          Link URL
-                        </label>
+                      <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
+                        <Link2 className="inline w-3 h-3 mr-1" />
+                        Link
+                      </label>
                         <Input
                           value={selectedElement.href}
                           onChange={(event) => applySelectedElementUpdate({ href: event.target.value })}
                           className="h-8 text-xs bg-card"
                           placeholder="https://..."
                           data-testid="input-inspector-link"
-                        />
-                      </div>
-                    )}
-
-                    {selectedElement.canEditImage && (
-                      <div>
-                        <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
-                          <ImageIcon className="inline w-3 h-3 mr-1" />
-                          Image URL
-                        </label>
-                        <Input
-                          value={selectedElement.src}
-                          onChange={(event) => applySelectedElementUpdate({ src: event.target.value })}
-                          className="h-8 text-xs bg-card"
-                          placeholder="https://..."
-                          data-testid="input-inspector-image"
-                        />
-                      </div>
-                    )}
-
-                    {selectedElement.canEditBackground && (
-                      <div>
-                        <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
-                          <ImageIcon className="inline w-3 h-3 mr-1" />
-                          Background image URL
-                        </label>
-                        <Input
-                          value={selectedElement.backgroundImage}
-                          onChange={(event) => applySelectedElementUpdate({ backgroundImage: event.target.value })}
-                          className="h-8 text-xs bg-card"
-                          placeholder="https://..."
-                          data-testid="input-inspector-background"
                         />
                       </div>
                     )}
@@ -545,9 +503,6 @@ export function HTMLPreviewFrame({
                       </div>
                     </div>
 
-                    <p className="text-[11px] text-muted-foreground">
-                      Tip: press Esc to close inspector. Changes are saved automatically.
-                    </p>
                   </div>
                 </div>
               )}

@@ -35,7 +35,7 @@ export function TopNav() {
                     size="sm"
                     className={cn(
                       isActive
-                        ? "border border-emerald-300 bg-emerald-100 text-emerald-900 hover:bg-emerald-200 dark:border-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 dark:hover:bg-emerald-900/70"
+                        ? "border border-border bg-muted text-foreground hover:bg-muted/80 dark:bg-muted/70"
                         : "text-muted-foreground hover:text-foreground hover:bg-muted/70"
                     )}
                     data-testid={`nav-${item.label.toLowerCase()}`}
