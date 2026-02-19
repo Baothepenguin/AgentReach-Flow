@@ -274,6 +274,8 @@ export default function OrdersPage() {
   const [stripeManualProductId, setStripeManualProductId] = useState("");
   const [stripeManualPriceId, setStripeManualPriceId] = useState("");
   const [stripeFilterCustomerEmail, setStripeFilterCustomerEmail] = useState("");
+  const [stripeFilterFromDate, setStripeFilterFromDate] = useState("");
+  const [stripeFilterToDate, setStripeFilterToDate] = useState("");
 
   const stripeProductOptions = useMemo(() => {
     const grouped = new Map<string, { id: string; name: string; prices: StripeProductRow[] }>();
@@ -315,12 +317,22 @@ export default function OrdersPage() {
 
   const pullStripeOrdersMutation = useMutation({
     mutationFn: async () => {
+      if (
+        stripeFilterFromDate &&
+        stripeFilterToDate &&
+        stripeFilterFromDate > stripeFilterToDate
+      ) {
+        throw new Error("From date must be on or before To date");
+      }
+
       const effectiveProductId = stripeManualProductId.trim() || stripeFilterProductId;
       const effectivePriceId = stripeManualPriceId.trim() || stripeFilterPriceId;
       const payload: Record<string, string> = {};
       if (effectiveProductId) payload.productId = effectiveProductId;
       if (effectivePriceId) payload.priceId = effectivePriceId;
       if (stripeFilterCustomerEmail.trim()) payload.customerEmail = stripeFilterCustomerEmail.trim();
+      if (stripeFilterFromDate) payload.fromDate = stripeFilterFromDate;
+      if (stripeFilterToDate) payload.toDate = stripeFilterToDate;
       const res = await apiRequest("POST", "/api/stripe/pull-orders", payload);
       return res.json();
     },
@@ -456,6 +468,22 @@ export default function OrdersPage() {
                 data-testid="input-stripe-orders-manual-price-id"
               />
             </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+              <input
+                type="date"
+                className="h-9 rounded-md border bg-background px-3 text-sm"
+                value={stripeFilterFromDate}
+                onChange={(event) => setStripeFilterFromDate(event.target.value)}
+                data-testid="input-stripe-orders-from-date"
+              />
+              <input
+                type="date"
+                className="h-9 rounded-md border bg-background px-3 text-sm"
+                value={stripeFilterToDate}
+                onChange={(event) => setStripeFilterToDate(event.target.value)}
+                data-testid="input-stripe-orders-to-date"
+              />
+            </div>
             <div className="flex justify-end">
               <Button
                 variant="ghost"
@@ -467,6 +495,8 @@ export default function OrdersPage() {
                   setStripeManualProductId("");
                   setStripeManualPriceId("");
                   setStripeFilterCustomerEmail("");
+                  setStripeFilterFromDate("");
+                  setStripeFilterToDate("");
                 }}
                 data-testid="button-clear-stripe-orders-filters"
               >

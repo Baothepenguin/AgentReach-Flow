@@ -496,6 +496,85 @@ function normalizeSegmentCandidates(input: unknown): string[] {
   );
 }
 
+function parseStripeDateRangeFilters(
+  rawFrom: unknown,
+  rawTo: unknown
+): {
+  fromDate: string | null;
+  toDate: string | null;
+  fromMs: number | null;
+  toMs: number | null;
+  error: string | null;
+} {
+  const DATE_ONLY_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+  const normalizeDate = (
+    raw: unknown,
+    boundary: "start" | "end",
+    label: "fromDate" | "toDate"
+  ): { value: string | null; ms: number | null; error: string | null } => {
+    if (raw === undefined || raw === null) {
+      return { value: null, ms: null, error: null };
+    }
+    if (typeof raw !== "string") {
+      return { value: null, ms: null, error: `${label} must be a YYYY-MM-DD string` };
+    }
+    const value = raw.trim();
+    if (!value) {
+      return { value: null, ms: null, error: null };
+    }
+    if (!DATE_ONLY_RE.test(value)) {
+      return { value: null, ms: null, error: `${label} must match YYYY-MM-DD` };
+    }
+    const suffix = boundary === "start" ? "T00:00:00.000Z" : "T23:59:59.999Z";
+    const ms = Date.parse(`${value}${suffix}`);
+    if (Number.isNaN(ms)) {
+      return { value: null, ms: null, error: `${label} is not a valid date` };
+    }
+    return { value, ms, error: null };
+  };
+
+  const from = normalizeDate(rawFrom, "start", "fromDate");
+  if (from.error) {
+    return {
+      fromDate: null,
+      toDate: null,
+      fromMs: null,
+      toMs: null,
+      error: from.error,
+    };
+  }
+
+  const to = normalizeDate(rawTo, "end", "toDate");
+  if (to.error) {
+    return {
+      fromDate: from.value,
+      toDate: null,
+      fromMs: from.ms,
+      toMs: null,
+      error: to.error,
+    };
+  }
+
+  if (from.ms !== null && to.ms !== null && from.ms > to.ms) {
+    return {
+      fromDate: from.value,
+      toDate: to.value,
+      fromMs: from.ms,
+      toMs: to.ms,
+      error: "fromDate must be on or before toDate",
+    };
+  }
+
+  return {
+    fromDate: from.value,
+    toDate: to.value,
+    fromMs: from.ms,
+    toMs: to.ms,
+    error: null,
+  };
+}
+
 async function importContactsFromCsv(
   clientId: string,
   csvContent: string,
@@ -4655,6 +4734,13 @@ export async function registerRoutes(
         typeof req.body?.priceId === "string" ? req.body.priceId.trim() : "";
       const requestedCustomerEmail =
         typeof req.body?.customerEmail === "string" ? req.body.customerEmail.trim().toLowerCase() : "";
+      const dateRange = parseStripeDateRangeFilters(
+        req.body?.fromDate ?? req.body?.from,
+        req.body?.toDate ?? req.body?.to
+      );
+      if (dateRange.error) {
+        return res.status(400).json({ error: dateRange.error });
+      }
       const needsLineItemFilter = !!requestedProductId || !!requestedPriceId;
       const [clients, invoices] = await Promise.all([
         storage.getClients(),
@@ -4680,6 +4766,16 @@ export async function registerRoutes(
       let filteredOutCount = 0;
 
       for (const session of sessions.data) {
+        const sessionCreatedMs = (session.created || 0) * 1000;
+        if (dateRange.fromMs !== null && sessionCreatedMs < dateRange.fromMs) {
+          filteredOutCount += 1;
+          continue;
+        }
+        if (dateRange.toMs !== null && sessionCreatedMs > dateRange.toMs) {
+          filteredOutCount += 1;
+          continue;
+        }
+
         const expandedCustomer =
           typeof session.customer !== "string" && session.customer && "deleted" in session.customer && session.customer.deleted
             ? null
@@ -4757,6 +4853,8 @@ export async function registerRoutes(
           productId: requestedProductId || null,
           priceId: requestedPriceId || null,
           customerEmail: requestedCustomerEmail || null,
+          fromDate: dateRange.fromDate || null,
+          toDate: dateRange.toDate || null,
         },
       });
     } catch (error: any) {
@@ -4775,6 +4873,13 @@ export async function registerRoutes(
         typeof req.body?.priceId === "string" ? req.body.priceId.trim() : "";
       const requestedCustomerEmail =
         typeof req.body?.customerEmail === "string" ? req.body.customerEmail.trim().toLowerCase() : "";
+      const dateRange = parseStripeDateRangeFilters(
+        req.body?.fromDate ?? req.body?.from,
+        req.body?.toDate ?? req.body?.to
+      );
+      if (dateRange.error) {
+        return res.status(400).json({ error: dateRange.error });
+      }
       const [clients, subscriptions] = await Promise.all([
         storage.getClients(),
         storage.getAllSubscriptions(),
@@ -4817,6 +4922,25 @@ export async function registerRoutes(
       };
 
       for (const sub of stripeSubscriptions.data) {
+        const subAny = sub as any;
+        const periodStartTs =
+          subAny.current_period_start || sub.start_date || sub.created || null;
+        const periodEndTs =
+          subAny.current_period_end || subAny.cancel_at || periodStartTs || null;
+        const periodStartMs = periodStartTs ? periodStartTs * 1000 : null;
+        const periodEndMs = periodEndTs ? periodEndTs * 1000 : periodStartMs;
+
+        if (dateRange.fromMs !== null || dateRange.toMs !== null) {
+          const effectiveStartMs = periodStartMs ?? periodEndMs ?? 0;
+          const effectiveEndMs = periodEndMs ?? periodStartMs ?? effectiveStartMs;
+          const outsideFrom = dateRange.fromMs !== null && effectiveEndMs < dateRange.fromMs;
+          const outsideTo = dateRange.toMs !== null && effectiveStartMs > dateRange.toMs;
+          if (outsideFrom || outsideTo) {
+            filteredOutCount += 1;
+            continue;
+          }
+        }
+
         const expandedCustomer =
           typeof sub.customer !== "string" && sub.customer && "deleted" in sub.customer && sub.customer.deleted
             ? null
@@ -4858,9 +4982,8 @@ export async function registerRoutes(
         const amount = ((price?.unit_amount || 0) / 100).toFixed(2);
         const frequency = toLocalFrequency(price?.recurring?.interval, price?.recurring?.interval_count || 1);
         const status = toLocalStatus(sub.status);
-        const subAny = sub as any;
-        const startTs = subAny.current_period_start || sub.start_date || sub.created;
-        const endTs = subAny.current_period_end || subAny.cancel_at || null;
+        const startTs = periodStartTs;
+        const endTs = periodEndTs;
         const startDate = startTs
           ? new Date(startTs * 1000).toISOString().slice(0, 10)
           : null;
@@ -4913,6 +5036,8 @@ export async function registerRoutes(
           productId: requestedProductId || null,
           priceId: requestedPriceId || null,
           customerEmail: requestedCustomerEmail || null,
+          fromDate: dateRange.fromDate || null,
+          toDate: dateRange.toDate || null,
         },
       });
     } catch (error: any) {
