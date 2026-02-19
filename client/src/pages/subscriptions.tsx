@@ -22,6 +22,7 @@ type StripeProductRow = {
   unit_amount?: number | null;
   currency?: string | null;
 };
+type StripePriceOption = StripeProductRow & { productName: string };
 
 function StatusDot({ color }: { color: string }) {
   return <span className={`inline-block w-1.5 h-1.5 rounded-full ${color}`} />;
@@ -264,6 +265,8 @@ export default function SubscriptionsPage() {
   const stripeProducts = stripeProductsData?.data || [];
   const [stripeFilterProductId, setStripeFilterProductId] = useState("");
   const [stripeFilterPriceId, setStripeFilterPriceId] = useState("");
+  const [stripeManualProductId, setStripeManualProductId] = useState("");
+  const [stripeManualPriceId, setStripeManualPriceId] = useState("");
   const [stripeFilterCustomerEmail, setStripeFilterCustomerEmail] = useState("");
 
   const stripeProductOptions = useMemo(() => {
@@ -285,8 +288,23 @@ export default function SubscriptionsPage() {
   }, [stripeProducts]);
 
   const stripePriceOptions = useMemo(() => {
-    if (!stripeFilterProductId) return [];
-    return stripeProductOptions.find((product) => product.id === stripeFilterProductId)?.prices || [];
+    const allPrices: StripePriceOption[] = stripeProductOptions.flatMap((product) =>
+      product.prices.map((price) => ({ ...price, productName: product.name || product.id }))
+    );
+
+    const uniqueByPriceId = new Map<string, StripePriceOption>();
+    for (const price of allPrices) {
+      const key = price.price_id || `${price.id}-${price.unit_amount}-${price.currency}`;
+      if (!uniqueByPriceId.has(key)) {
+        uniqueByPriceId.set(key, price);
+      }
+    }
+
+    if (!stripeFilterProductId) {
+      return Array.from(uniqueByPriceId.values());
+    }
+
+    return Array.from(uniqueByPriceId.values()).filter((price) => price.id === stripeFilterProductId);
   }, [stripeProductOptions, stripeFilterProductId]);
 
   const { data: clients = [] } = useQuery<Client[]>({
@@ -326,9 +344,11 @@ export default function SubscriptionsPage() {
 
   const pullStripeSubscriptionsMutation = useMutation({
     mutationFn: async () => {
+      const effectiveProductId = stripeManualProductId.trim() || stripeFilterProductId;
+      const effectivePriceId = stripeManualPriceId.trim() || stripeFilterPriceId;
       const payload: Record<string, string> = {};
-      if (stripeFilterProductId) payload.productId = stripeFilterProductId;
-      if (stripeFilterPriceId) payload.priceId = stripeFilterPriceId;
+      if (effectiveProductId) payload.productId = effectiveProductId;
+      if (effectivePriceId) payload.priceId = effectivePriceId;
       if (stripeFilterCustomerEmail.trim()) payload.customerEmail = stripeFilterCustomerEmail.trim();
       const res = await apiRequest("POST", "/api/stripe/pull-subscriptions", payload);
       return res.json();
@@ -406,6 +426,7 @@ export default function SubscriptionsPage() {
                 <option value="">All prices</option>
                 {stripePriceOptions.map((price) => (
                   <option key={price.price_id || `${price.id}-${price.unit_amount}`} value={price.price_id || ""}>
+                    {price.productName ? `${price.productName} · ` : ""}
                     {(price.currency || "USD").toUpperCase()} {(Number(price.unit_amount || 0) / 100).toFixed(2)}
                   </option>
                 ))}
@@ -418,6 +439,41 @@ export default function SubscriptionsPage() {
                 placeholder="Customer email"
                 data-testid="input-stripe-subscriptions-customer-email"
               />
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+              <input
+                type="text"
+                className="h-9 rounded-md border bg-background px-3 text-sm font-mono"
+                value={stripeManualProductId}
+                onChange={(event) => setStripeManualProductId(event.target.value)}
+                placeholder="Manual Product ID (prod_...)"
+                data-testid="input-stripe-subscriptions-manual-product-id"
+              />
+              <input
+                type="text"
+                className="h-9 rounded-md border bg-background px-3 text-sm font-mono"
+                value={stripeManualPriceId}
+                onChange={(event) => setStripeManualPriceId(event.target.value)}
+                placeholder="Manual Price ID (price_...)"
+                data-testid="input-stripe-subscriptions-manual-price-id"
+              />
+            </div>
+            <div className="flex justify-end">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 text-xs"
+                onClick={() => {
+                  setStripeFilterProductId("");
+                  setStripeFilterPriceId("");
+                  setStripeManualProductId("");
+                  setStripeManualPriceId("");
+                  setStripeFilterCustomerEmail("");
+                }}
+                data-testid="button-clear-stripe-subscriptions-filters"
+              >
+                Clear filters
+              </Button>
             </div>
           </div>
 

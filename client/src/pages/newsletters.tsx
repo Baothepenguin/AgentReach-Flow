@@ -188,14 +188,15 @@ function StatusColumn({
 
 function BoardView({
   newsletters,
+  statuses,
   onStatusChange,
   onOpenClient,
 }: {
   newsletters: NewsletterWithClient[];
+  statuses: ReadonlyArray<typeof NEWSLETTER_STATUSES[number]>;
   onStatusChange: (id: string, status: string) => void;
   onOpenClient: (clientId: string) => void;
 }) {
-  const ongoingStatuses = NEWSLETTER_STATUSES.filter(s => s.value !== "sent");
   const [activeNewsletter, setActiveNewsletter] = useState<NewsletterWithClient | null>(null);
 
   const sensors = useSensors(
@@ -230,7 +231,7 @@ function BoardView({
   return (
     <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
       <div className="flex gap-6 overflow-x-auto pb-4 pt-2">
-        {ongoingStatuses.map((status) => {
+        {statuses.map((status) => {
           const statusNewsletters = newsletters.filter(n => n.status === status.value);
           return (
             <StatusColumn
@@ -247,7 +248,8 @@ function BoardView({
         {activeNewsletter ? (
           <Card className="p-3 shadow-lg border-primary/30 w-60">
             <div className="flex flex-col gap-1.5">
-              <p className="font-medium text-sm line-clamp-1">{activeNewsletter.client.name}</p>
+              <p className="font-medium text-sm line-clamp-1">{activeNewsletter.title}</p>
+              <p className="text-xs text-muted-foreground">{activeNewsletter.client.name}</p>
               <p className="text-xs text-muted-foreground">
                 {activeNewsletter.expectedSendDate 
                   ? format(new Date(activeNewsletter.expectedSendDate), "MMM d")
@@ -458,6 +460,11 @@ export default function NewslettersPage() {
     if (filter === "sent") return n.status === "sent";
     return true;
   });
+  const boardStatuses = filter === "sent"
+    ? NEWSLETTER_STATUSES.filter((s) => s.value === "sent")
+    : filter === "all"
+      ? NEWSLETTER_STATUSES
+      : NEWSLETTER_STATUSES.filter((s) => s.value !== "sent");
 
   const handleStatusChange = (id: string, status: string) => {
     updateStatusMutation.mutate({ id, status });
@@ -523,6 +530,7 @@ export default function NewslettersPage() {
           <div className="h-[calc(100vh-200px)] overflow-auto">
             <BoardView
               newsletters={filteredNewsletters}
+              statuses={boardStatuses}
               onStatusChange={handleStatusChange}
               onOpenClient={setSelectedClientId}
             />

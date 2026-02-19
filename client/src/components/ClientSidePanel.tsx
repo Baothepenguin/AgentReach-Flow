@@ -36,10 +36,54 @@ function getStatusBadge(status: string) {
   }
 }
 
+const SUBSCRIPTION_FREQUENCY_OPTIONS = [
+  { value: "weekly", label: "Weekly" },
+  { value: "biweekly", label: "Biweekly" },
+  { value: "monthly", label: "Monthly" },
+];
+
+const SUBSCRIPTION_STATUS_OPTIONS = [
+  { value: "active", label: "Active" },
+  { value: "paused", label: "Paused" },
+  { value: "past_due", label: "Past Due" },
+  { value: "canceled", label: "Canceled" },
+];
+
+const INVOICE_STATUS_OPTIONS = [
+  { value: "pending", label: "Pending" },
+  { value: "paid", label: "Paid" },
+  { value: "failed", label: "Failed" },
+  { value: "refunded", label: "Refunded" },
+];
+
 export function ClientSidePanel({ clientId, open, onClose }: ClientSidePanelProps) {
   const { toast } = useToast();
   const [, setLocation] = useLocation();
   const [isEditing, setIsEditing] = useState(false);
+  const [editingSubscriptionId, setEditingSubscriptionId] = useState<string | null>(null);
+  const [editingInvoiceId, setEditingInvoiceId] = useState<string | null>(null);
+  const [subscriptionDrafts, setSubscriptionDrafts] = useState<
+    Record<
+      string,
+      {
+        amount: string;
+        frequency: Subscription["frequency"];
+        status: Subscription["status"];
+        startDate: string;
+        endDate: string;
+      }
+    >
+  >({});
+  const [invoiceDrafts, setInvoiceDrafts] = useState<
+    Record<
+      string,
+      {
+        amount: string;
+        status: Invoice["status"];
+        currency: string;
+      }
+    >
+  >({});
   const [form, setForm] = useState({
     primaryEmail: "",
     phone: "",
@@ -103,6 +147,10 @@ export function ClientSidePanel({ clientId, open, onClose }: ClientSidePanelProp
       secondaryColor: brandingKit?.secondaryColor || "#000000",
     });
     setIsEditing(false);
+    setEditingSubscriptionId(null);
+    setEditingInvoiceId(null);
+    setSubscriptionDrafts({});
+    setInvoiceDrafts({});
   }, [open, client, brandingKit]);
 
   const updateClientMutation = useMutation({
@@ -133,6 +181,86 @@ export function ClientSidePanel({ clientId, open, onClose }: ClientSidePanelProp
       toast({ title: "Failed to save client card", description: error.message, variant: "destructive" });
     },
   });
+
+  const updateSubscriptionInlineMutation = useMutation({
+    mutationFn: async (payload: {
+      id: string;
+      amount: string;
+      frequency: Subscription["frequency"];
+      status: Subscription["status"];
+      startDate: string;
+      endDate: string;
+    }) => {
+      await apiRequest("PATCH", `/api/subscriptions/${payload.id}`, {
+        amount: payload.amount,
+        frequency: payload.frequency,
+        status: payload.status,
+        startDate: payload.startDate || null,
+        endDate: payload.endDate || null,
+      });
+    },
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["/api/clients", clientId, "subscriptions"] }),
+        queryClient.invalidateQueries({ queryKey: ["/api/subscriptions"] }),
+        queryClient.invalidateQueries({ queryKey: ["/api/clients", clientId] }),
+      ]);
+      setEditingSubscriptionId(null);
+      toast({ title: "Subscription updated" });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Failed to update subscription", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const updateInvoiceInlineMutation = useMutation({
+    mutationFn: async (payload: { id: string; amount: string; status: Invoice["status"]; currency: string }) => {
+      await apiRequest("PATCH", `/api/invoices/${payload.id}`, {
+        amount: payload.amount,
+        status: payload.status,
+        currency: payload.currency,
+        paidAt: payload.status === "paid" ? new Date() : null,
+      });
+    },
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["/api/clients", clientId, "invoices"] }),
+        queryClient.invalidateQueries({ queryKey: ["/api/invoices"] }),
+        queryClient.invalidateQueries({ queryKey: ["/api/clients", clientId] }),
+      ]);
+      setEditingInvoiceId(null);
+      toast({ title: "Invoice updated" });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Failed to update invoice", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const beginEditSubscription = (subscription: Subscription) => {
+    setSubscriptionDrafts((prev) => ({
+      ...prev,
+      [subscription.id]: {
+        amount: String(subscription.amount || ""),
+        frequency: subscription.frequency,
+        status: subscription.status,
+        startDate: subscription.startDate || "",
+        endDate: subscription.endDate || "",
+      },
+    }));
+    setEditingSubscriptionId(subscription.id);
+  };
+
+  const beginEditInvoice = (invoice: Invoice) => {
+    setInvoiceDrafts((prev) => ({
+      ...prev,
+      [invoice.id]: {
+        amount: String(invoice.amount || ""),
+        status: invoice.status,
+        currency: invoice.currency || "USD",
+      },
+    }));
+    setEditingInvoiceId(invoice.id);
+  };
 
   return (
     <Sheet open={open} onOpenChange={onClose}>
@@ -321,13 +449,178 @@ export function ClientSidePanel({ clientId, open, onClose }: ClientSidePanelProp
                   <div className="space-y-2">
                     {subscriptions.map((sub) => (
                       <div key={sub.id} className="p-3 rounded-md bg-muted/30 border">
-                        <div className="flex items-center justify-between mb-1">
-                          <span className="font-medium text-sm capitalize">{sub.frequency}</span>
-                          {getStatusBadge(sub.status)}
-                        </div>
-                        <div className="text-xs text-muted-foreground">
-                          ${Number(sub.amount || 0).toFixed(2)} / {sub.frequency}
-                        </div>
+                        {editingSubscriptionId === sub.id ? (
+                          <div className="space-y-2">
+                            <div className="grid grid-cols-2 gap-2">
+                              <Input
+                                type="number"
+                                step="0.01"
+                                value={subscriptionDrafts[sub.id]?.amount ?? String(sub.amount || "")}
+                                onChange={(e) =>
+                                  setSubscriptionDrafts((prev) => ({
+                                    ...prev,
+                                    [sub.id]: {
+                                      ...(prev[sub.id] || {
+                                        amount: String(sub.amount || ""),
+                                        frequency: sub.frequency,
+                                        status: sub.status,
+                                        startDate: sub.startDate || "",
+                                        endDate: sub.endDate || "",
+                                      }),
+                                      amount: e.target.value,
+                                    },
+                                  }))
+                                }
+                                className="h-8 text-xs"
+                                placeholder="Amount"
+                              />
+                              <select
+                                className="h-8 rounded-md border bg-background px-2 text-xs"
+                                value={subscriptionDrafts[sub.id]?.frequency ?? sub.frequency}
+                                onChange={(e) =>
+                                  setSubscriptionDrafts((prev) => ({
+                                    ...prev,
+                                    [sub.id]: {
+                                      ...(prev[sub.id] || {
+                                        amount: String(sub.amount || ""),
+                                        frequency: sub.frequency,
+                                        status: sub.status,
+                                        startDate: sub.startDate || "",
+                                        endDate: sub.endDate || "",
+                                      }),
+                                      frequency: e.target.value as Subscription["frequency"],
+                                    },
+                                  }))
+                                }
+                              >
+                                {SUBSCRIPTION_FREQUENCY_OPTIONS.map((option) => (
+                                  <option key={option.value} value={option.value}>
+                                    {option.label}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                            <div className="grid grid-cols-2 gap-2">
+                              <select
+                                className="h-8 rounded-md border bg-background px-2 text-xs"
+                                value={subscriptionDrafts[sub.id]?.status ?? sub.status}
+                                onChange={(e) =>
+                                  setSubscriptionDrafts((prev) => ({
+                                    ...prev,
+                                    [sub.id]: {
+                                      ...(prev[sub.id] || {
+                                        amount: String(sub.amount || ""),
+                                        frequency: sub.frequency,
+                                        status: sub.status,
+                                        startDate: sub.startDate || "",
+                                        endDate: sub.endDate || "",
+                                      }),
+                                      status: e.target.value as Subscription["status"],
+                                    },
+                                  }))
+                                }
+                              >
+                                {SUBSCRIPTION_STATUS_OPTIONS.map((option) => (
+                                  <option key={option.value} value={option.value}>
+                                    {option.label}
+                                  </option>
+                                ))}
+                              </select>
+                              <Input
+                                type="date"
+                                value={subscriptionDrafts[sub.id]?.startDate ?? sub.startDate ?? ""}
+                                onChange={(e) =>
+                                  setSubscriptionDrafts((prev) => ({
+                                    ...prev,
+                                    [sub.id]: {
+                                      ...(prev[sub.id] || {
+                                        amount: String(sub.amount || ""),
+                                        frequency: sub.frequency,
+                                        status: sub.status,
+                                        startDate: sub.startDate || "",
+                                        endDate: sub.endDate || "",
+                                      }),
+                                      startDate: e.target.value,
+                                    },
+                                  }))
+                                }
+                                className="h-8 text-xs"
+                              />
+                            </div>
+                            <Input
+                              type="date"
+                              value={subscriptionDrafts[sub.id]?.endDate ?? sub.endDate ?? ""}
+                              onChange={(e) =>
+                                setSubscriptionDrafts((prev) => ({
+                                  ...prev,
+                                  [sub.id]: {
+                                    ...(prev[sub.id] || {
+                                      amount: String(sub.amount || ""),
+                                      frequency: sub.frequency,
+                                      status: sub.status,
+                                      startDate: sub.startDate || "",
+                                      endDate: sub.endDate || "",
+                                    }),
+                                    endDate: e.target.value,
+                                  },
+                                }))
+                              }
+                              className="h-8 text-xs"
+                            />
+                            <div className="flex items-center justify-end gap-1">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 px-2 text-xs"
+                                onClick={() =>
+                                  updateSubscriptionInlineMutation.mutate({
+                                    id: sub.id,
+                                    amount: subscriptionDrafts[sub.id]?.amount ?? String(sub.amount || ""),
+                                    frequency: subscriptionDrafts[sub.id]?.frequency ?? sub.frequency,
+                                    status: subscriptionDrafts[sub.id]?.status ?? sub.status,
+                                    startDate: subscriptionDrafts[sub.id]?.startDate ?? sub.startDate ?? "",
+                                    endDate: subscriptionDrafts[sub.id]?.endDate ?? sub.endDate ?? "",
+                                  })
+                                }
+                                disabled={updateSubscriptionInlineMutation.isPending}
+                                data-testid={`button-save-subscription-inline-${sub.id}`}
+                              >
+                                <Check className="w-3.5 h-3.5 mr-1" />
+                                Save
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 px-2 text-xs"
+                                onClick={() => setEditingSubscriptionId(null)}
+                                data-testid={`button-cancel-subscription-inline-${sub.id}`}
+                              >
+                                Cancel
+                              </Button>
+                            </div>
+                          </div>
+                        ) : (
+                          <>
+                            <div className="flex items-center justify-between mb-1">
+                              <span className="font-medium text-sm capitalize">{sub.frequency}</span>
+                              {getStatusBadge(sub.status)}
+                            </div>
+                            <div className="text-xs text-muted-foreground">
+                              ${Number(sub.amount || 0).toFixed(2)} / {sub.frequency}
+                            </div>
+                            <div className="mt-2 flex justify-end">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 px-2 text-xs"
+                                onClick={() => beginEditSubscription(sub)}
+                                data-testid={`button-edit-subscription-inline-${sub.id}`}
+                              >
+                                Edit
+                              </Button>
+                            </div>
+                          </>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -410,15 +703,125 @@ export function ClientSidePanel({ clientId, open, onClose }: ClientSidePanelProp
                   <div className="space-y-2">
                     {invoices.slice(0, 5).map((invoice) => (
                       <div key={invoice.id} className="p-3 rounded-md bg-muted/30 border">
-                        <div className="flex items-center justify-between">
-                          <span className="font-medium text-sm">
-                            ${Number(invoice.amount).toFixed(2)}
-                          </span>
-                          {getStatusBadge(invoice.status)}
-                        </div>
-                        <div className="text-xs text-muted-foreground mt-1">
-                          {format(new Date(invoice.createdAt), "MMM d, yyyy")}
-                        </div>
+                        {editingInvoiceId === invoice.id ? (
+                          <div className="space-y-2">
+                            <div className="grid grid-cols-3 gap-2">
+                              <Input
+                                type="number"
+                                step="0.01"
+                                value={invoiceDrafts[invoice.id]?.amount ?? String(invoice.amount)}
+                                onChange={(e) =>
+                                  setInvoiceDrafts((prev) => ({
+                                    ...prev,
+                                    [invoice.id]: {
+                                      ...(prev[invoice.id] || {
+                                        amount: String(invoice.amount),
+                                        status: invoice.status,
+                                        currency: invoice.currency || "USD",
+                                      }),
+                                      amount: e.target.value,
+                                    },
+                                  }))
+                                }
+                                className="h-8 text-xs col-span-2"
+                                placeholder="Amount"
+                              />
+                              <Input
+                                value={invoiceDrafts[invoice.id]?.currency ?? invoice.currency}
+                                onChange={(e) =>
+                                  setInvoiceDrafts((prev) => ({
+                                    ...prev,
+                                    [invoice.id]: {
+                                      ...(prev[invoice.id] || {
+                                        amount: String(invoice.amount),
+                                        status: invoice.status,
+                                        currency: invoice.currency || "USD",
+                                      }),
+                                      currency: e.target.value.toUpperCase(),
+                                    },
+                                  }))
+                                }
+                                className="h-8 text-xs"
+                                placeholder="USD"
+                              />
+                            </div>
+                            <select
+                              className="h-8 w-full rounded-md border bg-background px-2 text-xs"
+                              value={invoiceDrafts[invoice.id]?.status ?? invoice.status}
+                              onChange={(e) =>
+                                setInvoiceDrafts((prev) => ({
+                                  ...prev,
+                                  [invoice.id]: {
+                                    ...(prev[invoice.id] || {
+                                      amount: String(invoice.amount),
+                                      status: invoice.status,
+                                      currency: invoice.currency || "USD",
+                                    }),
+                                    status: e.target.value as Invoice["status"],
+                                  },
+                                }))
+                              }
+                            >
+                              {INVOICE_STATUS_OPTIONS.map((option) => (
+                                <option key={option.value} value={option.value}>
+                                  {option.label}
+                                </option>
+                              ))}
+                            </select>
+                            <div className="flex items-center justify-end gap-1">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 px-2 text-xs"
+                                onClick={() =>
+                                  updateInvoiceInlineMutation.mutate({
+                                    id: invoice.id,
+                                    amount: invoiceDrafts[invoice.id]?.amount ?? String(invoice.amount),
+                                    status: invoiceDrafts[invoice.id]?.status ?? invoice.status,
+                                    currency: invoiceDrafts[invoice.id]?.currency || invoice.currency || "USD",
+                                  })
+                                }
+                                disabled={updateInvoiceInlineMutation.isPending}
+                                data-testid={`button-save-invoice-inline-${invoice.id}`}
+                              >
+                                <Check className="w-3.5 h-3.5 mr-1" />
+                                Save
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 px-2 text-xs"
+                                onClick={() => setEditingInvoiceId(null)}
+                                data-testid={`button-cancel-invoice-inline-${invoice.id}`}
+                              >
+                                Cancel
+                              </Button>
+                            </div>
+                          </div>
+                        ) : (
+                          <>
+                            <div className="flex items-center justify-between">
+                              <span className="font-medium text-sm">
+                                ${Number(invoice.amount).toFixed(2)}
+                              </span>
+                              {getStatusBadge(invoice.status)}
+                            </div>
+                            <div className="text-xs text-muted-foreground mt-1">
+                              {format(new Date(invoice.createdAt), "MMM d, yyyy")}
+                            </div>
+                            <div className="mt-2 flex justify-end">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 px-2 text-xs"
+                                onClick={() => beginEditInvoice(invoice)}
+                                data-testid={`button-edit-invoice-inline-${invoice.id}`}
+                              >
+                                Edit
+                              </Button>
+                            </div>
+                          </>
+                        )}
                       </div>
                     ))}
                   </div>
