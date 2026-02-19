@@ -352,18 +352,37 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
     <div className="flex flex-col h-screen w-full bg-background">
       <TopNav />
       <div className="flex flex-1 overflow-hidden bg-background">
-        <div className="hidden lg:block w-60 xl:w-72 flex-shrink-0 border-r bg-background">
-          <RightPanel
-            newsletterId={newsletterId}
-            status={newsletter.status}
-            onStatusChange={(status) => updateStatusMutation.mutate(status)}
-            assignedToId={newsletter.assignedToId}
-            onAssignedToChange={(assignedToId) => updateAssignedToMutation.mutate(assignedToId)}
-          />
+        <div className="hidden lg:flex w-60 xl:w-72 flex-shrink-0 border-r bg-background flex-col">
+          {client && (
+            <div className="px-3 pt-3 pb-2">
+              <button
+                type="button"
+                className="w-full text-left rounded-md bg-muted/25 px-2.5 py-2 hover:bg-muted/40 transition-colors"
+                onClick={() => openRightRail("client", { openClientSheet: true })}
+                data-testid="button-left-client-context"
+              >
+                <div className="text-sm font-medium truncate">{client.name}</div>
+                <div className="text-[11px] text-muted-foreground">
+                  {newsletter.expectedSendDate
+                    ? format(new Date(newsletter.expectedSendDate), "MMM d, yyyy")
+                    : "No send date"}
+                </div>
+              </button>
+            </div>
+          )}
+          <div className="flex-1 min-h-0">
+            <RightPanel
+              newsletterId={newsletterId}
+              status={newsletter.status}
+              onStatusChange={(status) => updateStatusMutation.mutate(status)}
+              assignedToId={newsletter.assignedToId}
+              onAssignedToChange={(assignedToId) => updateAssignedToMutation.mutate(assignedToId)}
+            />
+          </div>
         </div>
 
         <div className="flex-1 flex flex-col min-w-0">
-          <header className="border-b bg-background px-3 sm:px-5 py-2.5">
+          <header className="bg-background px-3 sm:px-5 py-2.5">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex min-w-0 flex-1 items-center gap-2">
                 <Button

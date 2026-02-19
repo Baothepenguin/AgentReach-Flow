@@ -78,16 +78,21 @@ function formatFrequency(frequency: string) {
 
 function SubscriptionPreview({
   subscription,
+  linkedInvoices,
+  linkedNewsletterCount,
   onClose,
   onUpdated,
   onOpenClientCard,
 }: {
   subscription: SubscriptionWithClient;
+  linkedInvoices: any[];
+  linkedNewsletterCount: number;
   onClose: () => void;
   onUpdated: () => void;
   onOpenClientCard: (clientId: string) => void;
 }) {
   const { toast } = useToast();
+  const [isEditing, setIsEditing] = useState(false);
 
   const [editFrequency, setEditFrequency] = useState(subscription.frequency);
   const [editAmount, setEditAmount] = useState(String(subscription.amount));
@@ -108,6 +113,7 @@ function SubscriptionPreview({
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/subscriptions"] });
       toast({ title: "Subscription updated" });
+      setIsEditing(false);
       onUpdated();
     },
     onError: (error: Error) => {
@@ -122,79 +128,138 @@ function SubscriptionPreview({
           {getStatusIndicator(subscription.status)}
           <h3 className="font-semibold">{subscription.client.name}</h3>
         </div>
-        <Button variant="ghost" size="icon" onClick={onClose} data-testid="button-close-preview">
-          <X className="w-4 h-4" />
-        </Button>
+        <div className="flex items-center gap-1">
+          {!isEditing ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-8 px-2 text-xs"
+              onClick={() => setIsEditing(true)}
+              data-testid="button-edit-subscription-preview"
+            >
+              Edit
+            </Button>
+          ) : null}
+          <Button variant="ghost" size="icon" onClick={onClose} data-testid="button-close-preview">
+            <X className="w-4 h-4" />
+          </Button>
+        </div>
       </div>
 
       <div className="p-4 space-y-4">
-        <div className="space-y-3">
-          <div className="space-y-1">
-            <Label className="text-xs text-muted-foreground">Frequency</Label>
-            <Select value={editFrequency} onValueChange={(v) => setEditFrequency(v as typeof editFrequency)}>
-              <SelectTrigger data-testid="select-edit-frequency">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="weekly">Weekly</SelectItem>
-                <SelectItem value="biweekly">Biweekly</SelectItem>
-                <SelectItem value="monthly">Monthly</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-1">
-            <Label className="text-xs text-muted-foreground">Amount</Label>
-            <Input
-              type="number"
-              step="0.01"
-              value={editAmount}
-              onChange={(e) => setEditAmount(e.target.value)}
-              data-testid="input-edit-amount"
-            />
-          </div>
-          <div className="space-y-1">
-            <Label className="text-xs text-muted-foreground">Status</Label>
-            <Select value={editStatus} onValueChange={(v) => setEditStatus(v as typeof editStatus)}>
-              <SelectTrigger data-testid="select-edit-status">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="active">Active</SelectItem>
-                <SelectItem value="paused">Paused</SelectItem>
-                <SelectItem value="canceled">Canceled</SelectItem>
-                <SelectItem value="past_due">Past Due</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-1">
-            <Label className="text-xs text-muted-foreground">Start Date</Label>
-            <Input
-              type="date"
-              value={editStartDate}
-              onChange={(e) => setEditStartDate(e.target.value)}
-              data-testid="input-edit-start-date"
-            />
-          </div>
-          <div className="space-y-1">
-            <Label className="text-xs text-muted-foreground">End Date</Label>
-            <Input
-              type="date"
-              value={editEndDate}
-              onChange={(e) => setEditEndDate(e.target.value)}
-              data-testid="input-edit-end-date"
-            />
-          </div>
-        </div>
+        {isEditing ? (
+          <>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <Label className="text-xs text-muted-foreground">Frequency</Label>
+                <Select value={editFrequency} onValueChange={(v) => setEditFrequency(v as typeof editFrequency)}>
+                  <SelectTrigger data-testid="select-edit-frequency">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="weekly">Weekly</SelectItem>
+                    <SelectItem value="biweekly">Biweekly</SelectItem>
+                    <SelectItem value="monthly">Monthly</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs text-muted-foreground">Amount</Label>
+                <Input
+                  type="number"
+                  step="0.01"
+                  value={editAmount}
+                  onChange={(e) => setEditAmount(e.target.value)}
+                  data-testid="input-edit-amount"
+                />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs text-muted-foreground">Status</Label>
+                <Select value={editStatus} onValueChange={(v) => setEditStatus(v as typeof editStatus)}>
+                  <SelectTrigger data-testid="select-edit-status">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="active">Active</SelectItem>
+                    <SelectItem value="paused">Paused</SelectItem>
+                    <SelectItem value="canceled">Canceled</SelectItem>
+                    <SelectItem value="past_due">Past Due</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs text-muted-foreground">Start Date</Label>
+                <Input
+                  type="date"
+                  value={editStartDate}
+                  onChange={(e) => setEditStartDate(e.target.value)}
+                  data-testid="input-edit-start-date"
+                />
+              </div>
+              <div className="space-y-1 col-span-2">
+                <Label className="text-xs text-muted-foreground">End Date</Label>
+                <Input
+                  type="date"
+                  value={editEndDate}
+                  onChange={(e) => setEditEndDate(e.target.value)}
+                  data-testid="input-edit-end-date"
+                />
+              </div>
+            </div>
 
-        <div className="flex items-center gap-2 pt-2">
-          <Button
-            onClick={() => updateMutation.mutate()}
-            disabled={updateMutation.isPending}
-            data-testid="button-save-subscription"
-          >
-            <Save className="w-4 h-4 mr-1.5" />
-            {updateMutation.isPending ? "Saving..." : "Save"}
-          </Button>
+            <div className="flex items-center gap-2 pt-1">
+              <Button
+                onClick={() => updateMutation.mutate()}
+                disabled={updateMutation.isPending}
+                data-testid="button-save-subscription"
+              >
+                <Save className="w-4 h-4 mr-1.5" />
+                {updateMutation.isPending ? "Saving..." : "Save"}
+              </Button>
+              <Button
+                variant="ghost"
+                onClick={() => setIsEditing(false)}
+                className="text-xs"
+                data-testid="button-cancel-subscription-edit"
+              >
+                Cancel
+              </Button>
+            </div>
+          </>
+        ) : (
+          <div className="rounded-md bg-muted/25 p-3">
+            <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+              <div className="text-muted-foreground">Frequency</div>
+              <div>{formatFrequency(subscription.frequency)}</div>
+              <div className="text-muted-foreground">Amount</div>
+              <div>{subscription.currency} ${Number(subscription.amount).toFixed(2)}</div>
+              <div className="text-muted-foreground">Status</div>
+              <div className="capitalize">{subscription.status.replace("_", " ")}</div>
+              <div className="text-muted-foreground">Start</div>
+              <div>{subscription.startDate ? format(new Date(subscription.startDate), "MMM d, yyyy") : "-"}</div>
+              <div className="text-muted-foreground">End</div>
+              <div>{subscription.endDate ? format(new Date(subscription.endDate), "MMM d, yyyy") : "-"}</div>
+            </div>
+          </div>
+        )}
+
+        <div className="rounded-md bg-muted/25 p-3">
+          <h4 className="text-xs font-medium text-muted-foreground mb-2">Connected</h4>
+          <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+            <div className="text-muted-foreground">Orders</div>
+            <div>{linkedInvoices.length}</div>
+            <div className="text-muted-foreground">Newsletters</div>
+            <div>{linkedNewsletterCount}</div>
+          </div>
+          {linkedInvoices.length > 0 && (
+            <div className="mt-2 space-y-1">
+              {linkedInvoices.slice(0, 4).map((invoice) => (
+                <div key={invoice.id} className="text-[11px] text-muted-foreground">
+                  #{invoice.id.slice(0, 8)} · {invoice.status}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         <div className="pt-4 border-t border-border/30">
@@ -226,6 +291,7 @@ export default function SubscriptionsPage() {
   });
   const { data: stripeProductsData } = useQuery<{ data: StripeProductRow[] }>({
     queryKey: ["/api/stripe/products"],
+    enabled: false,
   });
   const stripeProducts = stripeProductsData?.data || [];
   const [stripeFilterProductId, setStripeFilterProductId] = useState("");
@@ -358,136 +424,11 @@ export default function SubscriptionsPage() {
         <div className="flex-1 px-8 py-6 overflow-auto">
           <div className="flex items-center justify-between gap-2 mb-6">
             <h1 className="text-xl font-semibold">Subscriptions</h1>
-            <div className="flex items-center gap-2">
-              <Button
-                variant="outline"
-                onClick={() => setShowStripePullPanel((previous) => !previous)}
-                data-testid="button-pull-stripe-subscriptions"
-              >
-                <RefreshCw className="w-4 h-4 mr-1.5" />
-                {showStripePullPanel ? "Hide Stripe Pull" : "Pull from Stripe"}
-              </Button>
-              <Button onClick={() => setCreateOpen(true)} data-testid="button-new-subscription">
-                <Plus className="w-4 h-4 mr-1.5" />
-                New Subscription
-              </Button>
-            </div>
+            <Button onClick={() => setCreateOpen(true)} data-testid="button-new-subscription">
+              <Plus className="w-4 h-4 mr-1.5" />
+              New Subscription
+            </Button>
           </div>
-
-          {showStripePullPanel && (
-            <div className="rounded-lg border p-3 mb-5 space-y-2">
-              <div className="flex items-center justify-between gap-2 flex-wrap">
-                <div className="text-xs font-medium text-muted-foreground">Stripe Pull Filters (Optional)</div>
-                <Button
-                  size="sm"
-                  className="h-8 text-xs"
-                  onClick={() => pullStripeSubscriptionsMutation.mutate()}
-                  disabled={pullStripeSubscriptionsMutation.isPending}
-                  data-testid="button-sync-stripe-subscriptions"
-                >
-                  {pullStripeSubscriptionsMutation.isPending ? (
-                    <RefreshCw className="w-3.5 h-3.5 mr-1.5 animate-spin" />
-                  ) : (
-                    <RefreshCw className="w-3.5 h-3.5 mr-1.5" />
-                  )}
-                  Sync now
-                </Button>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-                <select
-                  className="h-9 rounded-md border bg-background px-3 text-sm"
-                  value={stripeFilterProductId}
-                  onChange={(event) => {
-                    setStripeFilterProductId(event.target.value);
-                    setStripeFilterPriceId("");
-                  }}
-                  data-testid="select-stripe-subscriptions-product"
-                >
-                  <option value="">All products</option>
-                  {stripeProductOptions.map((product) => (
-                    <option key={product.id} value={product.id}>
-                      {product.name}
-                    </option>
-                  ))}
-                </select>
-                <select
-                  className="h-9 rounded-md border bg-background px-3 text-sm"
-                  value={stripeFilterPriceId}
-                  onChange={(event) => setStripeFilterPriceId(event.target.value)}
-                  data-testid="select-stripe-subscriptions-price"
-                >
-                  <option value="">All prices</option>
-                  {stripePriceOptions.map((price) => (
-                    <option key={price.price_id || `${price.id}-${price.unit_amount}`} value={price.price_id || ""}>
-                      {price.productName ? `${price.productName} · ` : ""}
-                      {(price.currency || "USD").toUpperCase()} {(Number(price.unit_amount || 0) / 100).toFixed(2)}
-                    </option>
-                  ))}
-                </select>
-                <input
-                  type="email"
-                  className="h-9 rounded-md border bg-background px-3 text-sm"
-                  value={stripeFilterCustomerEmail}
-                  onChange={(event) => setStripeFilterCustomerEmail(event.target.value)}
-                  placeholder="Customer email"
-                  data-testid="input-stripe-subscriptions-customer-email"
-                />
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                <input
-                  type="text"
-                  className="h-9 rounded-md border bg-background px-3 text-sm font-mono"
-                  value={stripeManualProductId}
-                  onChange={(event) => setStripeManualProductId(event.target.value)}
-                  placeholder="Manual Product ID (prod_...)"
-                  data-testid="input-stripe-subscriptions-manual-product-id"
-                />
-                <input
-                  type="text"
-                  className="h-9 rounded-md border bg-background px-3 text-sm font-mono"
-                  value={stripeManualPriceId}
-                  onChange={(event) => setStripeManualPriceId(event.target.value)}
-                  placeholder="Manual Price ID (price_...)"
-                  data-testid="input-stripe-subscriptions-manual-price-id"
-                />
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                <input
-                  type="date"
-                  className="h-9 rounded-md border bg-background px-3 text-sm"
-                  value={stripeFilterFromDate}
-                  onChange={(event) => setStripeFilterFromDate(event.target.value)}
-                  data-testid="input-stripe-subscriptions-from-date"
-                />
-                <input
-                  type="date"
-                  className="h-9 rounded-md border bg-background px-3 text-sm"
-                  value={stripeFilterToDate}
-                  onChange={(event) => setStripeFilterToDate(event.target.value)}
-                  data-testid="input-stripe-subscriptions-to-date"
-                />
-              </div>
-              <div className="flex justify-end">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-7 text-xs"
-                  onClick={() => {
-                    setStripeFilterProductId("");
-                    setStripeFilterPriceId("");
-                    setStripeManualProductId("");
-                    setStripeManualPriceId("");
-                    setStripeFilterCustomerEmail("");
-                    setStripeFilterFromDate("");
-                    setStripeFilterToDate("");
-                  }}
-                  data-testid="button-clear-stripe-subscriptions-filters"
-                >
-                  Clear filters
-                </Button>
-              </div>
-            </div>
-          )}
 
           {isLoading ? (
             <div className="flex items-center justify-center h-64">
@@ -553,6 +494,14 @@ export default function SubscriptionsPage() {
           <SubscriptionPreview
             key={selectedSubscription.id}
             subscription={selectedSubscription}
+            linkedInvoices={invoices.filter((invoice) => invoice.subscriptionId === selectedSubscription.id)}
+            linkedNewsletterCount={invoices
+              .filter((invoice) => invoice.subscriptionId === selectedSubscription.id)
+              .reduce(
+                (count, invoice) =>
+                  count + (Array.isArray(invoice.newsletters) ? invoice.newsletters.length : 0),
+                0
+              )}
             onClose={() => setSelectedSubscription(null)}
             onUpdated={() => setSelectedSubscription(null)}
             onOpenClientCard={setSelectedClientId}

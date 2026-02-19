@@ -4359,7 +4359,17 @@ export async function registerRoutes(
       });
     } catch (error) {
       console.error("Send test error:", error);
-      res.status(500).json({ error: "Failed to send test email" });
+      const detailedMessage =
+        error instanceof Error
+          ? error.message
+          : typeof (error as any)?.message === "string"
+            ? String((error as any).message)
+            : "";
+      res.status(500).json({
+        error: detailedMessage
+          ? `Failed to send test email: ${detailedMessage}`
+          : "Failed to send test email",
+      });
     }
   });
 

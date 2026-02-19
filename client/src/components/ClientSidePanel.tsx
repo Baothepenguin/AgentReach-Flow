@@ -280,11 +280,8 @@ export function ClientSidePanel({ clientId, open, onClose }: ClientSidePanelProp
   };
 
   const openWorkspacePage = (path: string) => {
-    if (typeof window !== "undefined") {
-      const opened = window.open(path, "_blank", "noopener,noreferrer");
-      if (opened) return;
-    }
     setLocation(path);
+    onClose();
   };
 
   const manageButtonClass =
@@ -915,7 +912,7 @@ export function ClientSidePanel({ clientId, open, onClose }: ClientSidePanelProp
 
               <div>
                 <div className="group/section flex items-center justify-between mb-3">
-                  <h3 className="text-sm font-medium">Audience (Contacts + Segments)</h3>
+                  <h3 className="text-sm font-medium">Audience</h3>
                   <Button
                     variant="ghost"
                     size="sm"
@@ -923,12 +920,9 @@ export function ClientSidePanel({ clientId, open, onClose }: ClientSidePanelProp
                     onClick={() => openWorkspacePage(`/audience?clientId=${client.id}`)}
                     data-testid="button-open-audience-workspace-client-card"
                   >
-                    Open Workspace
+                    Open Audience Manager
                     <ExternalLink className="w-3 h-3 ml-1" />
                   </Button>
-                </div>
-                <div className="rounded-md border bg-muted/20 p-3 text-sm text-muted-foreground">
-                  Audience tools open in Audience Manager.
                 </div>
               </div>
             </div>

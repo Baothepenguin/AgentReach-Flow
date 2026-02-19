@@ -350,6 +350,7 @@ export function ClientAudiencePanel({ clientId }: ClientAudiencePanelProps) {
     setShowImportPanel(panel === "import" ? next : false);
     setShowImportHistory(panel === "history" ? next : false);
   };
+  const showSelectionCheckboxes = selectedContactIds.length > 0;
 
   return (
     <div className="space-y-3">
@@ -582,8 +583,8 @@ export function ClientAudiencePanel({ clientId }: ClientAudiencePanelProps) {
         </div>
       )}
 
-      <div className="rounded-md border">
-        <div className="flex items-center justify-end gap-2 border-b px-2 py-1.5">
+      <div className="rounded-md bg-background/70">
+        <div className="flex items-center justify-end gap-2 px-2 py-1.5">
           {selectedContactIds.length > 0 ? (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -607,7 +608,7 @@ export function ClientAudiencePanel({ clientId }: ClientAudiencePanelProps) {
           ) : null}
         </div>
 
-        <div className="max-h-[430px] overflow-y-auto divide-y">
+        <div className="max-h-[430px] overflow-y-auto">
           {filteredContacts.length === 0 ? (
             <div className="text-xs text-muted-foreground py-3 px-2">
               {viewContacts.length === 0 ? "No contacts in this view" : "No contacts match this search"}
@@ -618,7 +619,7 @@ export function ClientAudiencePanel({ clientId }: ClientAudiencePanelProps) {
               const isEditing = editingContactId === contact.id;
 
               return (
-                <div key={contact.id} className="px-2 py-2 hover:bg-muted/20">
+                <div key={contact.id} className="group px-2 py-1.5 hover:bg-muted/20 rounded-md">
                   {isEditing ? (
                     <div className="space-y-1.5">
                       <Input
@@ -692,7 +693,11 @@ export function ClientAudiencePanel({ clientId }: ClientAudiencePanelProps) {
                     <div className="flex items-center gap-2">
                       <input
                         type="checkbox"
-                        className="h-3.5 w-3.5"
+                        className={`h-3.5 w-3.5 transition-opacity ${
+                          showSelectionCheckboxes
+                            ? "opacity-100"
+                            : "opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto"
+                        }`}
                         checked={isSelected}
                         onChange={() =>
                           setSelectedContactIds((prev) =>

@@ -140,7 +140,7 @@ export function RightPanel({
 
   return (
     <div className="flex flex-col h-full bg-background">
-      <div className="p-3 border-b">
+      <div className="px-3 pt-2 pb-3">
         <label className="text-xs font-medium text-muted-foreground mb-2 block" data-testid="label-status">
           Status
         </label>
@@ -164,7 +164,7 @@ export function RightPanel({
         )}
       </div>
 
-      <div className="p-3 border-b">
+      <div className="px-3 pb-3">
         <label className="text-xs font-medium text-muted-foreground mb-2 block" data-testid="label-team-member">
           Team Member
         </label>
@@ -192,7 +192,7 @@ export function RightPanel({
       </div>
 
       {status === "sent" && (
-        <div className="p-3 border-b">
+        <div className="px-3 pb-3">
           <div className="text-xs font-medium text-muted-foreground mb-2" data-testid="label-analytics">
             Analytics
           </div>
@@ -223,7 +223,7 @@ export function RightPanel({
         </div>
       )}
 
-      <div className="p-2 border-b space-y-2">
+      <div className="px-3 py-2 space-y-2">
         <div className="flex items-center gap-2">
           <div className="text-xs font-medium text-muted-foreground" data-testid="label-internal-notes">
             Internal Notes
@@ -317,10 +317,9 @@ export function RightPanel({
             </div>
           )}
         </div>
-        <p className="text-xs text-muted-foreground/70">Team only</p>
       </div>
 
-      <div className="p-2 border-b">
+      <div className="px-3 pt-1 pb-2">
         <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground" data-testid="label-client-feedback">
           Client Feedback
           {pendingFeedback.length > 0 && (
@@ -342,7 +341,7 @@ export function RightPanel({
                   {pendingFeedback.map((comment) => (
                     <div
                       key={comment.id}
-                      className="p-2 rounded-md bg-background border border-amber-500/30"
+                      className="p-2 rounded-md bg-amber-500/5"
                       data-testid={`review-comment-${comment.id}`}
                     >
                       <div className="flex items-start gap-2">
@@ -377,7 +376,7 @@ export function RightPanel({
                                   target="_blank"
                                   rel="noopener noreferrer"
                                   download
-                                  className="flex items-center gap-1 px-2 py-0.5 text-xs bg-background rounded border"
+                                  className="flex items-center gap-1 px-2 py-0.5 text-xs bg-background rounded"
                                   data-testid={`review-comment-attachment-${comment.id}-${idx}`}
                                 >
                                   <Download className="w-3 h-3" />
@@ -427,7 +426,7 @@ export function RightPanel({
                                   target="_blank"
                                   rel="noopener noreferrer"
                                   download
-                                  className="flex items-center gap-1 px-2 py-0.5 text-xs bg-background rounded border"
+                                  className="flex items-center gap-1 px-2 py-0.5 text-xs bg-background rounded"
                                   data-testid={`review-comment-attachment-${comment.id}-${idx}`}
                                 >
                                   <Download className="w-3 h-3" />

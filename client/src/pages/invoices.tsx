@@ -262,6 +262,7 @@ export default function OrdersPage() {
   });
   const { data: stripeProductsData } = useQuery<{ data: StripeProductRow[] }>({
     queryKey: ["/api/stripe/products"],
+    enabled: false,
   });
   const stripeProducts = stripeProductsData?.data || [];
   const [stripeFilterProductId, setStripeFilterProductId] = useState("");
@@ -389,130 +390,7 @@ export default function OrdersPage() {
         <div className="flex-1 px-8 py-6 overflow-auto">
           <div className="flex items-center justify-between gap-2 mb-6">
             <h1 className="text-xl font-semibold">Orders</h1>
-            <Button
-              variant="outline"
-              onClick={() => setShowStripePullPanel((previous) => !previous)}
-              data-testid="button-pull-stripe-orders"
-            >
-              <RefreshCw className="w-4 h-4 mr-2" />
-              {showStripePullPanel ? "Hide Stripe Pull" : "Pull from Stripe"}
-            </Button>
           </div>
-
-          {showStripePullPanel && (
-            <div className="rounded-lg border p-3 mb-5 space-y-2">
-              <div className="flex items-center justify-between gap-2 flex-wrap">
-                <div className="text-xs font-medium text-muted-foreground">Stripe Pull Filters (Optional)</div>
-                <Button
-                  size="sm"
-                  className="h-8 text-xs"
-                  onClick={() => pullStripeOrdersMutation.mutate()}
-                  disabled={pullStripeOrdersMutation.isPending}
-                  data-testid="button-sync-stripe-orders"
-                >
-                  {pullStripeOrdersMutation.isPending ? (
-                    <RefreshCw className="w-3.5 h-3.5 mr-1.5 animate-spin" />
-                  ) : (
-                    <RefreshCw className="w-3.5 h-3.5 mr-1.5" />
-                  )}
-                  Sync now
-                </Button>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-                <select
-                  className="h-9 rounded-md border bg-background px-3 text-sm"
-                  value={stripeFilterProductId}
-                  onChange={(event) => {
-                    setStripeFilterProductId(event.target.value);
-                    setStripeFilterPriceId("");
-                  }}
-                  data-testid="select-stripe-orders-product"
-                >
-                  <option value="">All products</option>
-                  {stripeProductOptions.map((product) => (
-                    <option key={product.id} value={product.id}>
-                      {product.name}
-                    </option>
-                  ))}
-                </select>
-                <select
-                  className="h-9 rounded-md border bg-background px-3 text-sm"
-                  value={stripeFilterPriceId}
-                  onChange={(event) => setStripeFilterPriceId(event.target.value)}
-                  data-testid="select-stripe-orders-price"
-                >
-                  <option value="">All prices</option>
-                  {stripePriceOptions.map((price) => (
-                    <option key={price.price_id || `${price.id}-${price.unit_amount}`} value={price.price_id || ""}>
-                      {price.productName ? `${price.productName} · ` : ""}
-                      {(price.currency || "USD").toUpperCase()} {(Number(price.unit_amount || 0) / 100).toFixed(2)}
-                    </option>
-                  ))}
-                </select>
-                <input
-                  type="email"
-                  className="h-9 rounded-md border bg-background px-3 text-sm"
-                  value={stripeFilterCustomerEmail}
-                  onChange={(event) => setStripeFilterCustomerEmail(event.target.value)}
-                  placeholder="Customer email"
-                  data-testid="input-stripe-orders-customer-email"
-                />
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                <input
-                  type="text"
-                  className="h-9 rounded-md border bg-background px-3 text-sm font-mono"
-                  value={stripeManualProductId}
-                  onChange={(event) => setStripeManualProductId(event.target.value)}
-                  placeholder="Manual Product ID (prod_...)"
-                  data-testid="input-stripe-orders-manual-product-id"
-                />
-                <input
-                  type="text"
-                  className="h-9 rounded-md border bg-background px-3 text-sm font-mono"
-                  value={stripeManualPriceId}
-                  onChange={(event) => setStripeManualPriceId(event.target.value)}
-                  placeholder="Manual Price ID (price_...)"
-                  data-testid="input-stripe-orders-manual-price-id"
-                />
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                <input
-                  type="date"
-                  className="h-9 rounded-md border bg-background px-3 text-sm"
-                  value={stripeFilterFromDate}
-                  onChange={(event) => setStripeFilterFromDate(event.target.value)}
-                  data-testid="input-stripe-orders-from-date"
-                />
-                <input
-                  type="date"
-                  className="h-9 rounded-md border bg-background px-3 text-sm"
-                  value={stripeFilterToDate}
-                  onChange={(event) => setStripeFilterToDate(event.target.value)}
-                  data-testid="input-stripe-orders-to-date"
-                />
-              </div>
-              <div className="flex justify-end">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-7 text-xs"
-                  onClick={() => {
-                    setStripeFilterProductId("");
-                    setStripeFilterPriceId("");
-                    setStripeManualProductId("");
-                    setStripeManualPriceId("");
-                    setStripeFilterCustomerEmail("");
-                    setStripeFilterFromDate("");
-                    setStripeFilterToDate("");
-                  }}
-                  data-testid="button-clear-stripe-orders-filters"
-                >
-                  Clear filters
-                </Button>
-              </div>
-            </div>
-          )}
 
           {isLoading ? (
             <div className="flex items-center justify-center h-64">
