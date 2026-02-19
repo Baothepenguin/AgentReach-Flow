@@ -28,6 +28,16 @@ type SelectedElementState = {
 };
 
 const EDIT_ATTR = "data-flow-edit-id";
+const EDITABLE_ATTR = "data-flow-editable";
+const STYLE_ATTR = "data-flow-editor-style";
+const FONT_FAMILY_PRESETS = [
+  "Arial, sans-serif",
+  "Helvetica, Arial, sans-serif",
+  "Georgia, serif",
+  "\"Times New Roman\", serif",
+  "Verdana, sans-serif",
+  "\"Trebuchet MS\", sans-serif",
+] as const;
 
 function createEditId(): string {
   return `flow-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -42,19 +52,14 @@ function toPixelValue(value: string): string {
 function getEditableTarget(element: HTMLElement | null): HTMLElement | null {
   if (!element) return null;
   const candidate = element.closest<HTMLElement>(
-    "a,button,h1,h2,h3,h4,h5,h6,p,span,td,th,li,div"
+    "a,button,h1,h2,h3,h4,h5,h6,p,span,td,th,li"
   );
 
   if (!candidate) return null;
   if (candidate.tagName === "BODY" || candidate.tagName === "HTML") return null;
-
-  if (candidate.tagName.toLowerCase() === "div") {
-    const hasText = (candidate.textContent || "").trim().length > 0;
-    const bg = candidate.style.backgroundImage;
-    if (!hasText && (!bg || bg === "none")) {
-      return null;
-    }
-  }
+  const textLength = (candidate.textContent || "").trim().length;
+  const tag = candidate.tagName.toLowerCase();
+  if (!["a", "button"].includes(tag) && (textLength === 0 || textLength > 600)) return null;
 
   return candidate;
 }
@@ -72,6 +77,7 @@ export function HTMLPreviewFrame({
   const [internalDeviceMode, setInternalDeviceMode] = useState<DeviceMode>("desktop");
   const [selectedElement, setSelectedElement] = useState<SelectedElementState | null>(null);
   const selectedRef = useRef<SelectedElementState | null>(null);
+  const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const activeDeviceMode = deviceMode ?? internalDeviceMode;
   const setActiveDeviceMode = onDeviceModeChange ?? setInternalDeviceMode;
@@ -85,13 +91,32 @@ export function HTMLPreviewFrame({
   const getFullHtml = useCallback((): string => {
     const iframe = iframeRef.current;
     if (!iframe?.contentDocument) return html;
-    return `<!DOCTYPE html>${iframe.contentDocument.documentElement.outerHTML}`;
+    const clone = iframe.contentDocument.documentElement.cloneNode(true) as HTMLElement;
+    clone.querySelectorAll(`[${STYLE_ATTR}]`).forEach((node) => node.remove());
+    clone.querySelectorAll<HTMLElement>("*").forEach((node) => {
+      node.removeAttribute(EDITABLE_ATTR);
+      node.removeAttribute(EDIT_ATTR);
+      node.removeAttribute("data-flow-selected");
+      node.removeAttribute("contenteditable");
+      node.removeAttribute("spellcheck");
+    });
+    return `<!DOCTYPE html>${clone.outerHTML}`;
   }, [html]);
 
   const emitHtmlChange = useCallback(() => {
     if (!onHtmlChange) return;
     onHtmlChange(getFullHtml());
   }, [onHtmlChange, getFullHtml]);
+
+  const queuePersist = useCallback(() => {
+    if (!onHtmlChange) return;
+    if (persistTimerRef.current) {
+      clearTimeout(persistTimerRef.current);
+    }
+    persistTimerRef.current = setTimeout(() => {
+      emitHtmlChange();
+    }, 320);
+  }, [emitHtmlChange, onHtmlChange]);
 
   const syncHeight = useCallback(() => {
     const iframe = iframeRef.current;
@@ -218,59 +243,53 @@ export function HTMLPreviewFrame({
       setSelectedElement(nextState);
       markSelectedElement(nextState.id);
       syncHeight();
-      emitHtmlChange();
+      queuePersist();
     },
-    [describeElement, emitHtmlChange, markSelectedElement, syncHeight]
+    [describeElement, markSelectedElement, queuePersist, syncHeight]
   );
 
   useEffect(() => {
     const iframe = iframeRef.current;
     if (!iframe || !html) return;
 
-    let observer: MutationObserver | null = null;
-    let saveTimer: ReturnType<typeof setTimeout> | null = null;
     let mountedDoc: Document | null = null;
-
-    const scheduleSave = () => {
-      if (!onHtmlChange) return;
-      if (saveTimer) clearTimeout(saveTimer);
-      saveTimer = setTimeout(() => {
-        emitHtmlChange();
-      }, 220);
-    };
 
     const markEditableElements = (doc: Document) => {
       doc
-        .querySelectorAll<HTMLElement>("a,button,h1,h2,h3,h4,h5,h6,p,span,td,th,li,div")
+        .querySelectorAll<HTMLElement>("a,button,h1,h2,h3,h4,h5,h6,p,span,td,th,li")
         .forEach((node) => {
+          const tag = node.tagName.toLowerCase();
+          const textLength = (node.textContent || "").trim().length;
           const hasText = (node.textContent || "").trim().length > 0;
-          const shouldMark = hasText || Boolean(node.closest("a"));
+          const shouldMark = tag === "a" || tag === "button" || (hasText && textLength <= 600);
           if (shouldMark) {
-            node.setAttribute("data-flow-editable", "true");
+            if (node.getAttribute(EDITABLE_ATTR) !== "true") {
+              node.setAttribute(EDITABLE_ATTR, "true");
+            }
+          } else {
+            node.removeAttribute(EDITABLE_ATTR);
           }
         });
     };
 
-    const handleDoubleClick = (event: MouseEvent) => {
+    const handleSelect = (event: MouseEvent) => {
       const doc = iframe.contentDocument;
       if (!doc) return;
       const target = event.target as HTMLElement | null;
       const editable = getEditableTarget(target);
-      if (!editable) return;
+      if (!editable) {
+        setSelectedElement(null);
+        markSelectedElement();
+        return;
+      }
 
       const snapshot = describeElement(editable);
       selectedRef.current = snapshot;
       setSelectedElement(snapshot);
       markSelectedElement(snapshot.id);
 
-      if (snapshot.canEditText) {
-        editable.setAttribute("contenteditable", "true");
-        editable.setAttribute("spellcheck", "true");
-        editable.focus();
-      }
-
       event.preventDefault();
-      scheduleSave();
+      event.stopPropagation();
     };
 
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -278,32 +297,6 @@ export function HTMLPreviewFrame({
         setSelectedElement(null);
         markSelectedElement();
       }
-    };
-
-    const handleInput = (event: Event) => {
-      const target = event.target as HTMLElement | null;
-      if (!target) return;
-      const current = selectedRef.current;
-      if (current) {
-        const active = target.closest<HTMLElement>(`[${EDIT_ATTR}="${current.id}"]`);
-        if (active) {
-          const snapshot = describeElement(active);
-          selectedRef.current = snapshot;
-          setSelectedElement(snapshot);
-        }
-      }
-      syncHeight();
-      scheduleSave();
-    };
-
-    const handleBlur = (event: FocusEvent) => {
-      const target = event.target as HTMLElement | null;
-      if (!target) return;
-      if (target.getAttribute("contenteditable") === "true") {
-        target.removeAttribute("contenteditable");
-      }
-      scheduleSave();
-      syncHeight();
     };
 
     const handleLoad = () => {
@@ -315,16 +308,13 @@ export function HTMLPreviewFrame({
       doc.body.style.background = "#ffffff";
 
       const style = doc.createElement("style");
+      style.setAttribute(STYLE_ATTR, "true");
       style.textContent = `
-        [data-flow-editable="true"]:hover {
-          outline: 1px dashed hsl(143 59% 33% / 0.55);
-          outline-offset: 1px;
-          cursor: text;
+        [${EDITABLE_ATTR}="true"] {
+          cursor: pointer;
         }
         [${EDIT_ATTR}][data-flow-selected="true"] {
-          outline: 2px solid hsl(143 59% 33% / 0.9);
-          outline-offset: 1px;
-          box-shadow: 0 0 0 3px hsl(143 59% 33% / 0.18);
+          box-shadow: inset 0 0 0 2px rgba(37, 99, 235, 0.82), 0 0 0 1px rgba(15, 23, 42, 0.15);
         }
         [${EDIT_ATTR}] {
           scroll-margin-top: 80px;
@@ -334,21 +324,9 @@ export function HTMLPreviewFrame({
 
       markEditableElements(doc);
 
-      doc.addEventListener("dblclick", handleDoubleClick);
-      doc.addEventListener("input", handleInput, true);
-      doc.addEventListener("blur", handleBlur, true);
+      doc.addEventListener("click", handleSelect, true);
+      doc.addEventListener("dblclick", handleSelect, true);
       doc.addEventListener("keydown", handleKeyDown, true);
-
-      observer = new MutationObserver(() => {
-        markEditableElements(doc);
-        syncHeight();
-      });
-      observer.observe(doc.body, {
-        childList: true,
-        subtree: true,
-        attributes: true,
-        characterData: true,
-      });
 
       syncHeight();
       setTimeout(syncHeight, 50);
@@ -362,15 +340,15 @@ export function HTMLPreviewFrame({
       iframe.removeEventListener("load", handleLoad);
       window.removeEventListener("resize", syncHeight);
       if (mountedDoc) {
-        mountedDoc.removeEventListener("dblclick", handleDoubleClick);
-        mountedDoc.removeEventListener("input", handleInput, true);
-        mountedDoc.removeEventListener("blur", handleBlur, true);
+        mountedDoc.removeEventListener("click", handleSelect, true);
+        mountedDoc.removeEventListener("dblclick", handleSelect, true);
         mountedDoc.removeEventListener("keydown", handleKeyDown, true);
       }
-      if (observer) observer.disconnect();
-      if (saveTimer) clearTimeout(saveTimer);
+      if (persistTimerRef.current) {
+        clearTimeout(persistTimerRef.current);
+      }
     };
-  }, [html, describeElement, emitHtmlChange, markSelectedElement, onHtmlChange, syncHeight]);
+  }, [html, describeElement, markSelectedElement, syncHeight]);
 
   return (
     <div className="flex flex-col h-full relative">
@@ -429,12 +407,9 @@ export function HTMLPreviewFrame({
               )}
 
               {selectedElement && (
-                <div className="absolute right-3 top-14 z-20 w-80 rounded-xl border bg-background/95 backdrop-blur-sm shadow-lg" data-testid="panel-element-inspector">
-                  <div className="flex items-center justify-between border-b px-3 py-2.5">
-                    <div>
-                      <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Live inspector</div>
-                      <div className="text-xs font-medium mt-0.5">Edit {selectedElement.tag}</div>
-                    </div>
+                <div className="absolute right-3 bottom-3 z-20 w-72 rounded-xl border bg-background/95 backdrop-blur-sm shadow-lg" data-testid="panel-element-inspector">
+                  <div className="flex items-center justify-between border-b px-3 py-2">
+                    <div className="text-xs font-medium">Edit {selectedElement.tag}</div>
                     <Button
                       size="icon"
                       variant="ghost"
@@ -448,10 +423,10 @@ export function HTMLPreviewFrame({
                       <X className="w-4 h-4" />
                     </Button>
                   </div>
-                  <div className="space-y-3 p-3 max-h-[60vh] overflow-y-auto">
+                  <div className="space-y-2.5 p-3 max-h-[58vh] overflow-y-auto">
                     {selectedElement.canEditText && (
                       <div>
-                        <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
+                        <label className="text-[11px] font-medium text-muted-foreground mb-1 block">
                           <Type className="inline w-3 h-3 mr-1" />
                           Text
                         </label>
@@ -466,10 +441,10 @@ export function HTMLPreviewFrame({
 
                     {selectedElement.canEditLink && (
                       <div>
-                      <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
-                        <Link2 className="inline w-3 h-3 mr-1" />
-                        Link
-                      </label>
+                        <label className="text-[11px] font-medium text-muted-foreground mb-1 block">
+                          <Link2 className="inline w-3 h-3 mr-1" />
+                          Link
+                        </label>
                         <Input
                           value={selectedElement.href}
                           onChange={(event) => applySelectedElementUpdate({ href: event.target.value })}
@@ -482,7 +457,7 @@ export function HTMLPreviewFrame({
 
                     <div className="grid grid-cols-2 gap-2">
                       <div>
-                        <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Font size</label>
+                        <label className="text-[11px] font-medium text-muted-foreground mb-1 block">Font size</label>
                         <Input
                           value={selectedElement.fontSize}
                           onChange={(event) => applySelectedElementUpdate({ fontSize: event.target.value })}
@@ -492,8 +467,9 @@ export function HTMLPreviewFrame({
                         />
                       </div>
                       <div>
-                        <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Font family</label>
+                        <label className="text-[11px] font-medium text-muted-foreground mb-1 block">Font family</label>
                         <Input
+                          list="flow-font-family-presets"
                           value={selectedElement.fontFamily}
                           onChange={(event) => applySelectedElementUpdate({ fontFamily: event.target.value })}
                           className="h-8 text-xs bg-card"
@@ -502,7 +478,11 @@ export function HTMLPreviewFrame({
                         />
                       </div>
                     </div>
-
+                    <datalist id="flow-font-family-presets">
+                      {FONT_FAMILY_PRESETS.map((font) => (
+                        <option key={font} value={font} />
+                      ))}
+                    </datalist>
                   </div>
                 </div>
               )}
