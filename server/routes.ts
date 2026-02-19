@@ -2782,11 +2782,18 @@ export async function registerRoutes(
       if (!reviewToken) {
         return res.status(404).json({ error: "Invalid or expired token" });
       }
+      const newsletter = await storage.getNewsletter(reviewToken.newsletterId);
+      const users = await storage.getUsers();
+      const fallbackCreatedById = newsletter?.createdById || newsletter?.lastEditedById || users[0]?.id;
+      if (!fallbackCreatedById) {
+        return res.status(500).json({ error: "Unable to resolve author for review comment" });
+      }
 
       const baseComment = {
         newsletterId: reviewToken.newsletterId,
         commentType: normalizeReviewCommentType(commentType),
         content: comment || "Change requested",
+        createdById: fallbackCreatedById,
       };
       let reviewComment;
       try {
@@ -2805,9 +2812,8 @@ export async function registerRoutes(
 
       res.json({ success: true, comment: reviewComment });
     } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
       console.error("Request changes error:", error);
-      res.status(500).json({ error: "Request failed", detail });
+      res.status(500).json({ error: "Request failed" });
     }
   });
 
@@ -2832,11 +2838,18 @@ export async function registerRoutes(
       if (!reviewToken) {
         return res.status(404).json({ error: "Invalid or expired token" });
       }
+      const newsletter = await storage.getNewsletter(reviewToken.newsletterId);
+      const users = await storage.getUsers();
+      const fallbackCreatedById = newsletter?.createdById || newsletter?.lastEditedById || users[0]?.id;
+      if (!fallbackCreatedById) {
+        return res.status(500).json({ error: "Unable to resolve author for review comment" });
+      }
 
       const baseComment = {
         newsletterId: reviewToken.newsletterId,
         commentType: normalizeReviewCommentType(commentType),
         content,
+        createdById: fallbackCreatedById,
       };
       let comment;
       try {
@@ -2854,9 +2867,8 @@ export async function registerRoutes(
       await storage.updateNewsletter(reviewToken.newsletterId, { status: "changes_requested" });
       res.status(201).json(comment);
     } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
       console.error("Create review comment error:", error);
-      res.status(500).json({ error: "Failed to create comment", detail });
+      res.status(500).json({ error: "Failed to create comment" });
     }
   });
 
