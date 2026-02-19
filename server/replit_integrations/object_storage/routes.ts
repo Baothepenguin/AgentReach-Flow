@@ -1,5 +1,6 @@
 import type { Express } from "express";
 import { ObjectStorageService, ObjectNotFoundError } from "./objectStorage";
+import { ObjectPermission } from "./objectAcl";
 import { storage } from "../../storage";
 
 type UploadAuthContext =
@@ -84,6 +85,19 @@ async function getUploadAuthContext(req: any): Promise<UploadAuthContext | null>
 async function canDownloadObject(req: any, objectPath: string): Promise<boolean> {
   const userId = req.session?.userId;
   if (typeof userId === "string" && userId) return true;
+
+  // Public objects are readable without session/review-token auth.
+  try {
+    const objectStorageService = new ObjectStorageService();
+    const objectFile = await objectStorageService.getObjectEntityFile(objectPath);
+    const isPublic = await objectStorageService.canAccessObjectEntity({
+      objectFile,
+      requestedPermission: ObjectPermission.READ,
+    });
+    if (isPublic) return true;
+  } catch {
+    // Ignore lookup failures here; downstream download handler returns canonical errors.
+  }
 
   const reviewToken =
     typeof req.query?.reviewToken === "string" ? req.query.reviewToken : "";
@@ -179,6 +193,60 @@ export function registerObjectStorageRoutes(app: Express): void {
       console.error("Error generating upload URL:", error);
       res.status(400).json({
         error: error instanceof Error ? error.message : "Failed to generate upload URL",
+      });
+    }
+  });
+
+  // Finalize an upload by applying ACL and returning a stable URL for rendered content.
+  app.post("/api/uploads/complete", async (req, res) => {
+    try {
+      const auth = await getUploadAuthContext(req);
+      if (!auth || auth.type !== "user") {
+        return res.status(401).json({ error: "Authentication required" });
+      }
+
+      const objectPath = typeof req.body?.objectPath === "string" ? req.body.objectPath.trim() : "";
+      const visibility = req.body?.visibility === "public" ? "public" : "private";
+      if (!objectPath || !objectPath.startsWith("/objects/")) {
+        return res.status(400).json({ error: "Invalid objectPath" });
+      }
+
+      const objectFile = await objectStorageService.getObjectEntityFile(objectPath);
+      const [metadata] = await objectFile.getMetadata();
+      const contentType = typeof metadata?.contentType === "string" ? metadata.contentType : "";
+
+      if (visibility === "public" && !isAllowedPublicContentType(contentType)) {
+        return res.status(400).json({ error: "Only images and allowed document types can be public" });
+      }
+
+      const normalizedObjectPath = await objectStorageService.trySetObjectEntityAclPolicy(objectPath, {
+        owner: auth.userId,
+        visibility,
+      });
+
+      const forwardedProto = typeof req.headers?.["x-forwarded-proto"] === "string"
+        ? req.headers["x-forwarded-proto"].split(",")[0]?.trim()
+        : "";
+      const protocol = forwardedProto || req.protocol || "https";
+      const host = req.get("host");
+      const objectSuffix = normalizedObjectPath.startsWith("/objects/")
+        ? normalizedObjectPath.slice("/objects/".length)
+        : normalizedObjectPath;
+      const objectUrl = `${protocol}://${host}/api/objects/${objectSuffix}`;
+
+      return res.json({
+        objectPath: normalizedObjectPath,
+        objectUrl,
+        visibility,
+        contentType,
+      });
+    } catch (error) {
+      console.error("Error finalizing upload:", error);
+      if (error instanceof ObjectNotFoundError) {
+        return res.status(404).json({ error: "Object not found" });
+      }
+      return res.status(400).json({
+        error: error instanceof Error ? error.message : "Failed to finalize upload",
       });
     }
   });

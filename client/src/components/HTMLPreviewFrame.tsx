@@ -3,8 +3,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Code, Plus, Monitor, Smartphone, Link2, Type, X, Palette, Image as ImageIcon, Upload } from "lucide-react";
+import { Code, Plus, Monitor, Smartphone, Link2, Type, X, Palette, Image as ImageIcon, Upload, Loader2 } from "lucide-react";
 import { registerEditorPlugin, type EditorPluginProps } from "@/lib/editor-plugins";
+import { useToast } from "@/hooks/use-toast";
 
 interface HTMLPreviewFrameProps extends EditorPluginProps {
   title?: string;
@@ -68,6 +69,16 @@ function normalizeColorToHex(value: string): string {
   return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
 }
 
+function normalizeUploadedObjectPath(path: string): string {
+  if (!path) return path;
+  const withoutQuery = path.split("?")[0] || path;
+  if (withoutQuery.startsWith("/api/objects/")) return withoutQuery;
+  if (withoutQuery.startsWith("/objects/")) {
+    return `/api/objects/${withoutQuery.slice("/objects/".length)}`;
+  }
+  return withoutQuery;
+}
+
 function toPixelValue(value: string): string {
   const trimmed = value.trim();
   if (!trimmed) return "";
@@ -100,8 +111,10 @@ export function HTMLPreviewFrame({
   showDeviceToggle = true,
   fullWidth = false,
 }: HTMLPreviewFrameProps) {
+  const { toast } = useToast();
   const [internalDeviceMode, setInternalDeviceMode] = useState<DeviceMode>("desktop");
   const [selectedElement, setSelectedElement] = useState<SelectedElementState | null>(null);
+  const [isUploadingImage, setIsUploadingImage] = useState(false);
   const selectedRef = useRef<SelectedElementState | null>(null);
   const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
@@ -325,24 +338,96 @@ export function HTMLPreviewFrame({
     [describeElement, markSelectedElement, queuePersist, syncHeight]
   );
 
-  const handleImageFileSelected = useCallback((event: ChangeEvent<HTMLInputElement>) => {
+  const handleImageFileSelected = useCallback(async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
     if (!file.type.startsWith("image/")) {
+      toast({ title: "Invalid file", description: "Please select an image file", variant: "destructive" });
       event.target.value = "";
       return;
     }
 
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = typeof reader.result === "string" ? reader.result : "";
-      if (result) {
-        applySelectedElementUpdate({ imageSrc: result });
+    setIsUploadingImage(true);
+    try {
+      const requestUrlRes = await fetch("/api/uploads/request-url", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: file.name,
+          size: file.size,
+          contentType: file.type || "application/octet-stream",
+        }),
+      });
+
+      if (!requestUrlRes.ok) {
+        const errorData = await requestUrlRes.json().catch(() => ({}));
+        throw new Error(errorData.error || "Failed to prepare image upload");
       }
+
+      const uploadPayload = await requestUrlRes.json();
+      const uploadURL =
+        typeof uploadPayload?.uploadURL === "string" ? uploadPayload.uploadURL : "";
+      const objectPath =
+        typeof uploadPayload?.objectPath === "string" ? uploadPayload.objectPath : "";
+      if (!uploadURL || !objectPath) {
+        throw new Error("Upload response missing required fields");
+      }
+
+      const uploadRes = await fetch(uploadURL, {
+        method: "PUT",
+        body: file,
+        headers: {
+          "Content-Type": file.type || "application/octet-stream",
+        },
+      });
+
+      if (!uploadRes.ok) {
+        throw new Error("Failed to upload image");
+      }
+
+      const finalizeRes = await fetch("/api/uploads/complete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          objectPath,
+          visibility: "public",
+        }),
+      });
+
+      if (!finalizeRes.ok) {
+        const errorData = await finalizeRes.json().catch(() => ({}));
+        throw new Error(errorData.error || "Failed to finalize image upload");
+      }
+
+      const finalizedPayload = await finalizeRes.json();
+      const objectUrl =
+        typeof finalizedPayload?.objectUrl === "string" ? finalizedPayload.objectUrl : "";
+      const finalizedObjectPath =
+        typeof finalizedPayload?.objectPath === "string"
+          ? finalizedPayload.objectPath
+          : objectPath;
+
+      const src = objectUrl
+        ? objectUrl
+        : new URL(
+            normalizeUploadedObjectPath(finalizedObjectPath),
+            window.location.origin,
+          ).toString();
+
+      applySelectedElementUpdate({ imageSrc: src });
+      toast({ title: "Image updated" });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Upload failed";
+      toast({
+        title: "Image upload failed",
+        description: message,
+        variant: "destructive",
+      });
+    } finally {
+      setIsUploadingImage(false);
       event.target.value = "";
-    };
-    reader.readAsDataURL(file);
-  }, [applySelectedElementUpdate]);
+    }
+  }, [applySelectedElementUpdate, toast]);
 
   useEffect(() => {
     const iframe = iframeRef.current;
@@ -557,10 +642,20 @@ export function HTMLPreviewFrame({
                           size="sm"
                           className="h-8 w-full text-xs"
                           onClick={() => imageFileInputRef.current?.click()}
+                          disabled={isUploadingImage}
                           data-testid="button-inspector-image-upload"
                         >
-                          <Upload className="w-3.5 h-3.5 mr-1.5" />
-                          Upload image
+                          {isUploadingImage ? (
+                            <>
+                              <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
+                              Uploading...
+                            </>
+                          ) : (
+                            <>
+                              <Upload className="w-3.5 h-3.5 mr-1.5" />
+                              Upload image
+                            </>
+                          )}
                         </Button>
                       </div>
                     )}
