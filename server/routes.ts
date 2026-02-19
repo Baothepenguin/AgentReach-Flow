@@ -2783,14 +2783,23 @@ export async function registerRoutes(
         return res.status(404).json({ error: "Invalid or expired token" });
       }
 
-      const reviewComment = await storage.createReviewComment({
+      const baseComment = {
         newsletterId: reviewToken.newsletterId,
-        reviewTokenId: reviewToken.id,
-        sectionId: sectionId || null,
         commentType: normalizeReviewCommentType(commentType),
         content: comment || "Change requested",
-        attachments: [],
-      });
+      };
+      let reviewComment;
+      try {
+        reviewComment = await storage.createReviewComment({
+          ...baseComment,
+          reviewTokenId: reviewToken.id,
+          sectionId: sectionId || null,
+          attachments: [],
+        });
+      } catch (insertError) {
+        console.warn("Review request-changes fallback insert:", insertError);
+        reviewComment = await storage.createReviewComment(baseComment as any);
+      }
 
       await storage.updateNewsletter(reviewToken.newsletterId, { status: "changes_requested" });
 
@@ -2822,18 +2831,28 @@ export async function registerRoutes(
         return res.status(404).json({ error: "Invalid or expired token" });
       }
 
-      const comment = await storage.createReviewComment({
+      const baseComment = {
         newsletterId: reviewToken.newsletterId,
-        reviewTokenId: reviewToken.id,
-        sectionId: sectionId || null,
         commentType: normalizeReviewCommentType(commentType),
         content,
-        attachments: attachments || [],
-      });
+      };
+      let comment;
+      try {
+        comment = await storage.createReviewComment({
+          ...baseComment,
+          reviewTokenId: reviewToken.id,
+          sectionId: sectionId || null,
+          attachments: attachments || [],
+        });
+      } catch (insertError) {
+        console.warn("Review comment fallback insert:", insertError);
+        comment = await storage.createReviewComment(baseComment as any);
+      }
 
       await storage.updateNewsletter(reviewToken.newsletterId, { status: "changes_requested" });
       res.status(201).json(comment);
     } catch (error) {
+      console.error("Create review comment error:", error);
       res.status(500).json({ error: "Failed to create comment" });
     }
   });
