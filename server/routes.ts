@@ -4029,6 +4029,21 @@ export async function registerRoutes(
     return { html: `${html}${footer}`, injected: true };
   };
 
+  const unsubscribePlaceholderRegex = /{{\s*unsubscribe_?url\s*}}|%UNSUBSCRIBE%/gi;
+  const fallbackUnsubscribeUrl = (fromEmail: string, replyTo: string): string => {
+    const preferred = String(replyTo || "").trim();
+    const fallback = String(fromEmail || "").trim();
+    const target = preferred || fallback;
+    if (target && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(target)) {
+      return `mailto:${target}?subject=${encodeURIComponent("Unsubscribe")}`;
+    }
+    return "https://agentreach-flow.vercel.app";
+  };
+  const applyUnsubscribeUrl = (html: string, unsubscribeUrl: string): string => {
+    if (!html || !html.trim()) return html;
+    return html.replace(unsubscribePlaceholderRegex, unsubscribeUrl);
+  };
+
   const resolveAvailableProviders = (brandingKit?: BrandingKit | null): DeliveryProvider[] => {
     const out = new Set<DeliveryProvider>(["postmark", "html_export"]);
     if ((brandingKit?.platform || "").toLowerCase() === "mailchimp") {
@@ -4484,6 +4499,7 @@ export async function registerRoutes(
     );
 
     const complianceHtml = ensureComplianceFooter(qa.html, qa.fromEmail);
+    const unsubscribeUrl = fallbackUnsubscribeUrl(qa.fromEmail, qa.replyTo || "");
     let acceptedCount = 0;
     let failedCount = 0;
 
@@ -4500,7 +4516,10 @@ export async function registerRoutes(
           ReplyTo: qa.replyTo || undefined,
           To: delivery.email,
           Subject: qa.subject,
-          HtmlBody: personalizeNewsletterHtml(complianceHtml.html, contact),
+          HtmlBody: applyUnsubscribeUrl(
+            personalizeNewsletterHtml(complianceHtml.html, contact),
+            unsubscribeUrl
+          ),
           MessageStream: messageStream,
           TrackOpens: true,
           TrackLinks: "HtmlAndText",
@@ -4744,7 +4763,7 @@ export async function registerRoutes(
         return res.status(404).json({ error: "Newsletter not found" });
       }
 
-      const softWarningCodes = new Set(["sender_not_verified", "malformed_urls"]);
+      const softWarningCodes = new Set(["sender_not_verified", "malformed_urls", "from_domain_mismatch"]);
       const blockers = qa.blockers.filter((blocker) => !softWarningCodes.has(blocker.code));
       const warnings = [
         ...qa.warnings,
@@ -4778,14 +4797,23 @@ export async function registerRoutes(
       const pm = new ServerClient(postmarkToken);
       const messageStream = process.env.POSTMARK_MESSAGE_STREAM || "outbound";
       const testSubject = `[TEST] ${qa.subject}`;
-      const complianceHtml = ensureComplianceFooter(qa.html, qa.fromEmail);
-      const htmlBody = personalizeNewsletterHtml(complianceHtml.html, {
+      let fromEmailForTest = qa.fromEmail;
+      if (qa.blockers.some((blocker) => blocker.code === "from_domain_mismatch") && qa.client?.primaryEmail) {
+        fromEmailForTest = qa.client.primaryEmail;
+        warnings.push({
+          code: "from_email_overridden_for_test",
+          message: `Using ${fromEmailForTest} for test send because the configured From domain did not match client sender domain.`,
+        });
+      }
+      const complianceHtml = ensureComplianceFooter(qa.html, fromEmailForTest);
+      const unsubscribeUrl = fallbackUnsubscribeUrl(fromEmailForTest, qa.replyTo || "");
+      const htmlBody = applyUnsubscribeUrl(personalizeNewsletterHtml(complianceHtml.html, {
         firstName: "Test",
         lastName: "Recipient",
-      });
+      }), unsubscribeUrl);
 
       const sendResult = await pm.sendEmail({
-        From: qa.fromEmail,
+        From: fromEmailForTest,
         ReplyTo: qa.replyTo || undefined,
         To: toEmail,
         Subject: testSubject,
@@ -4823,6 +4851,7 @@ export async function registerRoutes(
       res.json({
         ok: true,
         toEmail,
+        fromEmail: fromEmailForTest,
         status: "test_sent",
         warnings,
         complianceFooterInjected: complianceHtml.injected,
