@@ -16,11 +16,12 @@ import {
   type BlockEditSuggestion,
   type NewsletterBlock,
   type NewsletterBlockType,
+  type BrandingKit,
   type NewsletterDocument,
   type LegacyNewsletterDocument,
   type NewsletterStatus,
 } from "@shared/schema";
-import { randomUUID } from "crypto";
+import { createHash, randomUUID } from "crypto";
 import session from "express-session";
 import MemoryStore from "memorystore";
 import connectPgSimple from "connect-pg-simple";
@@ -3432,23 +3433,46 @@ export async function registerRoutes(
         payload: body,
       } as any);
 
-      // Map a few key event types back onto deliveries/contacts.
+      // Map delivery/provider webhook signals back onto deliveries + suppression.
+      const isDelivery = recordType.includes("delivery") || recordType.includes("delivered");
       const isBounce = recordType.includes("bounce");
       const isUnsub =
         recordType.includes("unsubscribe") ||
         recordType.includes("subscriptionchange") ||
         recordType.includes("subscription_change");
+      const isComplaint =
+        recordType.includes("spamcomplaint") ||
+        recordType.includes("spam_complaint") ||
+        recordType.includes("complaint");
 
-      if (messageId && (isBounce || isUnsub)) {
-        await db
-          .update(newsletterDeliveries)
-          .set({ status: isBounce ? "bounced" : "unsubscribed" } as any)
-          .where(eq((newsletterDeliveries as any).postmarkMessageId, messageId));
+      if (messageId) {
+        let statusUpdate: "sent" | "bounced" | "unsubscribed" | null = null;
+        if (isBounce) statusUpdate = "bounced";
+        else if (isUnsub || isComplaint) statusUpdate = "unsubscribed";
+        else if (isDelivery) statusUpdate = "sent";
+
+        if (statusUpdate) {
+          await db
+            .update(newsletterDeliveries)
+            .set({
+              status: statusUpdate,
+              sentAt: statusUpdate === "sent" ? new Date() : null,
+            } as any)
+            .where(eq((newsletterDeliveries as any).postmarkMessageId, messageId));
+        }
       }
 
-      if (isUnsub && clientId && recipientEmail) {
-        await storage.upsertContactByEmail(clientId, recipientEmail, { isActive: false });
+      if ((isUnsub || isBounce || isComplaint) && clientId && recipientEmail) {
+        const existingContact = await storage.getContactByEmail(clientId, recipientEmail);
+        const existingTags = Array.isArray(existingContact?.tags) ? existingContact.tags : ["all"];
+        const mergedTags = Array.from(new Set([...existingTags, "suppressed"]));
+        await storage.upsertContactByEmail(clientId, recipientEmail, {
+          isActive: false,
+          tags: mergedTags,
+        });
       }
+
+      await syncNewsletterStatusFromDeliveries(newsletterId);
 
       res.json({ ok: true });
     } catch (error) {
@@ -3877,14 +3901,98 @@ export async function registerRoutes(
 
   type QaReportOptions = {
     audienceTag?: unknown;
+    provider?: unknown;
     includeAudience?: boolean;
     requireRecipients?: boolean;
   };
+
+  type DeliveryProvider = "postmark" | "mailchimp" | "html_export";
+  type SenderProfile = {
+    senderVerified: boolean;
+    fromEmail: string;
+    fromDomain: string;
+    clientDomain: string;
+    fromDomainMatchesClient: boolean;
+    replyTo: string;
+    audienceTag: string;
+  };
+
+  const DELIVERY_PROVIDERS: DeliveryProvider[] = ["postmark", "mailchimp", "html_export"];
 
   const normalizeAudienceTag = (value: unknown): string => {
     if (typeof value !== "string") return "";
     const trimmed = value.trim();
     return trimmed;
+  };
+
+  const normalizeDeliveryProvider = (value: unknown): DeliveryProvider | "" => {
+    if (typeof value !== "string") return "";
+    const normalized = value.trim().toLowerCase();
+    if (normalized === "postmark" || normalized === "mailchimp" || normalized === "html_export") {
+      return normalized;
+    }
+    return "";
+  };
+
+  const getEmailDomain = (emailRaw: string): string => {
+    const email = String(emailRaw || "").trim().toLowerCase();
+    const at = email.lastIndexOf("@");
+    if (at <= 0 || at === email.length - 1) return "";
+    return email.slice(at + 1);
+  };
+
+  const hasUnsubscribeControl = (html: string): boolean => {
+    if (!html || !html.trim()) return false;
+    return /unsubscribe|{{\s*unsubscribe_?url\s*}}|%UNSUBSCRIBE%/i.test(html);
+  };
+
+  const ensureComplianceFooter = (html: string, fromEmail: string): { html: string; injected: boolean } => {
+    if (hasUnsubscribeControl(html)) {
+      return { html, injected: false };
+    }
+
+    const footer = `
+      <div style="font-family:Arial,Helvetica,sans-serif;color:#6b7280;font-size:12px;line-height:1.5;padding:16px 0;text-align:center;">
+        You are receiving this email because you subscribed to updates from ${fromEmail || "our team"}.
+        <br />
+        <a href="{{unsubscribe_url}}" style="color:#6b7280;text-decoration:underline;">Unsubscribe</a>
+      </div>
+    `;
+
+    const closingBodyIndex = html.toLowerCase().lastIndexOf("</body>");
+    if (closingBodyIndex >= 0) {
+      return {
+        html: `${html.slice(0, closingBodyIndex)}${footer}${html.slice(closingBodyIndex)}`,
+        injected: true,
+      };
+    }
+
+    return { html: `${html}${footer}`, injected: true };
+  };
+
+  const resolveAvailableProviders = (brandingKit?: BrandingKit | null): DeliveryProvider[] => {
+    const out = new Set<DeliveryProvider>(["postmark", "html_export"]);
+    if ((brandingKit?.platform || "").toLowerCase() === "mailchimp") {
+      out.add("mailchimp");
+    }
+    return DELIVERY_PROVIDERS.filter((provider) => out.has(provider));
+  };
+
+  const resolveDefaultProvider = (
+    requestedProviderRaw: unknown,
+    document: NewsletterDocument,
+    brandingKit?: BrandingKit | null
+  ): DeliveryProvider => {
+    const requestedProvider = normalizeDeliveryProvider(requestedProviderRaw);
+    if (requestedProvider) return requestedProvider;
+
+    const docProvider = normalizeDeliveryProvider((document?.meta as any)?.deliveryProvider);
+    if (docProvider) return docProvider;
+
+    if ((brandingKit?.platform || "").toLowerCase() === "mailchimp") {
+      return "mailchimp";
+    }
+    return "postmark";
   };
 
   const resolveAudienceRecipients = async (clientId: string, audienceTagRaw: unknown) => {
@@ -3943,6 +4051,7 @@ export async function registerRoutes(
     if (!newsletter) return null;
 
     const client = await storage.getClient(newsletter.clientId);
+    const brandingKit = client ? await storage.getBrandingKit(newsletter.clientId) : null;
     const versions = await storage.getVersionsByNewsletter(newsletter.id);
     const currentVersion = versions.find((v) => v.id === newsletter.currentVersionId);
     const document = normalizeNewsletterDocument(
@@ -3958,9 +4067,31 @@ export async function registerRoutes(
       (newsletter.previewText || document.meta?.previewText || "").trim();
     const resolvedFromEmail =
       (newsletter.fromEmail || document.meta?.fromEmail || client?.primaryEmail || "").trim();
+    const resolvedReplyTo =
+      (typeof (document.meta as any)?.replyTo === "string" && (document.meta as any).replyTo.trim()) ||
+      (brandingKit?.secondaryEmail || brandingKit?.email || client?.secondaryEmail || client?.primaryEmail || "").trim();
 
+    let audienceTag =
+      normalizeAudienceTag(options.audienceTag) ||
+      normalizeAudienceTag((document as any)?.meta?.audienceTag) ||
+      "all";
+    const selectedProvider = resolveDefaultProvider(options.provider, document, brandingKit);
+    const availableProviders = resolveAvailableProviders(brandingKit);
     const blockers: Array<{ code: string; message: string }> = [];
     const warnings: Array<{ code: string; message: string }> = [];
+
+    const fromDomain = getEmailDomain(resolvedFromEmail);
+    const clientDomain = getEmailDomain(client?.primaryEmail || "");
+    const fromDomainMatchesClient = !fromDomain || !clientDomain || fromDomain === clientDomain;
+    const senderProfile: SenderProfile = {
+      senderVerified: !!client?.isVerified,
+      fromEmail: resolvedFromEmail,
+      fromDomain,
+      clientDomain,
+      fromDomainMatchesClient,
+      replyTo: resolvedReplyTo,
+      audienceTag,
+    };
 
     if (newsletter.status === "sent") {
       blockers.push({
@@ -3968,11 +4099,16 @@ export async function registerRoutes(
         message: "This newsletter has already been sent and is locked.",
       });
     }
-    if (!client?.isVerified) {
-      blockers.push({
+    if (!senderProfile.senderVerified) {
+      const verificationIssue = {
         code: "sender_not_verified",
         message: "Sender email is not verified in Postmark.",
-      });
+      };
+      if (selectedProvider === "postmark") {
+        blockers.push(verificationIssue);
+      } else {
+        warnings.push(verificationIssue);
+      }
     }
     if (!resolvedSubject) {
       blockers.push({
@@ -3984,6 +4120,18 @@ export async function registerRoutes(
       blockers.push({
         code: "missing_from_email",
         message: "From email is required before send/schedule.",
+      });
+    }
+    if (!senderProfile.fromDomainMatchesClient) {
+      blockers.push({
+        code: "from_domain_mismatch",
+        message: "From email domain must match the client sender domain.",
+      });
+    }
+    if (!resolvedReplyTo) {
+      blockers.push({
+        code: "missing_reply_to",
+        message: "Reply-to email is required in the sender profile.",
       });
     }
     if (!html || html.trim().length < 50) {
@@ -4032,11 +4180,19 @@ export async function registerRoutes(
         message: "No first-name personalization token detected.",
       });
     }
+    if (!hasUnsubscribeControl(html)) {
+      warnings.push({
+        code: "missing_unsubscribe_link",
+        message: "No unsubscribe control detected. Flow will inject a compliance footer at send time.",
+      });
+    }
+    if (!availableProviders.includes(selectedProvider)) {
+      warnings.push({
+        code: "provider_not_enabled",
+        message: `${selectedProvider} is not enabled for this client. Using postmark instead.`,
+      });
+    }
 
-    let audienceTag =
-      normalizeAudienceTag(options.audienceTag) ||
-      normalizeAudienceTag((document as any)?.meta?.audienceTag) ||
-      "all";
     let recipients: any[] = [];
     if (options.includeAudience || options.requireRecipients) {
       const audienceResolution = await resolveAudienceRecipients(newsletter.clientId, audienceTag);
@@ -4049,20 +4205,27 @@ export async function registerRoutes(
         });
       }
     }
+    senderProfile.audienceTag = audienceTag;
 
     return {
       newsletter,
+      client,
+      brandingKit,
       document,
       html,
       subject: resolvedSubject,
       previewText: resolvedPreviewText,
       fromEmail: resolvedFromEmail,
+      replyTo: resolvedReplyTo,
       blockers,
       warnings,
       canSend: blockers.length === 0,
       audienceTag,
       recipients,
       recipientsCount: recipients.length,
+      senderProfile,
+      deliveryProvider: availableProviders.includes(selectedProvider) ? selectedProvider : "postmark",
+      availableProviders,
     };
   };
 
@@ -4083,10 +4246,118 @@ export async function registerRoutes(
     return out;
   };
 
+  const buildSendIdempotencyKey = (
+    newsletterId: string,
+    audienceTag: string,
+    provider: DeliveryProvider,
+    subject: string,
+    fromEmail: string,
+    explicitKey?: unknown
+  ): string => {
+    const explicit = typeof explicitKey === "string" ? explicitKey.trim() : "";
+    if (explicit) return explicit;
+
+    return createHash("sha256")
+      .update([newsletterId, audienceTag, provider, subject.trim().toLowerCase(), fromEmail.trim().toLowerCase()].join("|"))
+      .digest("hex");
+  };
+
+  const recordCampaignEvent = async (
+    newsletterId: string,
+    clientId: string,
+    eventType: string,
+    payload: Record<string, unknown> = {}
+  ) => {
+    const { db } = await import("./db");
+    const { newsletterEvents } = await import("@shared/schema");
+    await db.insert(newsletterEvents).values({
+      newsletterId,
+      clientId,
+      contactId: null,
+      email: null,
+      postmarkMessageId: null,
+      eventType,
+      occurredAt: new Date(),
+      payload,
+    } as any);
+  };
+
+  const getExistingSendRun = async (newsletterId: string, idempotencyKey: string) => {
+    const { db } = await import("./db");
+    const { and, desc, eq, sql } = await import("drizzle-orm");
+    const { newsletterEvents } = await import("@shared/schema");
+    const rows = await db
+      .select()
+      .from(newsletterEvents)
+      .where(
+        and(
+          eq((newsletterEvents as any).newsletterId, newsletterId),
+          sql`${(newsletterEvents as any).eventType} in ('send_requested', 'send_processing', 'send_completed')`,
+          sql`${(newsletterEvents as any).payload} ->> 'idempotencyKey' = ${idempotencyKey}`
+        )
+      )
+      .orderBy(desc((newsletterEvents as any).createdAt))
+      .limit(1);
+
+    return rows[0] || null;
+  };
+
+  const syncNewsletterStatusFromDeliveries = async (newsletterId: string) => {
+    const { db } = await import("./db");
+    const { eq } = await import("drizzle-orm");
+    const { newsletterDeliveries } = await import("@shared/schema");
+
+    const deliveries = await db
+      .select()
+      .from(newsletterDeliveries)
+      .where(eq((newsletterDeliveries as any).newsletterId, newsletterId));
+
+    if (!deliveries.length) return null;
+
+    const newsletter = await storage.getNewsletter(newsletterId);
+    if (!newsletter) return null;
+
+    const queuedCount = deliveries.filter((item: any) => item.status === "queued").length;
+    const sentCount = deliveries.filter((item: any) => item.status === "sent").length;
+    const failedCount = deliveries.filter((item: any) => item.status === "failed").length;
+    const bouncedCount = deliveries.filter((item: any) => item.status === "bounced").length;
+    const unsubscribedCount = deliveries.filter((item: any) => item.status === "unsubscribed").length;
+
+    const summary = { queuedCount, sentCount, failedCount, bouncedCount, unsubscribedCount };
+
+    if (queuedCount === 0 && sentCount > 0 && newsletter.status !== "sent") {
+      const sentAt = new Date();
+      await storage.updateNewsletter(newsletterId, {
+        status: "sent",
+        sentAt,
+        scheduledAt: null,
+        sendDate: sentAt.toISOString().split("T")[0],
+        lastEditedAt: sentAt,
+      });
+      await recordCampaignEvent(newsletterId, newsletter.clientId, "send_completed", summary);
+      return { status: "sent", ...summary };
+    }
+
+    if (queuedCount === 0 && sentCount === 0 && (failedCount > 0 || bouncedCount > 0 || unsubscribedCount > 0)) {
+      if (newsletter.status === "scheduled") {
+        await storage.updateNewsletter(newsletterId, {
+          status: "approved",
+          scheduledAt: null,
+          lastEditedAt: new Date(),
+        });
+        await recordCampaignEvent(newsletterId, newsletter.clientId, "send_failed", summary);
+      }
+      return { status: "approved", ...summary };
+    }
+
+    return { status: newsletter.status, ...summary };
+  };
+
   const sendNewsletterViaPostmark = async (
     qa: any,
     audienceTag: string,
-    recipientsHint: any[] = []
+    recipientsHint: any[] = [],
+    options: { idempotencyKey?: string } = {}
   ) => {
     const postmarkToken = process.env.POSTMARK_SERVER_TOKEN || "";
     if (!postmarkToken) {
@@ -4149,7 +4420,8 @@ export async function registerRoutes(
         .map((c: any) => [String(c.email).toLowerCase(), c])
     );
 
-    let sentCount = 0;
+    const complianceHtml = ensureComplianceFooter(qa.html, qa.fromEmail);
+    let acceptedCount = 0;
     let failedCount = 0;
 
     // Keep batches modest for serverless timeouts and Postmark API limits.
@@ -4162,9 +4434,10 @@ export async function registerRoutes(
           null;
         return {
           From: qa.fromEmail,
+          ReplyTo: qa.replyTo || undefined,
           To: delivery.email,
           Subject: qa.subject,
-          HtmlBody: personalizeNewsletterHtml(qa.html, contact),
+          HtmlBody: personalizeNewsletterHtml(complianceHtml.html, contact),
           MessageStream: messageStream,
           TrackOpens: true,
           TrackLinks: "HtmlAndText",
@@ -4174,6 +4447,7 @@ export async function registerRoutes(
             clientId: qa.newsletter.clientId,
             contactId: delivery.contactId || contact?.id || null,
             audienceTag: normalizedTag,
+            idempotencyKey: options.idempotencyKey || null,
           },
         };
       });
@@ -4190,16 +4464,16 @@ export async function registerRoutes(
         const message = typeof result?.Message === "string" ? result.Message : null;
 
         if (isFailed) failedCount += 1;
-        else sentCount += 1;
+        else acceptedCount += 1;
 
         writeOps.push(
           db
             .update(newsletterDeliveries)
             .set({
-              status: isFailed ? "failed" : "sent",
+              status: isFailed ? "failed" : "queued",
               error: isFailed ? message : null,
               postmarkMessageId,
-              sentAt: isFailed ? null : now,
+              sentAt: null,
             } as any)
             .where(eq((newsletterDeliveries as any).id, delivery.id))
         );
@@ -4211,12 +4485,135 @@ export async function registerRoutes(
 
     return {
       ok: true,
+      error: null,
       audienceTag: normalizedTag,
+      complianceFooterInjected: complianceHtml.injected,
       recipientsCount: queuedDeliveries.length,
-      sentCount,
+      acceptedCount,
       failedCount,
-      queuedCount: queuedDeliveries.length,
+      queuedCount: acceptedCount,
     };
+  };
+
+  const sendNewsletterViaMailchimp = async (
+    qa: any,
+    audienceTag: string,
+    _recipientsHint: any[] = []
+  ) => {
+    const apiKey = (process.env.MAILCHIMP_API_KEY || "").trim();
+    const serverPrefix = (process.env.MAILCHIMP_SERVER_PREFIX || "").trim();
+    const listId = (qa.brandingKit?.platformAccountName || "").trim();
+    if (!apiKey || !serverPrefix || !listId) {
+      return {
+        ok: false,
+        error:
+          "Mailchimp delivery is not configured for this client. Set MAILCHIMP_API_KEY, MAILCHIMP_SERVER_PREFIX, and client Mailchimp audience/list id.",
+      };
+    }
+
+    const complianceHtml = ensureComplianceFooter(qa.html, qa.fromEmail);
+    const auth = `Basic ${Buffer.from(`anystring:${apiKey}`).toString("base64")}`;
+    const base = `https://${serverPrefix}.api.mailchimp.com/3.0`;
+
+    const campaignResponse = await fetch(`${base}/campaigns`, {
+      method: "POST",
+      headers: {
+        Authorization: auth,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        type: "regular",
+        recipients: { list_id: listId },
+        settings: {
+          subject_line: qa.subject,
+          from_name: qa.client?.name || "Flow",
+          reply_to: qa.replyTo || qa.fromEmail,
+        },
+      }),
+    });
+    const campaignPayload = await campaignResponse.json().catch(() => ({}));
+    if (!campaignResponse.ok || typeof campaignPayload?.id !== "string") {
+      return {
+        ok: false,
+        error: `Mailchimp campaign create failed: ${campaignPayload?.detail || campaignResponse.statusText}`,
+      };
+    }
+
+    const campaignId = campaignPayload.id as string;
+    const contentResponse = await fetch(`${base}/campaigns/${campaignId}/content`, {
+      method: "PUT",
+      headers: {
+        Authorization: auth,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        html: complianceHtml.html,
+      }),
+    });
+    if (!contentResponse.ok) {
+      const detail = await contentResponse.text();
+      return {
+        ok: false,
+        error: `Mailchimp content update failed: ${detail || contentResponse.statusText}`,
+      };
+    }
+
+    const sendResponse = await fetch(`${base}/campaigns/${campaignId}/actions/send`, {
+      method: "POST",
+      headers: {
+        Authorization: auth,
+        "Content-Type": "application/json",
+      },
+    });
+    if (!sendResponse.ok) {
+      const detail = await sendResponse.text();
+      return {
+        ok: false,
+        error: `Mailchimp send failed: ${detail || sendResponse.statusText}`,
+      };
+    }
+
+    return {
+      ok: true,
+      error: null,
+      provider: "mailchimp",
+      audienceTag,
+      campaignId,
+      complianceFooterInjected: complianceHtml.injected,
+      recipientsCount: qa.recipientsCount,
+      acceptedCount: qa.recipientsCount,
+      failedCount: 0,
+      queuedCount: qa.recipientsCount,
+    };
+  };
+
+  const sendNewsletterViaProvider = async (
+    qa: any,
+    provider: DeliveryProvider,
+    audienceTag: string,
+    recipientsHint: any[] = [],
+    options: { idempotencyKey?: string } = {}
+  ) => {
+    if (provider === "html_export") {
+      const complianceHtml = ensureComplianceFooter(qa.html, qa.fromEmail);
+      return {
+        ok: true,
+        error: null,
+        provider: "html_export" as const,
+        exportOnly: true,
+        audienceTag,
+        html: complianceHtml.html,
+        complianceFooterInjected: complianceHtml.injected,
+        recipientsCount: 0,
+        acceptedCount: 0,
+        failedCount: 0,
+        queuedCount: 0,
+      };
+    }
+    if (provider === "mailchimp") {
+      return sendNewsletterViaMailchimp(qa, audienceTag, recipientsHint);
+    }
+    return sendNewsletterViaPostmark(qa, audienceTag, recipientsHint, options);
   };
 
   app.post("/api/newsletters/:id/qa-check", requireAuth, async (req: Request, res: Response) => {
@@ -4240,8 +4637,10 @@ export async function registerRoutes(
   app.post("/api/newsletters/:id/send-preview", requireAuth, async (req: Request, res: Response) => {
     try {
       const requestedAudienceTag = normalizeAudienceTag(req.body.audienceTag) || normalizeAudienceTag(req.body.segmentTag);
+      const requestedProvider = normalizeDeliveryProvider(req.body.provider);
       const qa = await buildNewsletterQaReport(req.params.id, {
         audienceTag: requestedAudienceTag,
+        provider: requestedProvider,
         includeAudience: true,
       });
       if (!qa) {
@@ -4259,6 +4658,10 @@ export async function registerRoutes(
         subject: qa.subject,
         previewText: qa.previewText,
         fromEmail: qa.fromEmail,
+        replyTo: qa.replyTo || "",
+        senderProfile: qa.senderProfile,
+        deliveryProvider: qa.deliveryProvider,
+        availableProviders: qa.availableProviders,
       });
     } catch (error) {
       console.error("Send preview error:", error);
@@ -4312,13 +4715,15 @@ export async function registerRoutes(
       const pm = new ServerClient(postmarkToken);
       const messageStream = process.env.POSTMARK_MESSAGE_STREAM || "outbound";
       const testSubject = `[TEST] ${qa.subject}`;
-      const htmlBody = personalizeNewsletterHtml(qa.html, {
+      const complianceHtml = ensureComplianceFooter(qa.html, qa.fromEmail);
+      const htmlBody = personalizeNewsletterHtml(complianceHtml.html, {
         firstName: "Test",
         lastName: "Recipient",
       });
 
       const sendResult = await pm.sendEmail({
         From: qa.fromEmail,
+        ReplyTo: qa.replyTo || undefined,
         To: toEmail,
         Subject: testSubject,
         HtmlBody: htmlBody,
@@ -4348,6 +4753,7 @@ export async function registerRoutes(
           type: "test_send",
           toEmail,
           subject: testSubject,
+          complianceFooterInjected: complianceHtml.injected,
         },
       } as any);
 
@@ -4356,6 +4762,7 @@ export async function registerRoutes(
         toEmail,
         status: "test_sent",
         warnings,
+        complianceFooterInjected: complianceHtml.injected,
       });
     } catch (error) {
       console.error("Send test error:", error);
@@ -4377,8 +4784,10 @@ export async function registerRoutes(
     try {
       const userId = (req as Request & { userId: string }).userId;
       const requestedAudienceTag = normalizeAudienceTag(req.body.audienceTag) || normalizeAudienceTag(req.body.segmentTag);
+      const requestedProvider = normalizeDeliveryProvider(req.body.provider);
       const qa = await buildNewsletterQaReport(req.params.id, {
         audienceTag: requestedAudienceTag,
+        provider: requestedProvider,
         includeAudience: true,
         requireRecipients: true,
       });
@@ -4394,6 +4803,14 @@ export async function registerRoutes(
       if (!qa.canSend) {
         return res.status(400).json({
           error: "Newsletter has blocking QA issues.",
+          blockers: qa.blockers,
+          warnings: qa.warnings,
+        });
+      }
+
+      if (qa.deliveryProvider === "html_export") {
+        return res.status(400).json({
+          error: "HTML export provider cannot be scheduled. Use Send Now to generate export output.",
           blockers: qa.blockers,
           warnings: qa.warnings,
         });
@@ -4443,9 +4860,11 @@ export async function registerRoutes(
           subject: qa.subject,
           previewText: qa.previewText || undefined,
           fromEmail: qa.fromEmail,
+          replyTo: qa.replyTo || undefined,
           sendMode,
           timezone,
           audienceTag: qa.audienceTag,
+          deliveryProvider: qa.deliveryProvider,
         },
       };
 
@@ -4462,12 +4881,20 @@ export async function registerRoutes(
         lastEditedAt: new Date(),
       });
 
+      await recordCampaignEvent(qa.newsletter.id, qa.newsletter.clientId, "send_scheduled", {
+        audienceTag: qa.audienceTag,
+        provider: qa.deliveryProvider,
+        scheduledAt: scheduledAt.toISOString(),
+        queuedCount: queuedRecipients.length,
+      });
+
       res.json({
         newsletter: updated,
         blockers: qa.blockers,
         warnings: qa.warnings,
         canSend: true,
         queuedCount: queuedRecipients.length,
+        provider: qa.deliveryProvider,
       });
     } catch (error) {
       console.error("Schedule newsletter error:", error);
@@ -4479,18 +4906,23 @@ export async function registerRoutes(
     try {
       const userId = (req as Request & { userId: string }).userId;
       const requestedAudienceTag = normalizeAudienceTag(req.body.audienceTag) || normalizeAudienceTag(req.body.segmentTag);
+      const requestedProvider = normalizeDeliveryProvider(req.body.provider);
       const qa = await buildNewsletterQaReport(req.params.id, {
         audienceTag: requestedAudienceTag,
+        provider: requestedProvider,
         includeAudience: true,
         requireRecipients: true,
       });
       if (!qa) {
         return res.status(404).json({ error: "Newsletter not found" });
       }
-      if (!canTransitionNewsletterStatus(qa.newsletter.status as NewsletterStatus, "sent")) {
+      const requiresScheduledTransition = qa.deliveryProvider === "postmark";
+      const transitionTarget: NewsletterStatus = requiresScheduledTransition ? "scheduled" : "sent";
+      if (!canTransitionNewsletterStatus(qa.newsletter.status as NewsletterStatus, transitionTarget)) {
         return res.status(400).json({
           error: "Newsletter is not in a sendable state.",
           status: qa.newsletter.status,
+          provider: qa.deliveryProvider,
         });
       }
       if (!qa.canSend) {
@@ -4501,10 +4933,72 @@ export async function registerRoutes(
         });
       }
 
-      const sendResult = await sendNewsletterViaPostmark(qa, qa.audienceTag, qa.recipients);
+      const idempotencyKey = buildSendIdempotencyKey(
+        qa.newsletter.id,
+        qa.audienceTag,
+        qa.deliveryProvider,
+        qa.subject,
+        qa.fromEmail,
+        req.body.idempotencyKey
+      );
+      const existingRun = await getExistingSendRun(qa.newsletter.id, idempotencyKey);
+      if (existingRun) {
+        return res.json({
+          duplicate: true,
+          idempotencyKey,
+          provider: qa.deliveryProvider,
+          status: qa.newsletter.status,
+          message: "Send request already in progress or completed for this idempotency key.",
+        });
+      }
+
+      if (qa.deliveryProvider === "html_export") {
+        const exportResult = await sendNewsletterViaProvider(
+          qa,
+          qa.deliveryProvider,
+          qa.audienceTag,
+          qa.recipients,
+          { idempotencyKey }
+        );
+        await recordCampaignEvent(qa.newsletter.id, qa.newsletter.clientId, "export_generated", {
+          audienceTag: qa.audienceTag,
+          provider: qa.deliveryProvider,
+          idempotencyKey,
+          complianceFooterInjected: (exportResult as any).complianceFooterInjected || false,
+        });
+        return res.json({
+          newsletter: qa.newsletter,
+          blockers: qa.blockers,
+          warnings: qa.warnings,
+          canSend: true,
+          provider: qa.deliveryProvider,
+          idempotencyKey,
+          send: exportResult,
+        });
+      }
+
+      await recordCampaignEvent(qa.newsletter.id, qa.newsletter.clientId, "send_requested", {
+        audienceTag: qa.audienceTag,
+        provider: qa.deliveryProvider,
+        idempotencyKey,
+      });
+
+      const sendResult = await sendNewsletterViaProvider(
+        qa,
+        qa.deliveryProvider,
+        qa.audienceTag,
+        qa.recipients,
+        { idempotencyKey }
+      );
       if (!sendResult.ok) {
+        await recordCampaignEvent(qa.newsletter.id, qa.newsletter.clientId, "send_failed", {
+          audienceTag: qa.audienceTag,
+          provider: qa.deliveryProvider,
+          idempotencyKey,
+          error: sendResult.error || "Provider send failed",
+        });
         return res.status(400).json({
-          error: sendResult.error || "Failed to send via Postmark",
+          error: sendResult.error || "Failed to send via selected provider",
           blockers: qa.blockers,
           warnings: qa.warnings,
         });
@@ -4518,17 +5012,20 @@ export async function registerRoutes(
           subject: qa.subject,
           previewText: qa.previewText || undefined,
           fromEmail: qa.fromEmail,
+          replyTo: qa.replyTo || undefined,
           sendMode: qa.newsletter.sendMode || "ai_recommended",
           timezone: qa.newsletter.timezone || "America/New_York",
           audienceTag: (sendResult as any).audienceTag || qa.audienceTag,
+          deliveryProvider: qa.deliveryProvider,
         },
       };
 
+      const nextStatus: NewsletterStatus = qa.deliveryProvider === "postmark" ? "scheduled" : "sent";
       const updated = await storage.updateNewsletter(req.params.id, {
-        status: "sent",
-        sentAt: sendAt,
-        scheduledAt: null,
-        sendDate: sendAt.toISOString().split("T")[0],
+        status: nextStatus,
+        sentAt: nextStatus === "sent" ? sendAt : null,
+        scheduledAt: nextStatus === "scheduled" ? sendAt : null,
+        sendDate: nextStatus === "sent" ? sendAt.toISOString().split("T")[0] : null,
         subject: qa.subject,
         previewText: qa.previewText || null,
         fromEmail: qa.fromEmail,
@@ -4537,16 +5034,181 @@ export async function registerRoutes(
         lastEditedAt: sendAt,
       });
 
+      await recordCampaignEvent(qa.newsletter.id, qa.newsletter.clientId, "send_processing", {
+        audienceTag: (sendResult as any).audienceTag || qa.audienceTag,
+        provider: qa.deliveryProvider,
+        idempotencyKey,
+        acceptedCount: (sendResult as any).acceptedCount || 0,
+        failedCount: (sendResult as any).failedCount || 0,
+        queuedCount: (sendResult as any).queuedCount || 0,
+      });
+
+      if (qa.deliveryProvider === "mailchimp") {
+        await recordCampaignEvent(qa.newsletter.id, qa.newsletter.clientId, "send_completed", {
+          audienceTag: qa.audienceTag,
+          provider: qa.deliveryProvider,
+          idempotencyKey,
+          acceptedCount: (sendResult as any).acceptedCount || 0,
+        });
+      } else {
+        await syncNewsletterStatusFromDeliveries(qa.newsletter.id);
+      }
+
       res.json({
         newsletter: updated,
         blockers: qa.blockers,
         warnings: qa.warnings,
         canSend: true,
+        idempotencyKey,
+        provider: qa.deliveryProvider,
         send: sendResult,
       });
     } catch (error) {
       console.error("Send newsletter error:", error);
       res.status(500).json({ error: "Failed to send newsletter" });
+    }
+  });
+
+  app.post("/api/newsletters/:id/retry-failed", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = (req as Request & { userId: string }).userId;
+      const requestedAudienceTag = normalizeAudienceTag(req.body.audienceTag) || normalizeAudienceTag(req.body.segmentTag);
+      const requestedProvider = normalizeDeliveryProvider(req.body.provider);
+      const qa = await buildNewsletterQaReport(req.params.id, {
+        audienceTag: requestedAudienceTag,
+        provider: requestedProvider,
+        includeAudience: true,
+      });
+      if (!qa) {
+        return res.status(404).json({ error: "Newsletter not found" });
+      }
+      if (qa.deliveryProvider !== "postmark") {
+        return res.status(400).json({
+          error: "Retry failed is currently supported for Postmark delivery only.",
+          provider: qa.deliveryProvider,
+        });
+      }
+
+      const { db } = await import("./db");
+      const { and, eq, inArray } = await import("drizzle-orm");
+      const { newsletterDeliveries } = await import("@shared/schema");
+      const failedRows = await db
+        .select()
+        .from(newsletterDeliveries)
+        .where(
+          and(
+            eq((newsletterDeliveries as any).newsletterId, qa.newsletter.id),
+            inArray((newsletterDeliveries as any).status, ["failed", "bounced"])
+          )
+        );
+      if (!failedRows.length) {
+        return res.status(400).json({ error: "No failed recipients available to retry." });
+      }
+
+      const idempotencyKey = buildSendIdempotencyKey(
+        qa.newsletter.id,
+        qa.audienceTag,
+        qa.deliveryProvider,
+        qa.subject,
+        qa.fromEmail,
+        typeof req.body.idempotencyKey === "string" ? req.body.idempotencyKey : `${Date.now()}-retry`
+      );
+
+      const existingRun = await getExistingSendRun(qa.newsletter.id, idempotencyKey);
+      if (existingRun) {
+        return res.json({
+          duplicate: true,
+          idempotencyKey,
+          provider: qa.deliveryProvider,
+          message: "Retry already in progress or completed for this idempotency key.",
+        });
+      }
+
+      const failedIds = failedRows.map((row: any) => row.id);
+      await db
+        .update(newsletterDeliveries)
+        .set({
+          status: "queued",
+          error: null,
+          postmarkMessageId: null,
+          sentAt: null,
+        } as any)
+        .where(inArray((newsletterDeliveries as any).id, failedIds));
+
+      const recipientsHint = failedRows.map((row: any) => ({
+        id: row.contactId || null,
+        email: row.email,
+      }));
+      await recordCampaignEvent(qa.newsletter.id, qa.newsletter.clientId, "send_retry_requested", {
+        audienceTag: qa.audienceTag,
+        provider: qa.deliveryProvider,
+        idempotencyKey,
+        retryCount: failedRows.length,
+      });
+
+      const sendResult = await sendNewsletterViaProvider(
+        qa,
+        qa.deliveryProvider,
+        qa.audienceTag,
+        recipientsHint,
+        { idempotencyKey }
+      );
+      if (!sendResult.ok) {
+        await recordCampaignEvent(qa.newsletter.id, qa.newsletter.clientId, "send_failed", {
+          audienceTag: qa.audienceTag,
+          provider: qa.deliveryProvider,
+          idempotencyKey,
+          error: sendResult.error || "Retry send failed",
+        });
+        return res.status(400).json({ error: sendResult.error || "Retry failed" });
+      }
+
+      const now = new Date();
+      const updated = await storage.updateNewsletter(qa.newsletter.id, {
+        status: "scheduled",
+        scheduledAt: now,
+        sentAt: null,
+        sendDate: null,
+        documentJson: {
+          ...qa.document,
+          meta: {
+            ...(qa.document.meta || {}),
+            subject: qa.subject,
+            previewText: qa.previewText || undefined,
+            fromEmail: qa.fromEmail,
+            replyTo: qa.replyTo || undefined,
+            audienceTag: qa.audienceTag,
+            deliveryProvider: qa.deliveryProvider,
+          },
+        },
+        lastEditedById: userId,
+        lastEditedAt: now,
+      });
+
+      await recordCampaignEvent(qa.newsletter.id, qa.newsletter.clientId, "send_processing", {
+        audienceTag: qa.audienceTag,
+        provider: qa.deliveryProvider,
+        idempotencyKey,
+        acceptedCount: (sendResult as any).acceptedCount || 0,
+        failedCount: (sendResult as any).failedCount || 0,
+        queuedCount: (sendResult as any).queuedCount || 0,
+        retryCount: failedRows.length,
+      });
+
+      const sync = await syncNewsletterStatusFromDeliveries(qa.newsletter.id);
+
+      res.json({
+        ok: true,
+        newsletter: updated,
+        provider: qa.deliveryProvider,
+        idempotencyKey,
+        retriedCount: failedRows.length,
+        send: sendResult,
+        sync,
+      });
+    } catch (error) {
+      console.error("Retry failed delivery error:", error);
+      res.status(500).json({ error: "Failed to retry failed deliveries" });
     }
   });
 
@@ -4582,6 +5244,7 @@ export async function registerRoutes(
       }
 
       const sentCount = (deliveries as any[]).filter((d) => d.status === "sent").length;
+      const queuedCount = (deliveries as any[]).filter((d) => d.status === "queued").length;
       const failedCount = (deliveries as any[]).filter((d) => d.status === "failed").length;
       const bouncedCount = (deliveries as any[]).filter((d) => d.status === "bounced").length;
       const unsubCount = (deliveries as any[]).filter((d) => d.status === "unsubscribed").length;
@@ -4589,6 +5252,7 @@ export async function registerRoutes(
       res.json({
         deliveriesCount: (deliveries as any[]).length,
         sentCount,
+        queuedCount,
         failedCount,
         bouncedCount,
         unsubscribedCount: unsubCount,
@@ -4661,8 +5325,27 @@ export async function registerRoutes(
         });
       }
 
+      const campaignEvents = (events as any[])
+        .filter((ev) => typeof ev?.eventType === "string" && ev.eventType.startsWith("send_"))
+        .map((ev) => ({
+          id: ev.id,
+          eventType: ev.eventType,
+          occurredAt: ev.occurredAt || ev.createdAt,
+          payload: ev.payload || {},
+        }));
+
+      const summary = {
+        queued: (deliveries as any[]).filter((item) => item.status === "queued").length,
+        sent: (deliveries as any[]).filter((item) => item.status === "sent").length,
+        failed: (deliveries as any[]).filter((item) => item.status === "failed").length,
+        bounced: (deliveries as any[]).filter((item) => item.status === "bounced").length,
+        unsubscribed: (deliveries as any[]).filter((item) => item.status === "unsubscribed").length,
+      };
+
       res.json({
         newsletterId: req.params.id,
+        summary,
+        campaignEvents,
         contacts: Array.from(byEmail.values()),
       });
     } catch (error) {
@@ -4701,6 +5384,7 @@ export async function registerRoutes(
       const results: any[] = [];
       for (const nl of dueNewsletters) {
         const qa = await buildNewsletterQaReport(nl.id, {
+          provider: normalizeDeliveryProvider((nl.documentJson as any)?.meta?.deliveryProvider),
           includeAudience: true,
           requireRecipients: true,
         });
@@ -4719,23 +5403,52 @@ export async function registerRoutes(
           });
           continue;
         }
-        const sendResult = await sendNewsletterViaPostmark(qa, qa.audienceTag, qa.recipients);
+        const idempotencyKey = buildSendIdempotencyKey(
+          qa.newsletter.id,
+          qa.audienceTag,
+          qa.deliveryProvider,
+          qa.subject,
+          qa.fromEmail,
+          `cron-${Date.now()}-${qa.newsletter.id}`
+        );
+        await recordCampaignEvent(qa.newsletter.id, qa.newsletter.clientId, "send_requested", {
+          source: "cron",
+          audienceTag: qa.audienceTag,
+          provider: qa.deliveryProvider,
+          idempotencyKey,
+        });
+
+        const sendResult = await sendNewsletterViaProvider(
+          qa,
+          qa.deliveryProvider,
+          qa.audienceTag,
+          qa.recipients,
+          { idempotencyKey }
+        );
         if (!sendResult.ok) {
+          await recordCampaignEvent(qa.newsletter.id, qa.newsletter.clientId, "send_failed", {
+            source: "cron",
+            audienceTag: qa.audienceTag,
+            provider: qa.deliveryProvider,
+            idempotencyKey,
+            error: sendResult.error || "Provider send failed",
+          });
           failed += 1;
           results.push({
             newsletterId: nl.id,
             failed: true,
-            error: sendResult.error || "Failed to send via Postmark",
+            error: sendResult.error || "Failed to send via provider",
           });
           continue;
         }
 
         const sendAt = new Date();
+        const nextStatus: NewsletterStatus = qa.deliveryProvider === "postmark" ? "scheduled" : "sent";
         await storage.updateNewsletter(nl.id, {
-          status: "sent",
-          sentAt: sendAt,
-          scheduledAt: null,
-          sendDate: sendAt.toISOString().split("T")[0],
+          status: nextStatus,
+          sentAt: nextStatus === "sent" ? sendAt : null,
+          scheduledAt: nextStatus === "scheduled" ? sendAt : null,
+          sendDate: nextStatus === "sent" ? sendAt.toISOString().split("T")[0] : null,
           subject: qa.subject,
           previewText: qa.previewText || null,
           fromEmail: qa.fromEmail,
@@ -4746,14 +5459,38 @@ export async function registerRoutes(
               subject: qa.subject,
               previewText: qa.previewText || undefined,
               fromEmail: qa.fromEmail,
+              replyTo: qa.replyTo || undefined,
               audienceTag: (sendResult as any).audienceTag || qa.audienceTag,
+              deliveryProvider: qa.deliveryProvider,
             },
           },
           lastEditedAt: sendAt,
         });
 
+        await recordCampaignEvent(qa.newsletter.id, qa.newsletter.clientId, "send_processing", {
+          source: "cron",
+          audienceTag: (sendResult as any).audienceTag || qa.audienceTag,
+          provider: qa.deliveryProvider,
+          idempotencyKey,
+          acceptedCount: (sendResult as any).acceptedCount || 0,
+          failedCount: (sendResult as any).failedCount || 0,
+          queuedCount: (sendResult as any).queuedCount || 0,
+        });
+
+        if (qa.deliveryProvider === "mailchimp") {
+          await recordCampaignEvent(qa.newsletter.id, qa.newsletter.clientId, "send_completed", {
+            source: "cron",
+            audienceTag: qa.audienceTag,
+            provider: qa.deliveryProvider,
+            idempotencyKey,
+            acceptedCount: (sendResult as any).acceptedCount || 0,
+          });
+        } else {
+          await syncNewsletterStatusFromDeliveries(qa.newsletter.id);
+        }
+
         processed += 1;
-        results.push({ newsletterId: nl.id, send: sendResult });
+        results.push({ newsletterId: nl.id, provider: qa.deliveryProvider, send: sendResult });
       }
 
       res.json({ ok: true, dueCount: dueNewsletters.length, processed, skipped, failed, results });

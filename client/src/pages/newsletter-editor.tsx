@@ -43,7 +43,6 @@ import {
   Code,
   Upload,
   FileText,
-  Clock3,
   Send,
   Monitor,
   Smartphone,
@@ -65,19 +64,6 @@ interface NewsletterEditorPageProps {
   newsletterId: string;
 }
 
-type SendReadinessPreview = {
-  newsletterId: string;
-  status: string;
-  audienceTag: string;
-  recipientsCount: number;
-  blockers: Array<{ code: string; message: string }>;
-  warnings: Array<{ code: string; message: string }>;
-  canSend: boolean;
-  subject: string;
-  previewText: string;
-  fromEmail: string;
-};
-
 export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorPageProps) {
   const { toast } = useToast();
   const [, setLocation] = useLocation();
@@ -86,7 +72,6 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
   const [rightRailMode, setRightRailMode] = useState<"ai" | "client">("client");
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [sendDialogOpen, setSendDialogOpen] = useState(false);
-  const [sendDialogMode, setSendDialogMode] = useState<"schedule" | "send_now">("schedule");
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved">("idle");
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [editedTitle, setEditedTitle] = useState("");
@@ -277,41 +262,6 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
       toast({
         title: "Failed to generate review link",
         description: error?.message || "Try again.",
-        variant: "destructive",
-      });
-    }
-  };
-
-  const handleSendTestEmail = async () => {
-    const toEmail = window.prompt("Send test email to:");
-    if (!toEmail) return;
-    try {
-      const res = await fetch(`/api/newsletters/${newsletterId}/send-test`, {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ toEmail }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        const blockerMessage = Array.isArray(data?.blockers) && data.blockers.length > 0
-          ? data.blockers
-              .map((blocker: { message?: string }) => blocker?.message)
-              .filter(Boolean)
-              .join(" ")
-          : null;
-        throw new Error(blockerMessage || data?.error || "Failed to send test email");
-      }
-
-      const warnings = Array.isArray(data?.warnings) ? data.warnings : [];
-      const warningText = warnings.length > 0
-        ? `Sent to ${toEmail}. Warning: ${warnings[0]?.message || "Review QA warnings."}`
-        : `Sent to ${toEmail}`;
-      toast({ title: "Test email sent", description: warningText });
-    } catch (error: any) {
-      toast({
-        title: "Test email failed",
-        description: error?.message || "Unable to send test email",
         variant: "destructive",
       });
     }
@@ -556,6 +506,10 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
                       <Upload className="w-4 h-4 mr-2" />
                       Import HTML
                     </DropdownMenuItem>
+                    <DropdownMenuItem onClick={handleGetReviewLink} disabled={!hasContent} data-testid="button-review-link">
+                      <ExternalLink className="w-4 h-4 mr-2" />
+                      Get review link
+                    </DropdownMenuItem>
                     <DropdownMenuSeparator />
                     <DropdownMenuItem onClick={handleCopyHtml} disabled={!hasContent} data-testid="button-copy-html">
                       <Copy className="w-4 h-4 mr-2" />
@@ -568,48 +522,17 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
                   </DropdownMenuContent>
                 </DropdownMenu>
 
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button variant="default" size="sm" className="h-8 px-2.5 text-xs sm:text-sm" data-testid="button-delivery-menu">
-                      <Send className="w-4 h-4 mr-1" />
-                      Delivery
-                      <ChevronDown className="w-3.5 h-3.5 ml-1" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" className="w-56">
-                    <DropdownMenuItem onClick={handleGetReviewLink} disabled={!hasContent} data-testid="button-review-link">
-                      <ExternalLink className="w-4 h-4 mr-2" />
-                      Get review link
-                    </DropdownMenuItem>
-                    <DropdownMenuItem onClick={handleSendTestEmail} disabled={!hasContent} data-testid="button-send-test">
-                      <Send className="w-4 h-4 mr-2" />
-                      Send test email
-                    </DropdownMenuItem>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem
-                      onClick={() => {
-                        setSendDialogMode("schedule");
-                        setSendDialogOpen(true);
-                      }}
-                      disabled={!hasContent}
-                      data-testid="button-schedule"
-                    >
-                      <Clock3 className="w-4 h-4 mr-2" />
-                      Schedule send
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      onClick={() => {
-                        setSendDialogMode("send_now");
-                        setSendDialogOpen(true);
-                      }}
-                      disabled={!hasContent}
-                      data-testid="button-send-now"
-                    >
-                      <Send className="w-4 h-4 mr-2" />
-                      Send now
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
+                <Button
+                  variant="default"
+                  size="sm"
+                  className="h-8 px-2.5 text-xs sm:text-sm"
+                  onClick={() => setSendDialogOpen(true)}
+                  disabled={!hasContent}
+                  data-testid="button-open-delivery-panel"
+                >
+                  <Send className="w-4 h-4 mr-1" />
+                  Delivery
+                </Button>
 
                 {client && (
                   <div className="inline-flex items-center rounded-md border border-border bg-background overflow-hidden">
@@ -891,7 +814,6 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
 
       <SendConfirmDialog
         open={sendDialogOpen}
-        mode={sendDialogMode}
         newsletterId={newsletterId}
         expectedSendDate={newsletter.expectedSendDate}
         onClose={async () => {

@@ -1025,8 +1025,11 @@ export interface NewsletterDocumentMeta {
   subject?: string;
   previewText?: string;
   fromEmail?: string;
+  replyTo?: string;
   sendMode?: NewsletterSendMode;
   timezone?: string;
+  // Delivery transport. postmark=primary, mailchimp=client-linked API flow, html_export=manual external send.
+  deliveryProvider?: "postmark" | "mailchimp" | "html_export";
   // Tag-based segment selector (defaults to "all").
   // Used by send/schedule to decide which contacts receive the campaign.
   audienceTag?: string;
