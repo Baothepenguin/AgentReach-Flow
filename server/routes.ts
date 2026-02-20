@@ -4292,14 +4292,18 @@ export async function registerRoutes(
       .where(
         and(
           eq((newsletterEvents as any).newsletterId, newsletterId),
-          sql`${(newsletterEvents as any).eventType} in ('send_requested', 'send_processing', 'send_completed')`,
+          sql`${(newsletterEvents as any).eventType} in ('send_requested', 'send_processing', 'send_completed', 'send_failed')`,
           sql`${(newsletterEvents as any).payload} ->> 'idempotencyKey' = ${idempotencyKey}`
         )
       )
       .orderBy(desc((newsletterEvents as any).createdAt))
       .limit(1);
 
-    return rows[0] || null;
+    const latest = (rows[0] || null) as any;
+    if (!latest) return null;
+    // Allow re-run when the latest attempt with this key ended in failure.
+    if (latest.eventType === "send_failed") return null;
+    return latest;
   };
 
   const syncNewsletterStatusFromDeliveries = async (newsletterId: string) => {
@@ -5024,7 +5028,8 @@ export async function registerRoutes(
       const updated = await storage.updateNewsletter(req.params.id, {
         status: nextStatus,
         sentAt: nextStatus === "sent" ? sendAt : null,
-        scheduledAt: nextStatus === "scheduled" ? sendAt : null,
+        // Keep immediate sends out of cron's due queue to avoid duplicate sends.
+        scheduledAt: null,
         sendDate: nextStatus === "sent" ? sendAt.toISOString().split("T")[0] : null,
         subject: qa.subject,
         previewText: qa.previewText || null,
@@ -5166,7 +5171,8 @@ export async function registerRoutes(
       const now = new Date();
       const updated = await storage.updateNewsletter(qa.newsletter.id, {
         status: "scheduled",
-        scheduledAt: now,
+        // Retry is an immediate pipeline run, not a future schedule.
+        scheduledAt: null,
         sentAt: null,
         sendDate: null,
         documentJson: {
