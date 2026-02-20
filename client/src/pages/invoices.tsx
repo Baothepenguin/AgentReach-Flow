@@ -4,7 +4,7 @@ import { useLocation, useSearch } from "wouter";
 import { TopNav } from "@/components/TopNav";
 import { ClientSidePanel } from "@/components/ClientSidePanel";
 import { Button } from "@/components/ui/button";
-import { Receipt, X, Mail, Plus, ExternalLink, CreditCard, RefreshCw } from "lucide-react";
+import { Receipt, X, Plus, ExternalLink } from "lucide-react";
 import { format } from "date-fns";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -66,80 +66,6 @@ function getOrderStatusIndicator(order: OrderWithRelations) {
   }
 }
 
-function getPaymentStatusIndicator(status: string) {
-  switch (status) {
-    case "paid":
-      return (
-        <span className="inline-flex items-center gap-1.5 text-xs text-blue-600 dark:text-blue-400">
-          <StatusDot color="bg-blue-500" />
-          Paid
-        </span>
-      );
-    case "pending":
-      return (
-        <span className="inline-flex items-center gap-1.5 text-xs text-yellow-600 dark:text-yellow-400">
-          <StatusDot color="bg-yellow-500" />
-          Pending
-        </span>
-      );
-    case "failed":
-      return (
-        <span className="inline-flex items-center gap-1.5 text-xs text-red-600 dark:text-red-400">
-          <StatusDot color="bg-red-500" />
-          Failed
-        </span>
-      );
-    case "refunded":
-      return (
-        <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-          <StatusDot color="bg-muted-foreground" />
-          Refunded
-        </span>
-      );
-    default:
-      return (
-        <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-          <StatusDot color="bg-muted-foreground" />
-          {status}
-        </span>
-      );
-  }
-}
-
-function StripePaymentButton({ order }: { order: OrderWithRelations }) {
-  const { toast } = useToast();
-  const checkoutMutation = useMutation({
-    mutationFn: async () => {
-      const res = await apiRequest("POST", "/api/stripe/checkout", {
-        invoiceId: order.id,
-      });
-      return await res.json();
-    },
-    onSuccess: (data: { url: string }) => {
-      if (data.url) {
-        window.open(data.url, '_blank');
-      }
-    },
-    onError: () => {
-      toast({ title: "Failed to create payment link", variant: "destructive" });
-    },
-  });
-
-  return (
-    <Button
-      variant="default"
-      size="sm"
-      className="w-full mt-3"
-      onClick={() => checkoutMutation.mutate()}
-      disabled={checkoutMutation.isPending}
-      data-testid="button-stripe-checkout"
-    >
-      <CreditCard className="w-3.5 h-3.5 mr-1.5" />
-      {checkoutMutation.isPending ? "Creating..." : "Send Payment Link"}
-    </Button>
-  );
-}
-
 function OrderPreview({ 
   order, 
   onClose,
@@ -179,13 +105,6 @@ function OrderPreview({
             <span className="text-muted-foreground">Amount</span>
             <span className="font-medium">{order.currency} ${Number(order.amount).toFixed(2)}</span>
           </div>
-          <div className="flex items-center justify-between gap-2 text-sm">
-            <span className="text-muted-foreground">Payment</span>
-            {getPaymentStatusIndicator(order.status)}
-          </div>
-          {order.status !== "paid" && (
-            <StripePaymentButton order={order} />
-          )}
         </div>
         
         <div className="pt-4 border-t border-border/30">
@@ -400,7 +319,7 @@ export default function OrdersPage() {
             <div className="flex flex-col items-center justify-center h-64 text-center">
               <Receipt className="w-12 h-12 text-muted-foreground/40 mb-4" />
               <p className="text-muted-foreground">No orders yet</p>
-              <p className="text-sm text-muted-foreground mt-1">Orders will appear here when payments are received</p>
+              <p className="text-sm text-muted-foreground mt-1">Orders will appear here automatically</p>
             </div>
           ) : (
             <div>
@@ -413,7 +332,6 @@ export default function OrdersPage() {
                     <th className="text-right p-3 text-xs font-medium text-muted-foreground">Amount</th>
                     <th className="text-center p-3 text-xs font-medium text-muted-foreground">Newsletters</th>
                     <th className="text-left p-3 text-xs font-medium text-muted-foreground">Status</th>
-                    <th className="text-left p-3 text-xs font-medium text-muted-foreground">Payment</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -445,7 +363,6 @@ export default function OrdersPage() {
                         {order.newsletters?.length || 0}
                       </td>
                       <td className="p-3">{getOrderStatusIndicator(order)}</td>
-                      <td className="p-3">{getPaymentStatusIndicator(order.status)}</td>
                     </tr>
                   ))}
                 </tbody>

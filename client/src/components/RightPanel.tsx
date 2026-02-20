@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Download, Paperclip, Plus, Trash2 } from "lucide-react";
+import { Download, Paperclip, Plus, Trash2, Pencil } from "lucide-react";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import type { ReviewComment } from "@shared/schema";
 import { format } from "date-fns";
@@ -38,6 +38,8 @@ export function RightPanel({
   onAssignedToChange,
 }: RightPanelProps) {
   const [newNoteContent, setNewNoteContent] = useState("");
+  const [editingNotes, setEditingNotes] = useState(false);
+  const [editingFeedback, setEditingFeedback] = useState(false);
   const canEditStatus = !!onStatusChange && status !== "scheduled" && status !== "sent";
   const currentStatus = NEWSLETTER_STATUSES.find(s => s.value === status) || NEWSLETTER_STATUSES[0];
 
@@ -223,46 +225,57 @@ export function RightPanel({
         </div>
       )}
 
-      <div className="px-3 py-2 space-y-2">
-        <div className="flex items-center gap-2">
+      <div className="px-3 py-2 space-y-2 group">
+        <div className="flex items-center justify-between gap-2">
           <div className="text-xs font-medium text-muted-foreground" data-testid="label-internal-notes">
             Internal Notes
             {pendingInternalNotes.length > 0 && (
               <span className="text-xs text-muted-foreground normal-case tracking-normal ml-1">({pendingInternalNotes.length})</span>
             )}
           </div>
-        </div>
-        <div className="flex gap-1">
-          <Input
-            placeholder="Add..."
-            value={newNoteContent}
-            onChange={(e) => setNewNoteContent(e.target.value)}
-            className="h-7 text-xs"
-            onKeyDown={(e) => e.key === "Enter" && handleAddNote()}
-            data-testid="input-add-note"
-          />
           <Button
             variant="ghost"
             size="icon"
-            className="h-7 w-7 flex-shrink-0"
-            onClick={handleAddNote}
-            disabled={!newNoteContent.trim() || createNoteMutation.isPending}
-            data-testid="button-add-note"
+            className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity"
+            onClick={() => setEditingNotes((prev) => !prev)}
+            data-testid="button-toggle-notes-edit"
           >
-            <Plus className="w-3 h-3" />
+            <Pencil className="w-3 h-3" />
           </Button>
         </div>
+        {editingNotes && (
+          <div className="flex gap-1">
+            <Input
+              placeholder="Add..."
+              value={newNoteContent}
+              onChange={(e) => setNewNoteContent(e.target.value)}
+              className="h-7 text-xs"
+              onKeyDown={(e) => e.key === "Enter" && handleAddNote()}
+              data-testid="input-add-note"
+            />
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 flex-shrink-0"
+              onClick={handleAddNote}
+              disabled={!newNoteContent.trim() || createNoteMutation.isPending}
+              data-testid="button-add-note"
+            >
+              <Plus className="w-3 h-3" />
+            </Button>
+          </div>
+        )}
         <div className="space-y-0.5 max-h-48 overflow-y-auto">
           {pendingInternalNotes.map((note) => (
             <div
               key={note.id}
-              className="flex items-start gap-1.5 p-1 rounded bg-background group"
+              className="flex items-start gap-1.5 p-1 rounded group/note hover:bg-muted/20"
               data-testid={`internal-note-${note.id}`}
             >
               <Checkbox
                 checked={false}
                 onCheckedChange={() => toggleCompleteMutation.mutate(note.id)}
-                className="mt-0.5 h-3 w-3"
+                className={`mt-0.5 h-3 w-3 ${editingNotes ? "opacity-100" : "opacity-0 group-hover/note:opacity-100"} transition-opacity`}
                 data-testid={`checkbox-note-${note.id}`}
               />
               <div className="flex-1 min-w-0">
@@ -274,7 +287,7 @@ export function RightPanel({
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-4 w-4 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
+                className={`h-4 w-4 transition-opacity flex-shrink-0 ${editingNotes ? "opacity-100" : "opacity-0 group-hover/note:opacity-100"}`}
                 onClick={() => deleteNoteMutation.mutate(note.id)}
                 data-testid={`button-delete-note-${note.id}`}
               >
@@ -288,13 +301,13 @@ export function RightPanel({
               {completedInternalNotes.map((note) => (
                 <div
                   key={note.id}
-                  className="flex items-start gap-1.5 p-1 rounded group"
+                  className="flex items-start gap-1.5 p-1 rounded group/note hover:bg-muted/20"
                   data-testid={`internal-note-${note.id}`}
                 >
                   <Checkbox
                     checked={true}
                     onCheckedChange={() => toggleCompleteMutation.mutate(note.id)}
-                    className="mt-0.5 h-3 w-3"
+                    className={`mt-0.5 h-3 w-3 ${editingNotes ? "opacity-100" : "opacity-0 group-hover/note:opacity-100"} transition-opacity`}
                     data-testid={`checkbox-note-${note.id}`}
                   />
                   <div className="flex-1 min-w-0">
@@ -306,7 +319,7 @@ export function RightPanel({
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="h-4 w-4 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
+                    className={`h-4 w-4 transition-opacity flex-shrink-0 ${editingNotes ? "opacity-100" : "opacity-0 group-hover/note:opacity-100"}`}
                     onClick={() => deleteNoteMutation.mutate(note.id)}
                     data-testid={`button-delete-note-${note.id}`}
                   >
@@ -319,12 +332,23 @@ export function RightPanel({
         </div>
       </div>
 
-      <div className="px-3 py-2">
-        <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground" data-testid="label-client-feedback">
-          Client Feedback
-          {pendingFeedback.length > 0 && (
-            <span className="text-xs text-muted-foreground normal-case tracking-normal">({pendingFeedback.length})</span>
-          )}
+      <div className="px-3 py-2 group">
+        <div className="flex items-center justify-between gap-2 text-xs font-medium text-muted-foreground" data-testid="label-client-feedback">
+          <div>
+            Client Feedback
+            {pendingFeedback.length > 0 && (
+              <span className="text-xs text-muted-foreground normal-case tracking-normal"> ({pendingFeedback.length})</span>
+            )}
+          </div>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity"
+            onClick={() => setEditingFeedback((prev) => !prev)}
+            data-testid="button-toggle-feedback-edit"
+          >
+            <Pencil className="w-3 h-3" />
+          </Button>
         </div>
       </div>
       
@@ -341,14 +365,14 @@ export function RightPanel({
                   {pendingFeedback.map((comment) => (
                     <div
                       key={comment.id}
-                      className="p-2 rounded-md bg-amber-500/5"
+                      className="p-2 rounded-md bg-amber-500/5 group/comment"
                       data-testid={`review-comment-${comment.id}`}
                     >
                       <div className="flex items-start gap-2">
                         <Checkbox
                           checked={false}
                           onCheckedChange={() => toggleCompleteMutation.mutate(comment.id)}
-                          className="mt-0.5"
+                          className={`mt-0.5 ${editingFeedback ? "opacity-100" : "opacity-0 group-hover/comment:opacity-100"} transition-opacity`}
                           data-testid={`checkbox-comment-${comment.id}`}
                         />
                         <div className="flex-1 min-w-0">
@@ -400,14 +424,14 @@ export function RightPanel({
                   {completedFeedback.map((comment) => (
                     <div
                       key={comment.id}
-                      className="p-2 rounded-md"
+                      className="p-2 rounded-md group/comment"
                       data-testid={`review-comment-${comment.id}`}
                     >
                       <div className="flex items-start gap-2">
                         <Checkbox
                           checked={true}
                           onCheckedChange={() => toggleCompleteMutation.mutate(comment.id)}
-                          className="mt-0.5"
+                          className={`mt-0.5 ${editingFeedback ? "opacity-100" : "opacity-0 group-hover/comment:opacity-100"} transition-opacity`}
                           data-testid={`checkbox-comment-${comment.id}`}
                         />
                         <div className="flex-1 min-w-0">

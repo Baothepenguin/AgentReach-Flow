@@ -541,10 +541,10 @@ export function HTMLPreviewFrame({
           transition: box-shadow 120ms ease;
         }
         [${EDITABLE_ATTR}="true"]:hover {
-          box-shadow: inset 0 0 0 1px rgba(34, 197, 94, 0.25);
+          box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.16);
         }
         [${EDIT_ATTR}][data-flow-selected="true"] {
-          box-shadow: inset 0 0 0 2px rgba(22, 163, 74, 0.58);
+          box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.28);
         }
         [${EDIT_ATTR}] {
           scroll-margin-top: 80px;

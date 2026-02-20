@@ -74,6 +74,10 @@ function cloneDefaultNewsletterDocument(): NewsletterDocument {
   };
 }
 
+function cloneNewsletterDocument(document: NewsletterDocument): NewsletterDocument {
+  return JSON.parse(JSON.stringify(document)) as NewsletterDocument;
+}
+
 function normalizeNewsletterDocument(
   document: NewsletterDocument | LegacyNewsletterDocument | null | undefined
 ): NewsletterDocument {
@@ -345,8 +349,8 @@ async function ensureSubscriptionHasInvoice(subscriptionId: string) {
     subscriptionId: subscription.id,
     amount: subscription.amount,
     currency: subscription.currency || "USD",
-    status: "pending",
-    paidAt: null,
+    status: "paid",
+    paidAt: new Date(),
     stripePaymentId: null,
   });
 }
@@ -388,8 +392,8 @@ async function resolveOrCreateNewsletterInvoice(clientId: string, subscriptionId
     subscriptionId,
     amount: subscription.amount,
     currency: subscription.currency || "USD",
-    status: "pending",
-    paidAt: null,
+    status: "paid",
+    paidAt: new Date(),
     stripePaymentId: null,
   });
 }
@@ -443,11 +447,21 @@ async function createDraftNewsletterForInvoice(
     throw error;
   }
 
-  const existing = (await storage.getNewslettersByClient(invoice.clientId)).find(
-    (newsletter) => newsletter.invoiceId === invoice.id
-  );
-  if (existing) {
-    return { newsletter: existing, created: false };
+  const allNewsletters = await storage.getNewslettersByClient(invoice.clientId);
+  const existingForInvoice = allNewsletters
+    .filter((newsletter) => newsletter.invoiceId === invoice.id)
+    .sort((a, b) => {
+      const aDate = a.expectedSendDate ? new Date(a.expectedSendDate).getTime() : 0;
+      const bDate = b.expectedSendDate ? new Date(b.expectedSendDate).getTime() : 0;
+      return aDate - bDate;
+    });
+  if (existingForInvoice.length > 0) {
+    return {
+      newsletter: existingForInvoice[0],
+      newsletters: existingForInvoice,
+      created: false,
+      createdCount: 0,
+    };
   }
 
   const client = await storage.getClient(invoice.clientId);
@@ -457,37 +471,76 @@ async function createDraftNewsletterForInvoice(
     throw error;
   }
 
-  const resolvedDate =
-    expectedSendDate && expectedSendDate.trim()
+  const subscription = await storage.getSubscription(invoice.subscriptionId);
+  const frequency = subscription?.frequency || "monthly";
+  const targetCount = Math.max(1, getNewsletterCountByFrequency(frequency));
+
+  const sendDates: Date[] = [];
+  const normalizedExpectedSendDate =
+    typeof expectedSendDate === "string" && expectedSendDate.trim().length > 0
       ? expectedSendDate.trim()
-      : format(addDays(new Date(), 7), "yyyy-MM-dd");
+      : null;
+
+  if (normalizedExpectedSendDate) {
+    const firstDate = new Date(normalizedExpectedSendDate);
+    if (!Number.isNaN(firstDate.getTime())) {
+      sendDates.push(firstDate);
+      if (targetCount > 1) {
+        sendDates.push(...getNextSendDates(frequency, firstDate, targetCount - 1));
+      }
+    }
+  }
+
+  if (sendDates.length === 0) {
+    const previousSendDates = allNewsletters
+      .filter((newsletter) => newsletter.invoiceId !== invoice.id && !!newsletter.expectedSendDate)
+      .map((newsletter) => new Date(newsletter.expectedSendDate as string))
+      .filter((date) => !Number.isNaN(date.getTime()))
+      .sort((a, b) => b.getTime() - a.getTime());
+    const previousSendDate = previousSendDates.length > 0 ? previousSendDates[0] : null;
+    sendDates.push(...getNextSendDates(frequency, previousSendDate, targetCount));
+  }
+
+  while (sendDates.length < targetCount) {
+    const anchor = sendDates.length > 0 ? sendDates[sendDates.length - 1] : new Date();
+    sendDates.push(...getNextSendDates(frequency, anchor, 1));
+  }
 
   const baseDocument = await getLatestNewsletterDocumentForClient(client.id);
-  const documentJson = await applyBrandingToDocument(client.id, baseDocument);
-  const createdNewsletter = await storage.createNewsletter({
-    clientId: client.id,
-    invoiceId: invoice.id,
-    subscriptionId: invoice.subscriptionId,
-    title: buildNewsletterTitle(client.name),
-    expectedSendDate: resolvedDate,
-    status: "draft",
-    documentJson,
-    createdById: userId,
-    fromEmail: client.primaryEmail,
-  });
+  const themedDocument = await applyBrandingToDocument(client.id, baseDocument);
+  const createdNewsletters = [];
 
-  const version = await storage.createVersion({
-    newsletterId: createdNewsletter.id,
-    versionNumber: 1,
-    snapshotJson: documentJson,
-    createdById: userId,
-    changeSummary: "Initial version from invoice",
-  });
+  for (const sendDate of sendDates.slice(0, targetCount)) {
+    const documentJson = cloneNewsletterDocument(themedDocument);
+    const createdNewsletter = await storage.createNewsletter({
+      clientId: client.id,
+      invoiceId: invoice.id,
+      subscriptionId: invoice.subscriptionId,
+      title: buildNewsletterTitle(client.name),
+      expectedSendDate: format(sendDate, "yyyy-MM-dd"),
+      status: "draft",
+      documentJson,
+      createdById: userId,
+      fromEmail: client.primaryEmail,
+    });
 
-  const finalizedNewsletter = await storage.updateNewsletter(createdNewsletter.id, { currentVersionId: version.id });
+    const version = await storage.createVersion({
+      newsletterId: createdNewsletter.id,
+      versionNumber: 1,
+      snapshotJson: documentJson,
+      createdById: userId,
+      changeSummary: "Initial version from invoice",
+    });
+
+    const finalizedNewsletter = await storage.updateNewsletter(createdNewsletter.id, { currentVersionId: version.id });
+    createdNewsletters.push(finalizedNewsletter || { ...createdNewsletter, currentVersionId: version.id });
+  }
+
   return {
-    newsletter: finalizedNewsletter || { ...createdNewsletter, currentVersionId: version.id },
-    created: true,
+    newsletter: createdNewsletters[0],
+    newsletters: createdNewsletters,
+    created: createdNewsletters.length > 0,
+    createdCount: createdNewsletters.length,
   };
 }
 
@@ -1921,8 +1974,8 @@ export async function registerRoutes(
               subscriptionId: subscription.id,
               amount: subscription.amount,
               currency: subscription.currency || "USD",
-              status: "pending",
-              paidAt: null,
+              status: "paid",
+              paidAt: new Date(),
               stripePaymentId: null,
             });
             
@@ -2097,11 +2150,17 @@ export async function registerRoutes(
         amount,
         currency: currency || "USD",
         stripePaymentId,
-        status: stripePaymentId ? "paid" : "pending",
-        paidAt: stripePaymentId ? new Date() : null,
+        status: "paid",
+        paidAt: new Date(),
       });
       const draft = await createDraftNewsletterForInvoice(invoice.id, userId, expectedSendDate);
-      res.status(201).json({ invoice, newsletter: draft.newsletter, createdNewsletter: draft.created });
+      res.status(201).json({
+        invoice,
+        newsletter: draft.newsletter || null,
+        newsletters: draft.newsletters || (draft.newsletter ? [draft.newsletter] : []),
+        createdNewsletter: draft.created,
+        createdNewsletterCount: draft.createdCount ?? (draft.created ? 1 : 0),
+      });
     } catch (error) {
       console.error("Create invoice error:", error);
       res.status(500).json({ error: "Failed to create invoice" });
@@ -6027,8 +6086,8 @@ export async function registerRoutes(
 
         const amount = ((session.amount_total || 0) / 100).toFixed(2);
         const currency = (session.currency || "usd").toUpperCase();
-        const status = session.payment_status === "paid" ? "paid" : "pending";
-        const paidAt = status === "paid" ? new Date((session.created || Math.floor(Date.now() / 1000)) * 1000) : null;
+        const status = "paid";
+        const paidAt = new Date((session.created || Math.floor(Date.now() / 1000)) * 1000);
 
         const activeSubscription = activeSubscriptionByClient.get(client.id);
 

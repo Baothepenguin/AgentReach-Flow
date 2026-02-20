@@ -69,7 +69,7 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
   const [, setLocation] = useLocation();
   const [showClientPanel, setShowClientPanel] = useState(false);
   const [mobileRailOpen, setMobileRailOpen] = useState(false);
-  const [rightRailMode, setRightRailMode] = useState<"ai" | "client">("client");
+  const [rightRailMode, setRightRailMode] = useState<"ai" | "client">("ai");
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [sendDialogOpen, setSendDialogOpen] = useState(false);
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved">("idle");
@@ -210,7 +210,6 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
       setShowClientPanel(false);
       setChatCollapsed(false);
     } else {
-      setChatCollapsed(true);
       if (options?.openClientSheet) {
         setShowClientPanel(true);
       }
@@ -301,29 +300,52 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
     );
   }
 
+  const formattedSendDate = newsletter.expectedSendDate
+    ? format(new Date(newsletter.expectedSendDate), "MMM d, yyyy")
+    : "No send date";
+  const desktopRailWidthClass = rightRailMode === "ai" && chatCollapsed ? "w-14" : "w-[380px] xl:w-[440px]";
+
   return (
     <div className="flex flex-col h-screen w-full bg-background">
       <TopNav />
       <div className="flex flex-1 overflow-hidden bg-background">
-        <div className="hidden lg:flex w-60 xl:w-72 flex-shrink-0 border-r bg-background flex-col">
-          {client && (
-            <div className="px-3 pt-3 pb-2">
+        <div className="hidden lg:flex w-64 xl:w-72 flex-shrink-0 bg-background/80 flex-col px-3 pb-3">
+          <div className="pt-3 pb-2 space-y-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-8 w-full justify-start px-2"
+              onClick={() => setLocation("/newsletters")}
+              data-testid="button-back"
+            >
+              <ArrowLeft className="w-4 h-4 mr-1.5" />
+              <span className="truncate">{newsletter.title}</span>
+            </Button>
+            {client && (
               <button
                 type="button"
-                className="w-full text-left rounded-md bg-muted/25 px-2.5 py-2 hover:bg-muted/40 transition-colors"
+                className="w-full rounded-md px-2 py-1.5 text-left hover:bg-muted/30 transition-colors"
                 onClick={() => openRightRail("client", { openClientSheet: true })}
                 data-testid="button-left-client-context"
               >
                 <div className="text-sm font-medium truncate">{client.name}</div>
-                <div className="text-[11px] text-muted-foreground">
-                  {newsletter.expectedSendDate
-                    ? format(new Date(newsletter.expectedSendDate), "MMM d, yyyy")
-                    : "No send date"}
-                </div>
+                <div className="text-[11px] text-muted-foreground">{formattedSendDate}</div>
               </button>
-            </div>
-          )}
-          <div className="flex-1 min-h-0">
+            )}
+            {client && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 w-full justify-start text-xs"
+                onClick={() => setShowClientPanel(true)}
+                data-testid="button-open-client-card-side"
+              >
+                <UserSquare2 className="w-3.5 h-3.5 mr-1.5" />
+                Client Card
+              </Button>
+            )}
+          </div>
+          <div className="flex-1 min-h-0 rounded-lg bg-background/70">
             <RightPanel
               newsletterId={newsletterId}
               status={newsletter.status}
@@ -335,118 +357,75 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
         </div>
 
         <div className="flex-1 flex flex-col min-w-0">
-          <header className="bg-background px-3 sm:px-5 py-2.5">
+          <header className="bg-background px-3 sm:px-5 pt-3 pb-2">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="flex min-w-0 flex-1 items-center gap-2">
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="mt-0"
+                  className="h-8 w-8 lg:hidden"
                   onClick={() => setLocation("/newsletters")}
-                  data-testid="button-back"
+                  data-testid="button-back-mobile"
                 >
-                  <ArrowLeft className="w-5 h-5" />
+                  <ArrowLeft className="w-4 h-4" />
                 </Button>
-
-                <div className="min-w-0">
-                  <div className="flex min-w-0 flex-wrap items-center gap-2">
-                    {isEditingTitle ? (
-                      <div className="flex items-center gap-1">
-                        <Input
-                          value={editedTitle}
-                          onChange={(e) => setEditedTitle(e.target.value)}
-                          className="h-8 w-56"
-                          autoFocus
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter" && editedTitle.trim()) {
-                              updateTitleMutation.mutate(editedTitle.trim());
-                            } else if (e.key === "Escape") {
-                              setIsEditingTitle(false);
-                            }
-                          }}
-                          data-testid="input-edit-title"
-                        />
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8"
-                          onClick={() => editedTitle.trim() && updateTitleMutation.mutate(editedTitle.trim())}
-                          data-testid="button-save-title"
-                        >
-                          <Check className="w-4 h-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8"
-                          onClick={() => setIsEditingTitle(false)}
-                          data-testid="button-cancel-title"
-                        >
-                          <X className="w-4 h-4" />
-                        </Button>
-                      </div>
-                    ) : (
-                      <button
-                        onClick={() => {
-                          setEditedTitle(newsletter.title);
-                          setIsEditingTitle(true);
-                        }}
-                        className="text-[15px] font-semibold tracking-tight truncate hover:underline cursor-pointer flex items-center gap-1.5 group"
-                        data-testid="button-edit-title"
-                      >
-                        {newsletter.title}
-                        <Pencil className="w-3 h-3 opacity-0 group-hover:opacity-50 transition-opacity" />
-                      </button>
-                    )}
-
-                    {client && (
-                      <div className="inline-flex items-center gap-2">
-                        <button
-                          type="button"
-                          className="text-xs text-muted-foreground hover:text-foreground transition-colors inline-flex items-center gap-1"
-                          onClick={() => {
-                            openRightRail("client", { openClientSheet: true });
-                          }}
-                          data-testid="link-client-name"
-                        >
-                          <User className="w-3.5 h-3.5" />
-                          {client.name}
-                        </button>
-                        {newsletterData?.invoice?.id && (
-                          <span className="text-[11px] text-muted-foreground">
-                            Order #{newsletterData.invoice.id.slice(0, 8)}
-                          </span>
-                        )}
-                      </div>
-                    )}
-
-                    {saveStatus === "saving" && (
-                      <span className="inline-flex items-center gap-1 text-xs text-amber-700 dark:text-amber-300" data-testid="save-indicator-saving">
-                        <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
-                        Saving
-                      </span>
-                    )}
-                    {saveStatus === "saved" && (
-                      <span className="inline-flex items-center gap-1 text-xs text-blue-700 dark:text-blue-300" data-testid="save-indicator-saved">
-                        <span className="w-1.5 h-1.5 rounded-full bg-blue-500" />
-                        Saved
-                      </span>
-                    )}
+                {isEditingTitle ? (
+                  <div className="flex items-center gap-1">
+                    <Input
+                      value={editedTitle}
+                      onChange={(e) => setEditedTitle(e.target.value)}
+                      className="h-8 w-56"
+                      autoFocus
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && editedTitle.trim()) {
+                          updateTitleMutation.mutate(editedTitle.trim());
+                        } else if (e.key === "Escape") {
+                          setIsEditingTitle(false);
+                        }
+                      }}
+                      data-testid="input-edit-title"
+                    />
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8"
+                      onClick={() => editedTitle.trim() && updateTitleMutation.mutate(editedTitle.trim())}
+                      data-testid="button-save-title"
+                    >
+                      <Check className="w-4 h-4" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8"
+                      onClick={() => setIsEditingTitle(false)}
+                      data-testid="button-cancel-title"
+                    >
+                      <X className="w-4 h-4" />
+                    </Button>
                   </div>
-                </div>
-              </div>
+                ) : (
+                  <button
+                    onClick={() => {
+                      setEditedTitle(newsletter.title);
+                      setIsEditingTitle(true);
+                    }}
+                    className="text-[15px] font-semibold tracking-tight truncate hover:underline cursor-pointer flex items-center gap-1.5 group"
+                    data-testid="button-edit-title"
+                  >
+                    {newsletter.title}
+                    <Pencil className="w-3 h-3 opacity-0 group-hover:opacity-50 transition-opacity" />
+                  </button>
+                )}
 
-              <div className="flex flex-wrap items-center justify-end gap-1.5 pl-1">
                 <Popover open={showDatePicker} onOpenChange={setShowDatePicker}>
                   <PopoverTrigger asChild>
                     <Button variant="outline" size="sm" className="h-8 px-2.5 text-xs sm:text-sm" data-testid="button-edit-date">
                       <CalendarIcon className="w-3.5 h-3.5 mr-1.5" />
-                      {newsletter.expectedSendDate
-                        ? format(new Date(newsletter.expectedSendDate), "MMM d, yyyy")
-                        : "Set date"}
+                      {formattedSendDate}
                     </Button>
                   </PopoverTrigger>
-                  <PopoverContent className="w-auto p-0" align="end">
+                  <PopoverContent className="w-auto p-0" align="start">
                     <Calendar
                       mode="single"
                       selected={newsletter.expectedSendDate ? new Date(newsletter.expectedSendDate) : undefined}
@@ -472,7 +451,7 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
                   {editingHtml ? "Preview" : "Edit HTML"}
                 </Button>
 
-                <div className="inline-flex items-center rounded-md border border-border bg-background overflow-hidden">
+                <div className="inline-flex items-center rounded-md bg-background overflow-hidden">
                   <Button
                     size="icon"
                     variant={previewDevice === "desktop" ? "secondary" : "ghost"}
@@ -493,6 +472,21 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
                   </Button>
                 </div>
 
+                {saveStatus === "saving" && (
+                  <span className="inline-flex items-center gap-1 text-xs text-amber-700 dark:text-amber-300" data-testid="save-indicator-saving">
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
+                    Saving
+                  </span>
+                )}
+                {saveStatus === "saved" && (
+                  <span className="inline-flex items-center gap-1 text-xs text-blue-700 dark:text-blue-300" data-testid="save-indicator-saved">
+                    <span className="w-1.5 h-1.5 rounded-full bg-blue-500" />
+                    Saved
+                  </span>
+                )}
+              </div>
+
+              <div className="flex flex-wrap items-center justify-end gap-1.5 pl-1">
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <Button variant="outline" size="sm" className="h-8 px-2.5 text-xs sm:text-sm" data-testid="button-file-menu">
@@ -535,7 +529,7 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
                 </Button>
 
                 {client && (
-                  <div className="inline-flex items-center rounded-md border border-border bg-background overflow-hidden">
+                  <div className="inline-flex items-center rounded-md bg-background overflow-hidden">
                     <Button
                       size="sm"
                       variant={rightRailMode === "client" ? "secondary" : "ghost"}
@@ -564,12 +558,33 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
                 )}
               </div>
             </div>
+            {client && (
+              <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1 hover:text-foreground transition-colors"
+                  onClick={() => openRightRail("client", { openClientSheet: true })}
+                  data-testid="link-client-name"
+                >
+                  <User className="w-3.5 h-3.5" />
+                  {client.name}
+                </button>
+                <span>·</span>
+                <span>{formattedSendDate}</span>
+                {newsletterData?.invoice?.id && (
+                  <>
+                    <span>·</span>
+                    <span>Order #{newsletterData.invoice.id.slice(0, 8)}</span>
+                  </>
+                )}
+              </div>
+            )}
           </header>
 
-          <div className="flex-1 min-h-0 relative p-2 sm:p-4 sm:pt-3">
+          <div className="flex-1 min-h-0 relative p-2 sm:p-4 sm:pt-2">
             {editingHtml ? (
-              <div className="h-full rounded-xl border bg-card overflow-hidden flex flex-col">
-                <div className="h-10 px-4 border-b bg-muted/30 flex items-center justify-between text-xs text-muted-foreground">
+              <div className="h-full rounded-xl bg-card/80 overflow-hidden flex flex-col shadow-sm">
+                <div className="h-10 px-4 bg-muted/20 flex items-center justify-between text-xs text-muted-foreground">
                   <span>Raw HTML editor</span>
                   <span>Use this for full control over imported Postcards code.</span>
                 </div>
@@ -579,7 +594,7 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
                   className="flex-1 font-mono text-xs resize-none rounded-none border-0 focus-visible:ring-0 bg-card"
                   data-testid="textarea-html-editor"
                 />
-                <div className="flex items-center justify-between gap-2 p-3 border-t bg-background/90">
+                <div className="flex items-center justify-between gap-2 p-3 bg-background/90">
                   <p className="text-xs text-muted-foreground">Preview updates after save.</p>
                   <div className="flex items-center gap-2">
                     <Button
@@ -607,7 +622,7 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
             ) : (
               <>
                 {hasContent ? (
-                  <div className="h-full rounded-xl border bg-card overflow-hidden">
+                  <div className="h-full rounded-xl bg-card/80 overflow-hidden shadow-sm">
                     <HTMLPreviewFrame
                       html={newsletterData?.html || ""}
                       isLoading={loadingNewsletter}
@@ -620,8 +635,8 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
                     />
                   </div>
                 ) : (
-                  <div className="flex-1 rounded-xl border bg-card flex items-center justify-center">
-                    <div className="flex flex-col items-center justify-center text-center p-12 rounded-md border-2 border-dashed border-muted-foreground/20 max-w-md">
+                  <div className="flex-1 rounded-xl bg-card/70 flex items-center justify-center">
+                    <div className="flex flex-col items-center justify-center text-center p-12 max-w-md">
                       <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center mb-4">
                         <Code className="w-8 h-8 text-primary/60" />
                       </div>
@@ -644,7 +659,7 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
         </div>
 
         {client && (
-          <div className="hidden lg:flex w-[340px] xl:w-[360px] flex-shrink-0 border-l bg-background">
+          <div className={`hidden lg:flex ${desktopRailWidthClass} flex-shrink-0 bg-background/80 transition-all`}>
             {rightRailMode === "ai" ? (
               <GeminiChatPanel
                 newsletterId={newsletterId}
@@ -660,7 +675,7 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
             ) : (
               <div className="w-full p-4 space-y-3">
                 <div className="text-sm font-medium">Client Context</div>
-                <div className="rounded-md border bg-card p-3 space-y-2">
+                <div className="rounded-lg bg-card/80 p-3 space-y-2">
                   <div className="text-sm font-semibold">{client.name}</div>
                   <div className="text-xs text-muted-foreground">{client.primaryEmail}</div>
                   {client.locationCity || client.locationRegion ? (
