@@ -2,8 +2,12 @@ name: Send Due Newsletters
 
 on:
   schedule:
-    - cron: "*/5 * * * *"
+    - cron: "*/15 * * * *"
   workflow_dispatch: {}
+
+concurrency:
+  group: send-due-newsletters
+  cancel-in-progress: true
 
 jobs:
   send_due:
@@ -23,5 +27,18 @@ jobs:
             echo "Missing secret: FLOW_CRON_SECRET" >&2
             exit 1
           fi
-          curl -fsS -H "Authorization: Bearer $FLOW_CRON_SECRET" "$FLOW_CRON_URL"
+          response_file="$(mktemp)"
+          status_code="$(curl -sS -o "$response_file" -w "%{http_code}" \
+            --retry 3 \
+            --retry-delay 3 \
+            --retry-all-errors \
+            -H "Authorization: Bearer $FLOW_CRON_SECRET" \
+            "$FLOW_CRON_URL")"
+
+          cat "$response_file"
+
+          if [ "$status_code" -lt 200 ] || [ "$status_code" -ge 300 ]; then
+            echo "Cron endpoint failed with HTTP $status_code" >&2
+            exit 1
+          fi
 
