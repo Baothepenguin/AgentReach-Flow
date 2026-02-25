@@ -5453,16 +5453,21 @@ export async function registerRoutes(
   // Authorization: Bearer ${CRON_SECRET}
   const sendDueNewslettersCronHandler = async (req: Request, res: Response) => {
     try {
-      const expected = process.env.CRON_SECRET;
+      const expected = (process.env.CRON_SECRET || process.env.FLOW_CRON_SECRET || "").trim();
       const authorization = (req.headers["authorization"] as string) || "";
       // Never allow this endpoint unauthenticated in production; it can trigger sends.
       if (!expected && process.env.NODE_ENV === "production") {
-        return res.status(500).json({ error: "CRON_SECRET is not configured." });
+        return res.status(500).json({
+          error: "Cron auth is not configured.",
+          code: "cron_secret_missing",
+          requiredEnv: ["CRON_SECRET"],
+          acceptedFallbackEnv: ["FLOW_CRON_SECRET"],
+        });
       }
       if (expected) {
         const expectedHeader = `Bearer ${expected}`;
         if (authorization !== expectedHeader) {
-          return res.status(401).json({ error: "Unauthorized" });
+          return res.status(401).json({ error: "Unauthorized", code: "invalid_cron_auth" });
         }
       }
 
@@ -5471,6 +5476,18 @@ export async function registerRoutes(
         const when = new Date(n.scheduledAt);
         return !Number.isNaN(when.getTime()) && when.getTime() <= Date.now();
       });
+
+      if (dueNewsletters.length === 0) {
+        return res.status(200).json({
+          ok: true,
+          dueCount: 0,
+          processed: 0,
+          skipped: 0,
+          failed: 0,
+          results: [],
+          message: "No newsletters are due right now.",
+        });
+      }
 
       let processed = 0;
       let skipped = 0;
