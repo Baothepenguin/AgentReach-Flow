@@ -1,24 +1,43 @@
-import { Switch, Route } from "wouter";
+import { lazy, Suspense } from "react";
+import { Switch, Route, Redirect } from "wouter";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
-import LoginPage from "@/pages/login";
-import MasterDashboard from "@/pages/master-dashboard";
-import ClientsListPage from "@/pages/clients-list";
-import NewslettersPage from "@/pages/newsletters";
-import InvoicesPage from "@/pages/invoices";
-import SubscriptionsPage from "@/pages/subscriptions";
-import BrandingKitsPage from "@/pages/branding-kits";
-import AudienceManagerPage from "@/pages/audience-manager";
-import NewsletterEditorPage from "@/pages/newsletter-editor";
-import ReviewPage from "@/pages/review";
-import OnboardingPage from "@/pages/onboarding";
-import NotFound from "@/pages/not-found";
+import { AppErrorBoundary } from "@/components/AppErrorBoundary";
 import { Loader2 } from "lucide-react";
 
-function ProtectedRoute({ children }: { children: React.ReactNode }) {
+const LoginPage = lazy(() => import("@/pages/login"));
+const MasterDashboard = lazy(() => import("@/pages/master-dashboard"));
+const ClientsListPage = lazy(() => import("@/pages/clients-list"));
+const NewslettersPage = lazy(() => import("@/pages/newsletters"));
+const InvoicesPage = lazy(() => import("@/pages/invoices"));
+const SubscriptionsPage = lazy(() => import("@/pages/subscriptions"));
+const BrandingKitsPage = lazy(() => import("@/pages/branding-kits"));
+const AudienceManagerPage = lazy(() => import("@/pages/audience-manager"));
+const NewsletterEditorPage = lazy(() => import("@/pages/newsletter-editor"));
+const ReviewPage = lazy(() => import("@/pages/review"));
+const OnboardingPage = lazy(() => import("@/pages/onboarding"));
+const DiyDashboardPage = lazy(() => import("@/pages/diy-dashboard"));
+const DiyContactsPage = lazy(() => import("@/pages/diy-contacts"));
+const DiyBillingPage = lazy(() => import("@/pages/diy-billing"));
+const DiyBrandPage = lazy(() => import("@/pages/diy-settings"));
+const DiyOnboardingPage = lazy(() => import("@/pages/diy-onboarding"));
+const DiyNewslettersPage = lazy(() => import("@/pages/diy-newsletters"));
+const NotFound = lazy(() => import("@/pages/not-found"));
+
+type AccessMode = "any" | "internal" | "diy";
+
+function ProtectedRoute({
+  children,
+  access = "any",
+  allowWhenBillingBlocked = false,
+}: {
+  children: React.ReactNode;
+  access?: AccessMode;
+  allowWhenBillingBlocked?: boolean;
+}) {
   const { user, isLoading } = useAuth();
 
   if (isLoading) {
@@ -33,45 +52,90 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
     return <LoginPage />;
   }
 
+  const isDiy = (user as any).accountType === "diy_customer";
+  if (access === "internal" && isDiy) {
+    return <Redirect to="/" />;
+  }
+  if (access === "diy" && !isDiy) {
+    return <Redirect to="/" />;
+  }
+
+  const billingStatus = String((user as any).billingStatus || "trialing");
+  const billingBlocked = isDiy && billingStatus !== "trialing" && billingStatus !== "active";
+  if (billingBlocked && !allowWhenBillingBlocked) {
+    return <Redirect to="/billing" />;
+  }
+
   return <>{children}</>;
 }
 
 function Router() {
+  const { user } = useAuth();
+  const isDiy = (user as any)?.accountType === "diy_customer";
+  const diyOnboardingCompleted = Boolean((user as any)?.onboardingCompleted);
+
   return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen flex items-center justify-center">
+          <Loader2 className="w-8 h-8 animate-spin text-primary" />
+        </div>
+      }
+    >
     <Switch>
       <Route path="/" component={() => (
         <ProtectedRoute>
-          <MasterDashboard />
+          {isDiy ? (diyOnboardingCompleted ? <DiyDashboardPage /> : <Redirect to="/diy/onboarding" />) : <MasterDashboard />}
         </ProtectedRoute>
       )} />
       <Route path="/newsletters" component={() => (
         <ProtectedRoute>
-          <NewslettersPage />
+          {isDiy ? <DiyNewslettersPage /> : <NewslettersPage />}
         </ProtectedRoute>
       )} />
       <Route path="/clients" component={() => (
-        <ProtectedRoute>
+        <ProtectedRoute access="internal">
           <ClientsListPage />
         </ProtectedRoute>
       )} />
       <Route path="/orders" component={() => (
-        <ProtectedRoute>
+        <ProtectedRoute access="internal">
           <InvoicesPage />
         </ProtectedRoute>
       )} />
       <Route path="/subscriptions" component={() => (
-        <ProtectedRoute>
+        <ProtectedRoute access="internal">
           <SubscriptionsPage />
         </ProtectedRoute>
       )} />
       <Route path="/branding-kits" component={() => (
-        <ProtectedRoute>
+        <ProtectedRoute access="internal">
           <BrandingKitsPage />
         </ProtectedRoute>
       )} />
       <Route path="/audience" component={() => (
         <ProtectedRoute>
-          <AudienceManagerPage />
+          {isDiy ? <DiyContactsPage /> : <AudienceManagerPage />}
+        </ProtectedRoute>
+      )} />
+      <Route path="/billing" component={() => (
+        <ProtectedRoute access="diy" allowWhenBillingBlocked>
+          <DiyBillingPage />
+        </ProtectedRoute>
+      )} />
+      <Route path="/brand" component={() => (
+        <ProtectedRoute access="diy" allowWhenBillingBlocked>
+          <DiyBrandPage />
+        </ProtectedRoute>
+      )} />
+      <Route path="/settings" component={() => (
+        <ProtectedRoute access="diy" allowWhenBillingBlocked>
+          <Redirect to="/brand" />
+        </ProtectedRoute>
+      )} />
+      <Route path="/diy/onboarding" component={() => (
+        <ProtectedRoute access="diy" allowWhenBillingBlocked>
+          {diyOnboardingCompleted ? <Redirect to="/" /> : <DiyOnboardingPage />}
         </ProtectedRoute>
       )} />
       <Route path="/newsletters/:id" component={(params) => (
@@ -83,18 +147,21 @@ function Router() {
       <Route path="/onboarding/:token" component={OnboardingPage} />
       <Route component={NotFound} />
     </Switch>
+    </Suspense>
   );
 }
 
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <AuthProvider>
-        <TooltipProvider>
-          <Toaster />
-          <Router />
-        </TooltipProvider>
-      </AuthProvider>
+      <AppErrorBoundary>
+        <AuthProvider>
+          <TooltipProvider>
+            <Toaster />
+            <Router />
+          </TooltipProvider>
+        </AuthProvider>
+      </AppErrorBoundary>
     </QueryClientProvider>
   );
 }
