@@ -37,8 +37,21 @@ interface ContactImportJobItem {
 }
 
 type AudienceView = "all" | "active" | "unsubscribed" | "archived";
+type ContactImportSource =
+  | "internal_app"
+  | "mailchimp_csv"
+  | "brevo_csv"
+  | "kit_csv"
+  | "flodesk_csv";
 
 const PRESET_TAGS = ["all", "referral partners", "past clients"] as const;
+const IMPORT_SOURCE_OPTIONS: Array<{ value: ContactImportSource; label: string }> = [
+  { value: "internal_app", label: "Generic CSV" },
+  { value: "mailchimp_csv", label: "Mailchimp CSV" },
+  { value: "brevo_csv", label: "Brevo CSV" },
+  { value: "kit_csv", label: "Kit (ConvertKit) CSV" },
+  { value: "flodesk_csv", label: "Flodesk CSV" },
+];
 
 function normalizeTag(value: string | null | undefined): string {
   const normalized = String(value || "").trim().toLowerCase();
@@ -70,6 +83,7 @@ export function ClientAudiencePanel({ clientId }: ClientAudiencePanelProps) {
 
   const [csvContent, setCsvContent] = useState("");
   const [csvFileName, setCsvFileName] = useState("");
+  const [importSource, setImportSource] = useState<ContactImportSource>("internal_app");
   const [lastImportInvalidRowsCsv, setLastImportInvalidRowsCsv] = useState("");
 
   const [contactSearch, setContactSearch] = useState("");
@@ -141,6 +155,7 @@ export function ClientAudiencePanel({ clientId }: ClientAudiencePanelProps) {
         csvContent,
         createSegmentsFromTags: false,
         segmentTags: [],
+        importSource,
       });
       return res.json();
     },
@@ -156,10 +171,12 @@ export function ClientAudiencePanel({ clientId }: ClientAudiencePanelProps) {
       const updatedCount = data?.summary?.updatedCount || 0;
       const invalidRowsCount = data?.summary?.invalidRowsCount || 0;
       const invalidSuffix = invalidRowsCount > 0 ? `, ${invalidRowsCount} invalid rows` : "";
+      const sourceLabel =
+        IMPORT_SOURCE_OPTIONS.find((option) => option.value === importSource)?.label || "CSV";
 
       toast({
         title: "Contacts imported",
-        description: `${importedCount} new, ${updatedCount} updated${invalidSuffix}`,
+        description: `${sourceLabel}: ${importedCount} new, ${updatedCount} updated${invalidSuffix}`,
       });
     },
     onError: (error: Error) => {
@@ -503,6 +520,21 @@ export function ClientAudiencePanel({ clientId }: ClientAudiencePanelProps) {
             <span className="text-[11px] text-muted-foreground truncate max-w-[170px]">
               {csvFileName || "No file selected"}
             </span>
+          </div>
+
+          <div className="space-y-1">
+            <div className="text-[11px] text-muted-foreground">Import source</div>
+            <select
+              className="h-8 w-full rounded-md border bg-background px-2 text-xs"
+              value={importSource}
+              onChange={(event) => setImportSource(event.target.value as ContactImportSource)}
+            >
+              {IMPORT_SOURCE_OPTIONS.map((option) => (
+                <option key={`import-source-${option.value}`} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
           </div>
 
           <Textarea

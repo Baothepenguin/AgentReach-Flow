@@ -7,6 +7,7 @@ import {
 } from "@shared/schema";
 import { pool } from "../server/db";
 import { storage } from "../server/storage";
+import { ensureClientPostmarkTenant } from "../server/postmark-service";
 
 const SOURCE_NEWSLETTER_TITLE = "QA Client 1771456475 - Feb 25";
 
@@ -74,162 +75,98 @@ function buildDemoClients(today: Date): DemoClient[] {
   const fmt = (offsetDays: number) => format(addDays(today, offsetDays), "yyyy-MM-dd");
   return [
     {
-      name: "Sophia Martinez",
-      primaryEmail: "sophia.martinez@alderrealty.com",
-      phone: "(512) 555-0197",
-      city: "Austin",
-      region: "TX",
+      name: "Bao Ghua",
+      primaryEmail: "baoghua17@sansu.ca",
+      phone: "(403) 555-0101",
+      city: "Calgary",
+      region: "AB",
       newsletterFrequency: "monthly",
       subscriptionAmount: "149.00",
       branding: {
-        companyName: "Alder Realty Group",
-        website: "https://alderrealty.com",
-        instagram: "https://instagram.com/alderrealty",
-        facebook: "https://facebook.com/alderrealty",
+        companyName: "Sansu Realty Calgary",
+        website: "https://sansu.ca",
+        instagram: "https://instagram.com/sansu.ca",
+        facebook: "https://facebook.com/sansu.ca",
         primaryColor: "#1A5F4A",
         secondaryColor: "#0F172A",
-        tone: "Warm, confident, neighborhood-focused",
+        tone: "Confident, local, market-driven",
       },
       contacts: [
-        { email: "bao@sansu.ca", firstName: "Bao", lastName: "San", tag: "all", isActive: true },
-        { email: "mila.thompson@gmail.com", firstName: "Mila", lastName: "Thompson", tag: "past clients", isActive: true },
-        { email: "oakline.lending@partner.com", firstName: "Oakline", lastName: "Lending", tag: "referral partners", isActive: true },
+        { email: "baoghua17@gmail.com", firstName: "Bao", lastName: "Ghua", tag: "all", isActive: true },
+        { email: "leo@sansu.ca", firstName: "Leo", lastName: "Sansu", tag: "past clients", isActive: true },
+        { email: "bao@sansu.ca", firstName: "Bao", lastName: "Sansu", tag: "referral partners", isActive: true },
       ],
       newsletters: [
         {
-          title: "Sophia Martinez Newsletter",
+          title: "Bao Ghua Newsletter",
           expectedSendDate: fmt(4),
           status: "draft",
-          subject: "Austin homes this month: what buyers should watch",
-          previewText: "Listings, local events, and this week’s market pulse for Austin.",
+          subject: "Calgary market highlights for this month",
+          previewText: "Listings, neighborhood spots, and this week’s local market pulse.",
         },
       ],
     },
     {
-      name: "Ethan Brooks",
-      primaryEmail: "ethan.brooks@harborlanehomes.com",
-      phone: "(619) 555-0162",
-      city: "San Diego",
-      region: "CA",
+      name: "Leo Sansu",
+      primaryEmail: "leo@sansu.ca",
+      phone: "(604) 555-0202",
+      city: "Vancouver",
+      region: "BC",
       newsletterFrequency: "monthly",
       subscriptionAmount: "129.00",
       branding: {
-        companyName: "Harbor Lane Homes",
-        website: "https://harborlanehomes.com",
-        instagram: "https://instagram.com/harborlanehomes",
-        facebook: "https://facebook.com/harborlanehomes",
+        companyName: "Sansu Homes Vancouver",
+        website: "https://sansu.ca",
+        instagram: "https://instagram.com/sansu.ca",
+        facebook: "https://facebook.com/sansu.ca",
         primaryColor: "#0C4A6E",
         secondaryColor: "#111827",
-        tone: "Modern, upbeat, coastal lifestyle",
+        tone: "Modern, concise, practical",
       },
       contacts: [
-        { email: "bao@sansu.ca", firstName: "Bao", lastName: "San", tag: "all", isActive: true },
-        { email: "olivia.ward@gmail.com", firstName: "Olivia", lastName: "Ward", tag: "all", isActive: true },
-        { email: "horizon.title@partner.com", firstName: "Horizon", lastName: "Title", tag: "referral partners", isActive: true },
+        { email: "leo@sansu.ca", firstName: "Leo", lastName: "Sansu", tag: "all", isActive: true },
+        { email: "baoghua17@gmail.com", firstName: "Bao", lastName: "Ghua", tag: "past clients", isActive: true },
+        { email: "bao@sansu.ca", firstName: "Bao", lastName: "Sansu", tag: "referral partners", isActive: true },
       ],
       newsletters: [
         {
-          title: "Ethan Brooks Newsletter",
+          title: "Leo Sansu Newsletter",
           expectedSendDate: fmt(7),
           status: "in_review",
-          subject: "San Diego market snapshot + listings this week",
-          previewText: "Current local stats, neighborhood picks, and agent recommendations.",
+          subject: "Vancouver listings and opportunities this week",
+          previewText: "Current local stats, featured listings, and next steps for buyers.",
         },
       ],
     },
     {
-      name: "Chloe Bennett",
-      primaryEmail: "chloe.bennett@westfieldcollective.com",
-      phone: "(212) 555-0189",
-      city: "New York",
-      region: "NY",
+      name: "Bao Sansu",
+      primaryEmail: "bao@sansu.ca",
+      phone: "(587) 555-0303",
+      city: "Toronto",
+      region: "ON",
       newsletterFrequency: "biweekly",
       subscriptionAmount: "189.00",
       branding: {
-        companyName: "Westfield Collective",
-        website: "https://westfieldcollective.com",
-        instagram: "https://instagram.com/westfieldcollective",
-        facebook: "https://facebook.com/westfieldcollective",
+        companyName: "Sansu Collective Toronto",
+        website: "https://sansu.ca",
+        instagram: "https://instagram.com/sansu.ca",
+        facebook: "https://facebook.com/sansu.ca",
         primaryColor: "#14532D",
         secondaryColor: "#111827",
         tone: "Premium, concise, data-backed",
       },
       contacts: [
-        { email: "bao@sansu.ca", firstName: "Bao", lastName: "San", tag: "all", isActive: true },
-        { email: "michelle.wu@gmail.com", firstName: "Michelle", lastName: "Wu", tag: "past clients", isActive: true },
-        { email: "northstar.staging@partner.com", firstName: "Northstar", lastName: "Staging", tag: "referral partners", isActive: true },
+        { email: "bao@sansu.ca", firstName: "Bao", lastName: "Sansu", tag: "all", isActive: true },
+        { email: "baoghua17@gmail.com", firstName: "Bao", lastName: "Ghua", tag: "past clients", isActive: true },
+        { email: "leo@sansu.ca", firstName: "Leo", lastName: "Sansu", tag: "referral partners", isActive: true },
       ],
       newsletters: [
         {
-          title: "Chloe Bennett Newsletter",
+          title: "Bao Sansu Newsletter",
           expectedSendDate: fmt(2),
           status: "approved",
-          subject: "This week’s NYC housing moves and opportunities",
-          previewText: "Inventory shifts, featured listings, and city highlights.",
-        },
-      ],
-    },
-    {
-      name: "Liam Carter",
-      primaryEmail: "liam.carter@lakeviewproperty.com",
-      phone: "(312) 555-0145",
-      city: "Chicago",
-      region: "IL",
-      newsletterFrequency: "monthly",
-      subscriptionAmount: "139.00",
-      branding: {
-        companyName: "Lakeview Property Co.",
-        website: "https://lakeviewproperty.com",
-        instagram: "https://instagram.com/lakeviewproperty",
-        facebook: "https://facebook.com/lakeviewproperty",
-        primaryColor: "#0F766E",
-        secondaryColor: "#1F2937",
-        tone: "Local, practical, and clear",
-      },
-      contacts: [
-        { email: "bao@sansu.ca", firstName: "Bao", lastName: "San", tag: "all", isActive: true },
-        { email: "courtney.lee@gmail.com", firstName: "Courtney", lastName: "Lee", tag: "past clients", isActive: true },
-        { email: "cityline.mortgage@partner.com", firstName: "Cityline", lastName: "Mortgage", tag: "referral partners", isActive: true },
-      ],
-      newsletters: [
-        {
-          title: "Liam Carter Newsletter",
-          expectedSendDate: fmt(9),
-          status: "draft",
-          subject: "Chicago listings and neighborhood opportunities",
-          previewText: "This month’s listings, local highlights, and market movement.",
-        },
-      ],
-    },
-    {
-      name: "Maya Patel",
-      primaryEmail: "maya.patel@suncoasthomes.com",
-      phone: "(305) 555-0128",
-      city: "Miami",
-      region: "FL",
-      newsletterFrequency: "monthly",
-      subscriptionAmount: "159.00",
-      branding: {
-        companyName: "Suncoast Homes",
-        website: "https://suncoasthomes.com",
-        instagram: "https://instagram.com/suncoasthomes",
-        facebook: "https://facebook.com/suncoasthomes",
-        primaryColor: "#0E7490",
-        secondaryColor: "#111827",
-        tone: "Bright, modern, and lifestyle-first",
-      },
-      contacts: [
-        { email: "bao@sansu.ca", firstName: "Bao", lastName: "San", tag: "all", isActive: true },
-        { email: "diego.ramos@gmail.com", firstName: "Diego", lastName: "Ramos", tag: "past clients", isActive: true },
-        { email: "coastal.title@partner.com", firstName: "Coastal", lastName: "Title", tag: "referral partners", isActive: true },
-      ],
-      newsletters: [
-        {
-          title: "Maya Patel Newsletter",
-          expectedSendDate: fmt(5),
-          status: "changes_requested",
-          subject: "Miami market update and featured homes",
-          previewText: "Fresh listings, local events, and the latest market insights.",
+          subject: "Toronto market update and featured listings",
+          previewText: "Inventory shifts, featured homes, and city highlights.",
         },
       ],
     },
@@ -433,6 +370,96 @@ async function ensureNewsletter(
   await storage.updateNewsletter(created.id, { currentVersionId: version.id });
 }
 
+async function ensurePostmarkProvision(client: Client) {
+  if (!process.env.POSTMARK_ACCOUNT_API_TOKEN) {
+    return;
+  }
+  if (!(await tableExists("client_postmark_tenants"))) {
+    return;
+  }
+
+  const existing = await pool.query<{
+    server_id: number | null;
+    server_token: string | null;
+    broadcast_stream_id: string | null;
+    webhook_id: number | null;
+    sender_signature_id: number | null;
+  }>(
+    `select server_id, server_token, broadcast_stream_id, webhook_id, sender_signature_id
+     from client_postmark_tenants
+     where client_id = $1
+     limit 1`,
+    [client.id]
+  );
+  const tenant = existing.rows[0];
+
+  const provisioned = await ensureClientPostmarkTenant({
+    clientName: client.name,
+    senderEmail: client.primaryEmail,
+    replyToEmail: client.secondaryEmail || client.primaryEmail,
+    existing: {
+      serverId: tenant?.server_id || client.postmarkServerId || null,
+      serverToken: tenant?.server_token || null,
+      broadcastStreamId: tenant?.broadcast_stream_id || client.postmarkMessageStreamId || null,
+      webhookId: tenant?.webhook_id || null,
+      signatureId: tenant?.sender_signature_id || client.postmarkSignatureId || null,
+    },
+  });
+
+  if (!provisioned.success || !provisioned.serverId || !provisioned.serverToken || !provisioned.broadcastStreamId) {
+    console.warn(`[seed] postmark provisioning skipped for ${client.name}: ${provisioned.error || "unknown error"}`);
+    return;
+  }
+
+  await pool.query(
+    `insert into client_postmark_tenants (
+      client_id, server_id, server_token, broadcast_stream_id, webhook_id, webhook_url,
+      sender_signature_id, sender_email, sender_confirmed, domain, domain_verification_state,
+      quality_state, updated_at
+    ) values (
+      $1, $2, $3, $4, $5, $6,
+      $7, $8, $9, $10, $11,
+      'healthy', now()
+    )
+    on conflict (client_id) do update set
+      server_id = excluded.server_id,
+      server_token = excluded.server_token,
+      broadcast_stream_id = excluded.broadcast_stream_id,
+      webhook_id = excluded.webhook_id,
+      webhook_url = excluded.webhook_url,
+      sender_signature_id = excluded.sender_signature_id,
+      sender_email = excluded.sender_email,
+      sender_confirmed = excluded.sender_confirmed,
+      domain = excluded.domain,
+      domain_verification_state = excluded.domain_verification_state,
+      quality_state = excluded.quality_state,
+      updated_at = now()`,
+    [
+      client.id,
+      provisioned.serverId,
+      provisioned.serverToken,
+      provisioned.broadcastStreamId,
+      provisioned.webhookId ?? null,
+      provisioned.webhookUrl ?? null,
+      provisioned.signatureId ?? null,
+      client.primaryEmail,
+      !!provisioned.senderConfirmed,
+      provisioned.domain || null,
+      provisioned.domainVerificationState || "not_configured",
+    ]
+  );
+
+  await storage.updateClient(client.id, {
+    postmarkServerId: provisioned.serverId,
+    postmarkMessageStreamId: provisioned.broadcastStreamId,
+    postmarkDomain: provisioned.domain || null,
+    postmarkDomainVerificationState: provisioned.domainVerificationState || "not_configured",
+    postmarkSenderVerificationState: provisioned.senderConfirmed ? "verified" : "pending",
+    postmarkSignatureId: provisioned.signatureId ?? null,
+    isVerified: !!provisioned.senderConfirmed,
+  } as any);
+}
+
 async function seedDemoData() {
   const sourceHtml = await getSourceHtml();
   const demoClients = buildDemoClients(new Date());
@@ -484,6 +511,7 @@ async function seedDemoData() {
         newsletter
       );
     }
+    await ensurePostmarkProvision(client);
     await storage.recalculateClientSubscriptionStatus(client.id);
     console.log(`Seeded demo client: ${client.name}`);
   }

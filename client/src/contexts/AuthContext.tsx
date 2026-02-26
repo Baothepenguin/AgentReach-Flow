@@ -6,7 +6,27 @@ interface AuthContextType {
   isLoading: boolean;
   login: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
-  register: (email: string, password: string, name: string) => Promise<void>;
+  register: (
+    email: string,
+    password: string,
+    name: string,
+    accountType?: "internal_operator" | "diy_customer"
+  ) => Promise<void>;
+  refreshUser: () => Promise<void>;
+}
+
+function getDevLoginPayload(): Record<string, unknown> {
+  if (!import.meta.env.DEV || typeof window === "undefined") return {};
+  const params = new URLSearchParams(window.location.search);
+  const email = params.get("dev_email")?.trim().toLowerCase();
+  const accountType = params.get("dev_account_type")?.trim();
+  const resetOnboarding = params.get("dev_reset_onboarding") === "1";
+
+  const payload: Record<string, unknown> = {};
+  if (email) payload.email = email;
+  if (accountType) payload.accountType = accountType;
+  if (resetOnboarding) payload.resetOnboarding = true;
+  return payload;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -23,7 +43,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       // In development, auto-login as dev user
       if (import.meta.env.DEV) {
-        const devRes = await fetch("/api/auth/dev-login", { method: "POST" });
+        const devRes = await fetch("/api/auth/dev-login", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(getDevLoginPayload()),
+        });
         if (devRes.ok) {
           const data = await devRes.json();
           setUser(data.user);
@@ -44,6 +70,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }
 
+  async function refreshUser() {
+    await checkAuth();
+  }
+
   async function login(email: string, password: string) {
     const res = await fetch("/api/auth/login", {
       method: "POST",
@@ -58,11 +88,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(data.user);
   }
 
-  async function register(email: string, password: string, name: string) {
+  async function register(
+    email: string,
+    password: string,
+    name: string,
+    accountType: "internal_operator" | "diy_customer" = "diy_customer"
+  ) {
     const res = await fetch("/api/auth/register", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password, name }),
+      body: JSON.stringify({ email, password, name, accountType }),
     });
     if (!res.ok) {
       const data = await res.json();
@@ -78,7 +113,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   return (
-    <AuthContext.Provider value={{ user, isLoading, login, logout, register }}>
+    <AuthContext.Provider value={{ user, isLoading, login, logout, register, refreshUser }}>
       {children}
     </AuthContext.Provider>
   );

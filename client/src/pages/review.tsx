@@ -89,6 +89,14 @@ export default function ReviewPage() {
       return res.json();
     },
     enabled: !!token && !approved,
+    refetchInterval: () => {
+      if (approved) return false;
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") {
+        return false;
+      }
+      return 15000;
+    },
+    refetchOnWindowFocus: true,
   });
 
   const approveMutation = useMutation({
@@ -142,44 +150,61 @@ export default function ReviewPage() {
     setUploading(true);
     try {
       for (const file of Array.from(files)) {
-        const urlRes = await fetch(`/api/review/${token}/uploads/request-url`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            name: file.name,
-            size: file.size,
-            contentType: file.type || "application/octet-stream",
-          }),
-        });
+        try {
+          const urlRes = await fetch(`/api/review/${token}/uploads/request-url`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              name: file.name,
+              size: file.size,
+              contentType: file.type || "",
+            }),
+          });
 
-        if (!urlRes.ok) {
-          toast({ title: "Failed to prepare upload", variant: "destructive" });
-          continue;
+          const urlPayload = await urlRes.json().catch(() => ({}));
+          if (!urlRes.ok) {
+            toast({
+              title: "Failed to prepare upload",
+              description: String(urlPayload?.error || "Please try a different file."),
+              variant: "destructive",
+            });
+            continue;
+          }
+
+          const uploadURL = typeof urlPayload?.uploadURL === "string" ? urlPayload.uploadURL : "";
+          const objectPath = typeof urlPayload?.objectPath === "string" ? urlPayload.objectPath : "";
+          const objectUrl = typeof urlPayload?.objectUrl === "string" ? urlPayload.objectUrl : "";
+          const attachmentPath = objectUrl || objectPath;
+
+          if (!uploadURL || !attachmentPath) {
+            toast({ title: "Upload response invalid", description: "Missing upload URL or object path.", variant: "destructive" });
+            continue;
+          }
+
+          const uploadRes = await fetch(uploadURL, {
+            method: "PUT",
+            body: file,
+            headers: { "Content-Type": file.type || "application/octet-stream" },
+          });
+
+          if (!uploadRes.ok) {
+            const uploadErrorText = await uploadRes.text().catch(() => "");
+            toast({
+              title: "Failed to upload file",
+              description: uploadErrorText.slice(0, 160) || `${uploadRes.status} ${uploadRes.statusText}`,
+              variant: "destructive",
+            });
+            continue;
+          }
+
+          setAttachments(prev => [...prev, { name: file.name, objectPath: attachmentPath, type: file.type }]);
+        } catch (fileError: any) {
+          toast({
+            title: "Failed to upload file",
+            description: fileError?.message || "Please retry.",
+            variant: "destructive",
+          });
         }
-
-        const payload = await urlRes.json();
-        const uploadURL = typeof payload?.uploadURL === "string" ? payload.uploadURL : "";
-        const objectPath = typeof payload?.objectPath === "string" ? payload.objectPath : "";
-        const objectUrl = typeof payload?.objectUrl === "string" ? payload.objectUrl : "";
-        const attachmentPath = objectUrl || objectPath;
-
-        if (!uploadURL || !attachmentPath) {
-          toast({ title: "Upload response invalid", variant: "destructive" });
-          continue;
-        }
-
-        const uploadRes = await fetch(uploadURL, {
-          method: "PUT",
-          body: file,
-          headers: { "Content-Type": file.type || "application/octet-stream" },
-        });
-
-        if (!uploadRes.ok) {
-          toast({ title: "Failed to upload file", variant: "destructive" });
-          continue;
-        }
-
-        setAttachments(prev => [...prev, { name: file.name, objectPath: attachmentPath, type: file.type }]);
       }
     } finally {
       setUploading(false);

@@ -6,18 +6,46 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Mail, Phone, MapPin, Calendar, CreditCard, Palette, FileText, Pencil, Check, X, ExternalLink } from "lucide-react";
+import { Mail, Phone, MapPin, Calendar, CreditCard, Palette, FileText, Pencil, Check, X, ExternalLink, CheckCircle2 } from "lucide-react";
 import { format } from "date-fns";
 import { Link } from "wouter";
 import { useLocation } from "wouter";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/contexts/AuthContext";
 import type { Client, Subscription, BrandingKit, Invoice, Newsletter } from "@shared/schema";
 
 interface ClientSidePanelProps {
   clientId: string;
   open: boolean;
   onClose: () => void;
+}
+
+interface SenderVerificationStatus {
+  isVerified: boolean;
+  pendingVerification?: boolean;
+  signatureId?: number | null;
+  serverId?: number | null;
+  streamId?: string | null;
+  qualityState?: "healthy" | "watch" | "paused" | string;
+  autoPauseReason?: string | null;
+  requiresCustomSenderDomain?: boolean;
+  senderRequirementMessage?: string | null;
+}
+
+interface FollowUpBossStatus {
+  connected: boolean;
+  accountLabel?: string | null;
+  lastSyncedAt?: string | null;
+  lastSyncStatus?: "idle" | "success" | "error";
+  lastSyncMessage?: string | null;
+  autoSyncEnabled?: boolean;
+  autoSyncIntervalMinutes?: number;
+  appUrl?: string;
+}
+
+interface SupportStatusResponse {
+  supportClientId: string | null;
 }
 
 function getStatusBadge(status: string) {
@@ -57,10 +85,13 @@ const INVOICE_STATUS_OPTIONS = [
 
 export function ClientSidePanel({ clientId, open, onClose }: ClientSidePanelProps) {
   const { toast } = useToast();
+  const { user } = useAuth();
   const [, setLocation] = useLocation();
+  const isInternalOperator = (user as any)?.accountType === "internal_operator";
   const [isEditing, setIsEditing] = useState(false);
   const [editingSubscriptionId, setEditingSubscriptionId] = useState<string | null>(null);
   const [editingInvoiceId, setEditingInvoiceId] = useState<string | null>(null);
+  const [followUpBossApiKey, setFollowUpBossApiKey] = useState("");
   const [subscriptionDrafts, setSubscriptionDrafts] = useState<
     Record<
       string,
@@ -95,6 +126,8 @@ export function ClientSidePanel({ clientId, open, onClose }: ClientSidePanelProp
     youtube: "",
     primaryColor: "",
     secondaryColor: "",
+    defaultDeliveryProvider: "postmark" as "postmark" | "mailchimp" | "html_export",
+    defaultAudienceTag: "all",
   });
 
   const { data: clientData, isLoading } = useQuery<{
@@ -126,9 +159,58 @@ export function ClientSidePanel({ clientId, open, onClose }: ClientSidePanelProp
     enabled: open && !!clientId,
   });
 
+  const { data: verificationStatus, isLoading: verificationLoading } = useQuery<SenderVerificationStatus>({
+    queryKey: ["/api/clients", clientId, "verification-status"],
+    queryFn: async () => {
+      const res = await fetch(`/api/clients/${clientId}/verification-status`);
+      if (!res.ok) {
+        throw new Error(await res.text());
+      }
+      return res.json();
+    },
+    enabled: open && !!clientId,
+    retry: false,
+  });
+
+  const { data: followUpBossStatus } = useQuery<FollowUpBossStatus>({
+    queryKey: ["/api/clients", clientId, "crm", "follow-up-boss"],
+    queryFn: async () => {
+      const res = await fetch(`/api/clients/${clientId}/crm/follow-up-boss/status`, {
+        credentials: "include",
+      });
+      if (!res.ok) {
+        return { connected: false };
+      }
+      return res.json();
+    },
+    enabled: open && !!clientId,
+    retry: false,
+  });
+
+  const { data: supportStatus } = useQuery<SupportStatusResponse>({
+    queryKey: ["/api/support/status"],
+    queryFn: async () => {
+      const res = await fetch("/api/support/status", { credentials: "include" });
+      if (!res.ok) {
+        return { supportClientId: null };
+      }
+      return res.json();
+    },
+    enabled: open && !!clientId && isInternalOperator,
+    retry: false,
+  });
+
   const client = clientData?.client;
   const brandingKit = clientData?.brandingKit;
   const newsletters = clientData?.newsletters || [];
+  const postmarkServerId =
+    verificationStatus?.serverId ??
+    ((client as any)?.postmarkServerId ? Number((client as any).postmarkServerId) : null);
+  const postmarkServerUrl = postmarkServerId
+    ? `https://account.postmarkapp.com/servers/${postmarkServerId}`
+    : null;
+  const postmarkStreamId = verificationStatus?.streamId || ((client as any)?.postmarkMessageStreamId ?? null);
+  const followUpBossAppUrl = String(followUpBossStatus?.appUrl || "https://app.followupboss.com");
   const invoicesBySubscription = invoices.reduce<Record<string, Invoice[]>>((acc, invoice) => {
     if (!invoice.subscriptionId) return acc;
     if (!acc[invoice.subscriptionId]) {
@@ -160,12 +242,15 @@ export function ClientSidePanel({ clientId, open, onClose }: ClientSidePanelProp
       youtube: brandingKit?.youtube || "",
       primaryColor: brandingKit?.primaryColor || "#1a5f4a",
       secondaryColor: brandingKit?.secondaryColor || "#000000",
+      defaultDeliveryProvider: ((client as any).defaultDeliveryProvider || "postmark") as "postmark" | "mailchimp" | "html_export",
+      defaultAudienceTag: (client as any).defaultAudienceTag || "all",
     });
     setIsEditing(false);
     setEditingSubscriptionId(null);
     setEditingInvoiceId(null);
     setSubscriptionDrafts({});
     setInvoiceDrafts({});
+    setFollowUpBossApiKey("");
   }, [open, client, brandingKit]);
 
   const updateClientMutation = useMutation({
@@ -176,6 +261,8 @@ export function ClientSidePanel({ clientId, open, onClose }: ClientSidePanelProp
         phone: form.phone.trim() || null,
         locationCity: form.locationCity.trim() || null,
         locationRegion: form.locationRegion.trim() || null,
+        defaultDeliveryProvider: form.defaultDeliveryProvider,
+        defaultAudienceTag: form.defaultAudienceTag.trim() || "all",
       });
       await apiRequest("PUT", `/api/clients/${client.id}/branding-kit`, {
         website: form.website.trim() || null,
@@ -248,6 +335,169 @@ export function ClientSidePanel({ clientId, open, onClose }: ClientSidePanelProp
     },
     onError: (error: Error) => {
       toast({ title: "Failed to update invoice", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const verifySenderMutation = useMutation({
+    mutationFn: async () => {
+      if (!client) return null;
+      const response = await apiRequest("POST", `/api/clients/${client.id}/verify-sender`, {});
+      return response.json();
+    },
+    onSuccess: async (result: any) => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["/api/clients", clientId, "verification-status"] }),
+        queryClient.invalidateQueries({ queryKey: ["/api/clients", clientId] }),
+        queryClient.invalidateQueries({ queryKey: ["/api/clients"] }),
+      ]);
+      toast({
+        title: result?.isVerified ? "Sender verified" : "Verification email sent",
+        description: result?.message || undefined,
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Verification failed",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const startSupportModeMutation = useMutation({
+    mutationFn: async () => {
+      if (!client || !isInternalOperator) return null;
+      const response = await apiRequest("POST", "/api/support/impersonate", {
+        clientId: client.id,
+      });
+      return response.json();
+    },
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["/api/support/status"] }),
+        queryClient.invalidateQueries({ queryKey: ["/api/clients"] }),
+        queryClient.invalidateQueries({ queryKey: ["/api/newsletters"] }),
+        queryClient.invalidateQueries({ queryKey: ["/api/invoices"] }),
+        queryClient.invalidateQueries({ queryKey: ["/api/subscriptions"] }),
+      ]);
+      toast({ title: "Support mode enabled", description: "Workspace is now scoped to this client." });
+      setLocation("/newsletters");
+      onClose();
+    },
+    onError: (error: Error) => {
+      toast({ title: "Could not open client workspace", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const stopSupportModeMutation = useMutation({
+    mutationFn: async () => {
+      if (!isInternalOperator) return null;
+      const response = await apiRequest("POST", "/api/support/stop-impersonation", {});
+      return response.json();
+    },
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["/api/support/status"] }),
+        queryClient.invalidateQueries({ queryKey: ["/api/clients"] }),
+        queryClient.invalidateQueries({ queryKey: ["/api/newsletters"] }),
+        queryClient.invalidateQueries({ queryKey: ["/api/invoices"] }),
+        queryClient.invalidateQueries({ queryKey: ["/api/subscriptions"] }),
+      ]);
+      toast({ title: "Support mode cleared" });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Could not clear support mode", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const connectFollowUpBossMutation = useMutation({
+    mutationFn: async () => {
+      if (!client) return null;
+      if (!followUpBossApiKey.trim()) {
+        throw new Error("Follow Up Boss API key is required");
+      }
+      const response = await apiRequest("POST", `/api/clients/${client.id}/crm/follow-up-boss/connect`, {
+        apiKey: followUpBossApiKey.trim(),
+      });
+      return response.json();
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["/api/clients", clientId, "crm", "follow-up-boss"] });
+      setFollowUpBossApiKey("");
+      toast({ title: "Follow Up Boss connected" });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Follow Up Boss connection failed",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const syncFollowUpBossMutation = useMutation({
+    mutationFn: async () => {
+      if (!client) return null;
+      const response = await apiRequest("POST", `/api/clients/${client.id}/crm/follow-up-boss/sync-contacts`, {});
+      return response.json();
+    },
+    onSuccess: async (data: any) => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["/api/clients", clientId, "crm", "follow-up-boss"] }),
+        queryClient.invalidateQueries({ queryKey: ["/api/clients", clientId, "contacts"] }),
+        queryClient.invalidateQueries({ queryKey: ["/api/clients", clientId, "contact-import-jobs"] }),
+      ]);
+      const summary = data?.summary || {};
+      toast({
+        title: "Follow Up Boss sync complete",
+        description: `${summary.importedCount || 0} new, ${summary.updatedCount || 0} updated`,
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Follow Up Boss sync failed",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const disconnectFollowUpBossMutation = useMutation({
+    mutationFn: async () => {
+      if (!client) return;
+      await apiRequest("DELETE", `/api/clients/${client.id}/crm/follow-up-boss/connect`, {});
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["/api/clients", clientId, "crm", "follow-up-boss"] });
+      toast({ title: "Follow Up Boss disconnected" });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Follow Up Boss disconnect failed",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const toggleFollowUpBossAutoSyncMutation = useMutation({
+    mutationFn: async () => {
+      if (!client) return null;
+      const response = await apiRequest("PATCH", `/api/clients/${client.id}/crm/follow-up-boss/settings`, {
+        autoSyncEnabled: !followUpBossStatus?.autoSyncEnabled,
+      });
+      return response.json();
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["/api/clients", clientId, "crm", "follow-up-boss"] });
+      toast({ title: "Follow Up Boss auto-sync updated" });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Follow Up Boss auto-sync failed",
+        description: error.message,
+        variant: "destructive",
+      });
     },
   });
 
@@ -433,9 +683,219 @@ export function ClientSidePanel({ clientId, open, onClose }: ClientSidePanelProp
                         className="h-8 text-sm"
                       />
                     </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <select
+                        value={form.defaultDeliveryProvider}
+                        onChange={(e) =>
+                          setForm((prev) => ({
+                            ...prev,
+                            defaultDeliveryProvider: e.target.value as "postmark" | "mailchimp" | "html_export",
+                          }))
+                        }
+                        className="h-8 rounded-md border bg-background px-2 text-sm"
+                      >
+                        <option value="postmark">Postmark</option>
+                        <option value="mailchimp">Mailchimp</option>
+                        <option value="html_export">Export HTML</option>
+                      </select>
+                      <Input
+                        value={form.defaultAudienceTag}
+                        onChange={(e) => setForm((prev) => ({ ...prev, defaultAudienceTag: e.target.value }))}
+                        placeholder="Default audience tag"
+                        className="h-8 text-sm"
+                      />
+                    </div>
                   </div>
                 </div>
               ) : null}
+
+              {isInternalOperator ? (
+                <div className="rounded-md border bg-muted/20 p-3 space-y-2">
+                  <div className="text-xs font-medium text-muted-foreground">Support Mode</div>
+                  <div className="text-xs text-muted-foreground">
+                    Enter the client workspace to help with sending and edits directly.
+                  </div>
+                  {supportStatus?.supportClientId === client.id ? (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-8 text-xs"
+                      onClick={() => stopSupportModeMutation.mutate()}
+                      disabled={stopSupportModeMutation.isPending}
+                    >
+                      {stopSupportModeMutation.isPending ? "Clearing..." : "Exit Client Workspace"}
+                    </Button>
+                  ) : (
+                    <Button
+                      size="sm"
+                      className="h-8 text-xs"
+                      onClick={() => startSupportModeMutation.mutate()}
+                      disabled={startSupportModeMutation.isPending}
+                    >
+                      {startSupportModeMutation.isPending ? "Opening..." : "Open Client Workspace"}
+                    </Button>
+                  )}
+                </div>
+              ) : null}
+
+              <div className="rounded-md border bg-muted/20 p-3 space-y-2">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-medium">Sender Verification</div>
+                    <div className="text-xs text-muted-foreground">
+                      One-click inbox verification. No DNS setup required in Flow.
+                    </div>
+                  </div>
+                  <Badge
+                    variant={
+                      verificationStatus?.isVerified
+                        ? "default"
+                        : verificationStatus?.qualityState === "paused"
+                          ? "destructive"
+                          : "secondary"
+                    }
+                    className="capitalize"
+                  >
+                    {verificationStatus?.isVerified
+                      ? "Verified"
+                      : verificationLoading
+                        ? "Checking"
+                        : "Pending"}
+                  </Badge>
+                </div>
+                {verificationStatus?.isVerified ? (
+                  <div className="inline-flex items-center gap-1.5 rounded-full bg-blue-500/10 px-2 py-1 text-xs text-blue-700 dark:text-blue-300">
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    Sender verified
+                  </div>
+                ) : null}
+                {verificationStatus?.autoPauseReason ? (
+                  <p className="text-xs text-amber-700">{verificationStatus.autoPauseReason}</p>
+                ) : null}
+                {verificationStatus?.senderRequirementMessage ? (
+                  <p className="text-xs text-amber-700">{verificationStatus.senderRequirementMessage}</p>
+                ) : null}
+                <div className="rounded-md border border-border/50 bg-background/75 px-2.5 py-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="text-xs">
+                      <div className="font-medium text-foreground">
+                        {postmarkServerId ? `Postmark Server #${postmarkServerId}` : "No Postmark server connected"}
+                      </div>
+                      {postmarkStreamId ? (
+                        <div className="text-muted-foreground">Broadcast stream: {postmarkStreamId}</div>
+                      ) : null}
+                    </div>
+                    {postmarkServerUrl ? (
+                      <Button asChild size="sm" variant="outline" className="h-7 px-2 text-xs">
+                        <a
+                          href={postmarkServerUrl}
+                          target="_blank"
+                          rel="noreferrer noopener"
+                          data-testid="button-open-postmark-server"
+                        >
+                          Open
+                          <ExternalLink className="w-3 h-3 ml-1" />
+                        </a>
+                      </Button>
+                    ) : null}
+                  </div>
+                </div>
+                <div className="rounded-md border border-border/50 bg-background/75 px-2.5 py-2">
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="text-xs">
+                        <div className="font-medium text-foreground">
+                          {followUpBossStatus?.connected ? "Follow Up Boss connected" : "Follow Up Boss not connected"}
+                        </div>
+                        {followUpBossStatus?.accountLabel ? (
+                          <div className="text-muted-foreground truncate">{followUpBossStatus.accountLabel}</div>
+                        ) : null}
+                      </div>
+                      {followUpBossStatus?.connected ? (
+                        <Button asChild size="sm" variant="outline" className="h-7 px-2 text-xs">
+                          <a href={followUpBossAppUrl} target="_blank" rel="noreferrer noopener">
+                            Open
+                            <ExternalLink className="w-3 h-3 ml-1" />
+                          </a>
+                        </Button>
+                      ) : null}
+                    </div>
+                    <Input
+                      type="password"
+                      value={followUpBossApiKey}
+                      onChange={(event) => setFollowUpBossApiKey(event.target.value)}
+                      placeholder={followUpBossStatus?.connected ? "Rotate API key" : "Follow Up Boss API key"}
+                      className="h-8 text-xs"
+                    />
+                    <div className="flex items-center gap-1.5">
+                      <Button
+                        size="sm"
+                        className="h-7 px-2 text-xs"
+                        onClick={() => connectFollowUpBossMutation.mutate()}
+                        disabled={connectFollowUpBossMutation.isPending || !followUpBossApiKey.trim()}
+                      >
+                        {connectFollowUpBossMutation.isPending
+                          ? "Connecting..."
+                          : followUpBossStatus?.connected
+                            ? "Rotate Key"
+                            : "Connect"}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-7 px-2 text-xs"
+                        onClick={() => syncFollowUpBossMutation.mutate()}
+                        disabled={syncFollowUpBossMutation.isPending || !followUpBossStatus?.connected}
+                      >
+                        {syncFollowUpBossMutation.isPending ? "Syncing..." : "Sync"}
+                      </Button>
+                      {followUpBossStatus?.connected ? (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-7 px-2 text-xs"
+                          onClick={() => toggleFollowUpBossAutoSyncMutation.mutate()}
+                          disabled={toggleFollowUpBossAutoSyncMutation.isPending}
+                        >
+                          {toggleFollowUpBossAutoSyncMutation.isPending
+                            ? "Saving..."
+                            : followUpBossStatus.autoSyncEnabled
+                              ? "Auto on"
+                              : "Auto off"}
+                        </Button>
+                      ) : null}
+                      {followUpBossStatus?.connected ? (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-7 px-2 text-xs"
+                          onClick={() => disconnectFollowUpBossMutation.mutate()}
+                          disabled={disconnectFollowUpBossMutation.isPending}
+                        >
+                          {disconnectFollowUpBossMutation.isPending ? "Removing..." : "Disconnect"}
+                        </Button>
+                      ) : null}
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <span>Default provider: {form.defaultDeliveryProvider === "html_export" ? "HTML Export" : form.defaultDeliveryProvider === "mailchimp" ? "Mailchimp" : "Postmark"}</span>
+                  <span>·</span>
+                  <span>Default audience: {form.defaultAudienceTag || "all"}</span>
+                </div>
+                <div className="flex items-center justify-end">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-8 text-xs"
+                    onClick={() => verifySenderMutation.mutate()}
+                    disabled={verifySenderMutation.isPending || verificationLoading}
+                    data-testid="button-client-verify-sender"
+                  >
+                    {verifySenderMutation.isPending ? "Sending..." : "Verify Sender"}
+                  </Button>
+                </div>
+              </div>
 
               <div className="space-y-2 text-sm">
                 <div className="flex items-center gap-2 text-muted-foreground">

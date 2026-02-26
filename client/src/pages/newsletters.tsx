@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState, type ChangeEvent } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { TopNav } from "@/components/TopNav";
@@ -12,7 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { LayoutGrid, List, Calendar, ChevronRight, Plus, Search, Loader2, UserSquare2 } from "lucide-react";
+import { LayoutGrid, List, Calendar, ChevronRight, Plus, Search, Loader2, UserSquare2, Upload } from "lucide-react";
 import { format } from "date-fns";
 import { Link } from "wouter";
 import { queryClient, apiRequest } from "@/lib/queryClient";
@@ -369,6 +369,8 @@ export default function NewslettersPage() {
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [importedHtml, setImportedHtml] = useState("");
+  const [importedHtmlFileName, setImportedHtmlFileName] = useState("");
+  const importHtmlInputRef = useRef<HTMLInputElement | null>(null);
   const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
 
   const { data: newsletters = [], isLoading } = useQuery<NewsletterWithClient[]>({
@@ -418,12 +420,33 @@ export default function NewslettersPage() {
       setSelectedClient(null);
       setSelectedInvoice(null);
       setClientSearch("");
+      setImportedHtml("");
+      setImportedHtmlFileName("");
       setLocation(`/newsletters/${newsletter.id}`);
     } catch (error) {
       toast({ title: "Failed to create newsletter", variant: "destructive" });
     } finally {
       setIsCreating(false);
     }
+  };
+
+  const handleImportHtmlFileChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.currentTarget.files?.[0];
+    if (!file) return;
+    const fileName = file.name.toLowerCase();
+    const hasHtmlExtension = /\.(html?|xhtml)$/i.test(fileName);
+    const hasHtmlMime = !file.type || ["text/html", "text/plain", "application/xhtml+xml"].includes(file.type.toLowerCase());
+    if (!hasHtmlExtension && !hasHtmlMime) return;
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const text = typeof reader.result === "string" ? reader.result : "";
+      if (!text.trim()) return;
+      setImportedHtml(text);
+      setImportedHtmlFileName(file.name);
+    };
+    reader.readAsText(file);
+    event.currentTarget.value = "";
   };
 
   const clientInvoices = selectedClient 
@@ -558,6 +581,7 @@ export default function NewslettersPage() {
           setSelectedInvoice(null);
           setClientSearch("");
           setImportedHtml("");
+          setImportedHtmlFileName("");
         }
       }}>
         <DialogContent className="sm:max-w-md">
@@ -667,10 +691,32 @@ export default function NewslettersPage() {
 
               <div className="space-y-2 pt-2 border-t">
                 <label className="text-sm font-medium">Import HTML (optional)</label>
+                <div className="flex items-center gap-2">
+                  <Input
+                    ref={importHtmlInputRef}
+                    type="file"
+                    accept=".html,.htm,text/html"
+                    onChange={handleImportHtmlFileChange}
+                    className="hidden"
+                    id="newsletter-create-html-file-input"
+                  />
+                  <Button type="button" variant="outline" onClick={() => importHtmlInputRef.current?.click()} className="gap-2">
+                    <Upload className="w-4 h-4" />
+                    Upload HTML
+                  </Button>
+                  {importedHtmlFileName && (
+                    <span className="text-xs text-muted-foreground truncate" title={importedHtmlFileName}>
+                      {importedHtmlFileName}
+                    </span>
+                  )}
+                </div>
                 <Textarea
                   placeholder="Paste your email HTML here..."
                   value={importedHtml}
-                  onChange={(e) => setImportedHtml(e.target.value)}
+                  onChange={(e) => {
+                    setImportedHtml(e.target.value);
+                    if (importedHtmlFileName) setImportedHtmlFileName("");
+                  }}
                   className="min-h-[100px] font-mono text-xs"
                   data-testid="textarea-import-html"
                 />

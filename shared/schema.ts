@@ -1,5 +1,18 @@
 import { sql, relations } from "drizzle-orm";
-import { pgTable, text, varchar, timestamp, date, jsonb, integer, boolean, serial, decimal } from "drizzle-orm/pg-core";
+import {
+  pgTable,
+  text,
+  varchar,
+  timestamp,
+  date,
+  jsonb,
+  integer,
+  boolean,
+  serial,
+  decimal,
+  index,
+  uniqueIndex,
+} from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -12,6 +25,15 @@ export const users = pgTable("users", {
   name: text("name").notNull(),
   passwordHash: text("password_hash").notNull(),
   role: text("role", { enum: ["admin", "producer"] }).notNull().default("producer"),
+  accountType: text("account_type", { enum: ["internal_operator", "diy_customer"] })
+    .notNull()
+    .default("internal_operator"),
+  diyClientId: varchar("diy_client_id"),
+  billingStatus: text("billing_status", { enum: ["trialing", "active", "past_due", "canceled"] })
+    .notNull()
+    .default("active"),
+  onboardingCompleted: boolean("onboarding_completed").notNull().default(false),
+  timezone: text("timezone").notNull().default("America/New_York"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -35,10 +57,37 @@ export const clients = pgTable("clients", {
   phone: text("phone"),
   locationCity: text("location_city"),
   locationRegion: text("location_region"),
+  serviceMode: text("service_mode", { enum: ["diy_active", "dfy_requested", "dfy_active", "hybrid"] })
+    .notNull()
+    .default("dfy_active"),
   newsletterFrequency: text("newsletter_frequency", { enum: ["weekly", "biweekly", "monthly"] }).notNull().default("monthly"),
   subscriptionStatus: text("subscription_status", { enum: ["active", "paused", "past_due", "canceled"] }).notNull().default("active"),
+  defaultDeliveryProvider: text("default_delivery_provider", { enum: ["postmark", "mailchimp", "html_export"] })
+    .notNull()
+    .default("postmark"),
+  defaultAudienceTag: text("default_audience_tag").notNull().default("all"),
   isVerified: boolean("is_verified").notNull().default(false),
   postmarkSignatureId: integer("postmark_signature_id"),
+  postmarkServerId: integer("postmark_server_id"),
+  postmarkMessageStreamId: text("postmark_message_stream_id"),
+  postmarkDomain: text("postmark_domain"),
+  postmarkDomainVerificationState: text("postmark_domain_verification_state", {
+    enum: ["not_configured", "pending", "verified", "failed"],
+  })
+    .notNull()
+    .default("not_configured"),
+  postmarkSenderVerificationState: text("postmark_sender_verification_state", {
+    enum: ["missing", "pending", "verified", "failed"],
+  })
+    .notNull()
+    .default("missing"),
+  postmarkQualityState: text("postmark_quality_state", {
+    enum: ["healthy", "watch", "paused"],
+  })
+    .notNull()
+    .default("healthy"),
+  postmarkAutoPausedAt: timestamp("postmark_auto_paused_at"),
+  postmarkAutoPauseReason: text("postmark_auto_pause_reason"),
   assignedToId: varchar("assigned_to_id").references(() => users.id),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
@@ -62,6 +111,7 @@ export const clientsRelations = relations(clients, ({ one, many }) => ({
   contactImportJobs: many(contactImportJobs),
   contactSegments: many(contactSegments),
   onboardingTokens: many(clientOnboardingTokens),
+  crmConnections: many(clientCrmConnections),
 }));
 
 export const insertClientSchema = createInsertSchema(clients).omit({
@@ -71,6 +121,109 @@ export const insertClientSchema = createInsertSchema(clients).omit({
 });
 export type InsertClient = z.infer<typeof insertClientSchema>;
 export type Client = typeof clients.$inferSelect;
+
+// ============================================================================
+// CLIENT POSTMARK TENANTS - Per-client Postmark server isolation + quality state
+// ============================================================================
+export const clientPostmarkTenants = pgTable(
+  "client_postmark_tenants",
+  {
+    id: serial("id").primaryKey(),
+    clientId: varchar("client_id")
+      .notNull()
+      .unique()
+      .references(() => clients.id, { onDelete: "cascade" }),
+    serverId: integer("server_id").notNull(),
+    serverToken: text("server_token").notNull(),
+    broadcastStreamId: text("broadcast_stream_id").notNull(),
+    webhookId: integer("webhook_id"),
+    webhookUrl: text("webhook_url"),
+    senderSignatureId: integer("sender_signature_id"),
+    senderEmail: text("sender_email"),
+    senderConfirmed: boolean("sender_confirmed").notNull().default(false),
+    domain: text("domain"),
+    domainVerificationState: text("domain_verification_state", {
+      enum: ["not_configured", "pending", "verified", "failed"],
+    })
+      .notNull()
+      .default("not_configured"),
+    qualityState: text("quality_state", { enum: ["healthy", "watch", "paused"] })
+      .notNull()
+      .default("healthy"),
+    autoPausedAt: timestamp("auto_paused_at"),
+    autoPauseReason: text("auto_pause_reason"),
+    lastBounceRate: decimal("last_bounce_rate", { precision: 6, scale: 4 }),
+    lastComplaintRate: decimal("last_complaint_rate", { precision: 6, scale: 4 }),
+    lastHealthCheckAt: timestamp("last_health_check_at"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    qualityIdx: index("client_postmark_tenants_quality_idx").on(table.qualityState),
+  })
+);
+
+export const clientPostmarkTenantsRelations = relations(clientPostmarkTenants, ({ one }) => ({
+  client: one(clients, {
+    fields: [clientPostmarkTenants.clientId],
+    references: [clients.id],
+  }),
+}));
+
+export const insertClientPostmarkTenantSchema = createInsertSchema(clientPostmarkTenants).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type InsertClientPostmarkTenant = z.infer<typeof insertClientPostmarkTenantSchema>;
+export type ClientPostmarkTenant = typeof clientPostmarkTenants.$inferSelect;
+
+// ============================================================================
+// CLIENT CRM CONNECTIONS - Per-client CRM provider credentials + sync state
+// ============================================================================
+export const clientCrmConnections = pgTable(
+  "client_crm_connections",
+  {
+    id: serial("id").primaryKey(),
+    clientId: varchar("client_id")
+      .notNull()
+      .references(() => clients.id, { onDelete: "cascade" }),
+    provider: text("provider", { enum: ["follow_up_boss", "kvcore", "boldtrail"] }).notNull(),
+    status: text("status", { enum: ["connected", "disconnected", "error"] }).notNull().default("connected"),
+    accessToken: text("access_token").notNull(),
+    accountLabel: text("account_label"),
+    metadata: jsonb("metadata").$type<Record<string, unknown>>().notNull().default({}),
+    lastSyncedAt: timestamp("last_synced_at"),
+    lastSyncStatus: text("last_sync_status", { enum: ["idle", "success", "error"] })
+      .notNull()
+      .default("idle"),
+    lastSyncMessage: text("last_sync_message"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    clientProviderUnique: uniqueIndex("client_crm_connections_client_provider_uq").on(
+      table.clientId,
+      table.provider
+    ),
+    clientProviderIdx: index("client_crm_connections_client_provider_idx").on(table.clientId, table.provider),
+  })
+);
+
+export const clientCrmConnectionsRelations = relations(clientCrmConnections, ({ one }) => ({
+  client: one(clients, {
+    fields: [clientCrmConnections.clientId],
+    references: [clients.id],
+  }),
+}));
+
+export const insertClientCrmConnectionSchema = createInsertSchema(clientCrmConnections).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type InsertClientCrmConnection = z.infer<typeof insertClientCrmConnectionSchema>;
+export type ClientCrmConnection = typeof clientCrmConnections.$inferSelect;
 
 // ============================================================================
 // HTML TEMPLATES - Base templates for newsletters
@@ -722,34 +875,143 @@ export type ContactSegment = typeof contactSegments.$inferSelect;
 // ============================================================================
 // NEWSLETTER DELIVERIES / EVENTS - Postmark send + analytics
 // ============================================================================
-export const newsletterDeliveries = pgTable("newsletter_deliveries", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  newsletterId: varchar("newsletter_id").notNull().references(() => newsletters.id, { onDelete: "cascade" }),
-  clientId: varchar("client_id").notNull().references(() => clients.id, { onDelete: "cascade" }),
-  contactId: varchar("contact_id").references(() => contacts.id, { onDelete: "set null" }),
-  email: text("email").notNull(),
-  audienceTag: text("audience_tag").default("all"),
-  postmarkMessageId: text("postmark_message_id"),
-  status: text("status", { enum: ["queued", "sent", "failed", "bounced", "unsubscribed"] })
-    .notNull()
-    .default("queued"),
-  error: text("error"),
-  sentAt: timestamp("sent_at"),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-});
+export const newsletterDeliveries = pgTable(
+  "newsletter_deliveries",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    newsletterId: varchar("newsletter_id").notNull().references(() => newsletters.id, { onDelete: "cascade" }),
+    clientId: varchar("client_id").notNull().references(() => clients.id, { onDelete: "cascade" }),
+    contactId: varchar("contact_id").references(() => contacts.id, { onDelete: "set null" }),
+    email: text("email").notNull(),
+    audienceTag: text("audience_tag").default("all"),
+    postmarkMessageId: text("postmark_message_id"),
+    status: text("status", { enum: ["queued", "sent", "failed", "bounced", "unsubscribed"] })
+      .notNull()
+      .default("queued"),
+    error: text("error"),
+    sentAt: timestamp("sent_at"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    newsletterStatusIdx: index("newsletter_deliveries_newsletter_status_idx").on(table.newsletterId, table.status),
+    clientStatusIdx: index("newsletter_deliveries_client_status_idx").on(table.clientId, table.status),
+    messageIdIdx: index("newsletter_deliveries_message_id_idx").on(table.postmarkMessageId),
+  })
+);
 
-export const newsletterEvents = pgTable("newsletter_events", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  newsletterId: varchar("newsletter_id").notNull().references(() => newsletters.id, { onDelete: "cascade" }),
-  clientId: varchar("client_id").notNull().references(() => clients.id, { onDelete: "cascade" }),
-  contactId: varchar("contact_id").references(() => contacts.id, { onDelete: "set null" }),
-  email: text("email"),
-  postmarkMessageId: text("postmark_message_id"),
-  eventType: text("event_type").notNull(),
-  occurredAt: timestamp("occurred_at"),
-  payload: jsonb("payload").$type<Record<string, unknown>>().notNull().default({}),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-});
+export const newsletterEvents = pgTable(
+  "newsletter_events",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    newsletterId: varchar("newsletter_id").notNull().references(() => newsletters.id, { onDelete: "cascade" }),
+    clientId: varchar("client_id").notNull().references(() => clients.id, { onDelete: "cascade" }),
+    contactId: varchar("contact_id").references(() => contacts.id, { onDelete: "set null" }),
+    email: text("email"),
+    postmarkMessageId: text("postmark_message_id"),
+    eventType: text("event_type").notNull(),
+    occurredAt: timestamp("occurred_at"),
+    payload: jsonb("payload").$type<Record<string, unknown>>().notNull().default({}),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    newsletterEventIdx: index("newsletter_events_newsletter_event_idx").on(table.newsletterId, table.eventType),
+    clientOccurredIdx: index("newsletter_events_client_occurred_idx").on(table.clientId, table.occurredAt),
+    messageIdIdx: index("newsletter_events_message_id_idx").on(table.postmarkMessageId),
+  })
+);
+
+export const supportActionAudits = pgTable(
+  "support_action_audits",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    actorUserId: varchar("actor_user_id").references(() => users.id, { onDelete: "set null" }),
+    targetClientId: varchar("target_client_id").references(() => clients.id, { onDelete: "set null" }),
+    action: text("action").notNull(),
+    metadata: jsonb("metadata").$type<Record<string, unknown>>().notNull().default({}),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    actorIdx: index("support_action_audits_actor_idx").on(table.actorUserId),
+    clientIdx: index("support_action_audits_client_idx").on(table.targetClientId),
+    actionCreatedIdx: index("support_action_audits_action_created_idx").on(table.action, table.createdAt),
+  })
+);
+
+export const diyFunnelEvents = pgTable(
+  "diy_funnel_events",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    clientId: varchar("client_id").notNull().references(() => clients.id, { onDelete: "cascade" }),
+    userId: varchar("user_id").references(() => users.id, { onDelete: "set null" }),
+    eventType: text("event_type").notNull(),
+    occurredAt: timestamp("occurred_at").notNull().defaultNow(),
+    payload: jsonb("payload").$type<Record<string, unknown>>().notNull().default({}),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    clientEventCreatedIdx: index("diy_funnel_events_client_event_created_idx").on(
+      table.clientId,
+      table.eventType,
+      table.createdAt
+    ),
+    userCreatedIdx: index("diy_funnel_events_user_created_idx").on(table.userId, table.createdAt),
+  })
+);
+
+export const crmSyncEvents = pgTable(
+  "crm_sync_events",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    clientId: varchar("client_id").notNull().references(() => clients.id, { onDelete: "cascade" }),
+    provider: text("provider", { enum: ["follow_up_boss", "kvcore", "boldtrail"] }).notNull(),
+    externalEventId: text("external_event_id").notNull(),
+    eventType: text("event_type").notNull(),
+    payload: jsonb("payload").$type<Record<string, unknown>>().notNull().default({}),
+    processedAt: timestamp("processed_at").notNull().defaultNow(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    dedupeIdx: uniqueIndex("crm_sync_events_client_provider_external_uq").on(
+      table.clientId,
+      table.provider,
+      table.externalEventId
+    ),
+    clientCreatedIdx: index("crm_sync_events_client_created_idx").on(table.clientId, table.createdAt),
+  })
+);
+
+export const newsletterSendJobs = pgTable(
+  "newsletter_send_jobs",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    newsletterId: varchar("newsletter_id").notNull().references(() => newsletters.id, { onDelete: "cascade" }),
+    clientId: varchar("client_id").notNull().references(() => clients.id, { onDelete: "cascade" }),
+    requestedById: varchar("requested_by_id").references(() => users.id, { onDelete: "set null" }),
+    provider: text("provider", { enum: ["postmark", "mailchimp", "html_export"] }).notNull().default("postmark"),
+    audienceTag: text("audience_tag").notNull().default("all"),
+    idempotencyKey: text("idempotency_key").notNull(),
+    status: text("status", { enum: ["queued", "processing", "completed", "failed", "canceled"] })
+      .notNull()
+      .default("queued"),
+    scheduledFor: timestamp("scheduled_for").notNull().defaultNow(),
+    startedAt: timestamp("started_at"),
+    completedAt: timestamp("completed_at"),
+    attempts: integer("attempts").notNull().default(0),
+    lastError: text("last_error"),
+    metadata: jsonb("metadata").$type<Record<string, unknown>>().notNull().default({}),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    statusScheduledIdx: index("newsletter_send_jobs_status_scheduled_idx").on(table.status, table.scheduledFor),
+    clientIdx: index("newsletter_send_jobs_client_idx").on(table.clientId),
+    newsletterIdx: index("newsletter_send_jobs_newsletter_idx").on(table.newsletterId),
+    idempotencyIdx: uniqueIndex("newsletter_send_jobs_newsletter_idempotency_uq").on(
+      table.newsletterId,
+      table.idempotencyKey
+    ),
+  })
+);
 
 export const insertNewsletterDeliverySchema = createInsertSchema(newsletterDeliveries).omit({
   id: true,
@@ -764,6 +1026,35 @@ export const insertNewsletterEventSchema = createInsertSchema(newsletterEvents).
 });
 export type InsertNewsletterEvent = z.infer<typeof insertNewsletterEventSchema>;
 export type NewsletterEvent = typeof newsletterEvents.$inferSelect;
+
+export const insertSupportActionAuditSchema = createInsertSchema(supportActionAudits).omit({
+  id: true,
+  createdAt: true,
+});
+export type InsertSupportActionAudit = z.infer<typeof insertSupportActionAuditSchema>;
+export type SupportActionAudit = typeof supportActionAudits.$inferSelect;
+
+export const insertDiyFunnelEventSchema = createInsertSchema(diyFunnelEvents).omit({
+  id: true,
+  createdAt: true,
+});
+export type InsertDiyFunnelEvent = z.infer<typeof insertDiyFunnelEventSchema>;
+export type DiyFunnelEvent = typeof diyFunnelEvents.$inferSelect;
+
+export const insertCrmSyncEventSchema = createInsertSchema(crmSyncEvents).omit({
+  id: true,
+  createdAt: true,
+});
+export type InsertCrmSyncEvent = z.infer<typeof insertCrmSyncEventSchema>;
+export type CrmSyncEvent = typeof crmSyncEvents.$inferSelect;
+
+export const insertNewsletterSendJobSchema = createInsertSchema(newsletterSendJobs).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type InsertNewsletterSendJob = z.infer<typeof insertNewsletterSendJobSchema>;
+export type NewsletterSendJob = typeof newsletterSendJobs.$inferSelect;
 
 // ============================================================================
 // SESSIONS - Persistent session store
@@ -1033,6 +1324,9 @@ export interface NewsletterDocumentMeta {
   // Tag-based segment selector (defaults to "all").
   // Used by send/schedule to decide which contacts receive the campaign.
   audienceTag?: string;
+  // DIY lane rendering/editing hints.
+  simpleMode?: boolean;
+  firstTemplateLocked?: boolean;
 }
 
 // V1 block editor document with HTML fallback for legacy compatibility

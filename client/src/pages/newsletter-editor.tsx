@@ -1,13 +1,13 @@
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect, type ChangeEvent } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { TopNav } from "@/components/TopNav";
 import { RightPanel } from "@/components/RightPanel";
 import { HTMLPreviewFrame } from "@/components/HTMLPreviewFrame";
-import { ClientSidePanel } from "@/components/ClientSidePanel";
 import { GeminiChatPanel } from "@/components/GeminiChatPanel";
 import { SendConfirmDialog } from "@/components/SendConfirmDialog";
+import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -32,7 +32,6 @@ import {
 } from "@/components/ui/dialog";
 import {
   ArrowLeft,
-  User,
   ChevronDown,
   Copy,
   Calendar as CalendarIcon,
@@ -46,8 +45,8 @@ import {
   Send,
   Monitor,
   Smartphone,
-  UserSquare2,
   Bot,
+  PanelLeftOpen,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import type {
@@ -66,13 +65,13 @@ interface NewsletterEditorPageProps {
 
 export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorPageProps) {
   const { toast } = useToast();
+  const { user } = useAuth();
   const [, setLocation] = useLocation();
-  const [showClientPanel, setShowClientPanel] = useState(false);
   const [mobileRailOpen, setMobileRailOpen] = useState(false);
-  const [rightRailMode, setRightRailMode] = useState<"ai" | "client">("ai");
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [sendDialogOpen, setSendDialogOpen] = useState(false);
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved">("idle");
+  const [leftRailCollapsed, setLeftRailCollapsed] = useState(false);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [editedTitle, setEditedTitle] = useState("");
   const [chatCollapsed, setChatCollapsed] = useState(false);
@@ -81,9 +80,13 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
   const [htmlDraft, setHtmlDraft] = useState("");
   const [showImportDialog, setShowImportDialog] = useState(false);
   const [importHtml, setImportHtml] = useState("");
+  const [importHtmlFileName, setImportHtmlFileName] = useState("");
+  const importHtmlInputRef = useRef<HTMLInputElement | null>(null);
   const saveTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const saveStatusTimerRef = useRef<NodeJS.Timeout | null>(null);
   const { data: newsletterData, isLoading: loadingNewsletter, refetch: refetchNewsletter } = useQuery<{
     newsletter: Newsletter & { client?: Client };
+    client?: Client;
     document: NewsletterDocument;
     versions: NewsletterVersion[];
     flags: TasksFlags[];
@@ -91,10 +94,19 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
     invoice?: Invoice | null;
   }>({
     queryKey: ["/api/newsletters", newsletterId],
+    refetchInterval: (query) => {
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") {
+        return false;
+      }
+      const status = (query.state.data as any)?.newsletter?.status;
+      return status === "in_review" || status === "changes_requested" ? 15000 : false;
+    },
+    refetchOnWindowFocus: true,
   });
 
   const newsletter = newsletterData?.newsletter;
-  const client = newsletter?.client;
+  const client = newsletterData?.client || newsletter?.client || null;
+  const isDiySimpleMode = (user as any)?.accountType === "diy_customer";
 
   // Keep HTML as-is. Email builders (e.g. Postcards) rely on conditional comments (Outlook),
   // and "minifying" by stripping comments can break rendering.
@@ -128,7 +140,10 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
     },
     onSuccess: () => {
       setSaveStatus("saved");
-      setTimeout(() => setSaveStatus("idle"), 2000);
+      if (saveStatusTimerRef.current) {
+        clearTimeout(saveStatusTimerRef.current);
+      }
+      saveStatusTimerRef.current = setTimeout(() => setSaveStatus("idle"), 2000);
     },
     onError: (_err, _html, context) => {
       if (context?.previousData) {
@@ -159,6 +174,17 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
       updateHtmlMutation.mutate(html);
     }, 1500);
   }, [updateHtmlMutation]);
+
+  useEffect(() => {
+    return () => {
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current);
+      }
+      if (saveStatusTimerRef.current) {
+        clearTimeout(saveStatusTimerRef.current);
+      }
+    };
+  }, []);
 
   const updateStatusMutation = useMutation({
     mutationFn: async (status: string) => {
@@ -204,17 +230,8 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
 
   const hasContent = !!newsletterData?.html;
 
-  const openRightRail = (mode: "ai" | "client", options?: { openClientSheet?: boolean }) => {
-    setRightRailMode(mode);
-    if (mode === "ai") {
-      setShowClientPanel(false);
-      setChatCollapsed(false);
-    } else {
-      if (options?.openClientSheet) {
-        setShowClientPanel(true);
-      }
-    }
-
+  const openAiRail = () => {
+    setChatCollapsed(false);
     if (typeof window !== "undefined" && window.innerWidth < 1024) {
       setMobileRailOpen(true);
     }
@@ -270,7 +287,52 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
     if (!importHtml.trim()) return;
     updateHtmlMutation.mutate(importHtml.trim());
     setImportHtml("");
+    setImportHtmlFileName("");
     setShowImportDialog(false);
+  };
+
+  const handleImportHtmlFileChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.currentTarget.files?.[0];
+    if (!file) return;
+    const fileName = file.name.toLowerCase();
+    const hasHtmlExtension = /\.(html?|xhtml)$/i.test(fileName);
+    const hasHtmlMime =
+      !file.type ||
+      ["text/html", "text/plain", "application/xhtml+xml"].includes(file.type.toLowerCase());
+    if (!hasHtmlExtension && !hasHtmlMime) {
+      toast({
+        title: "Invalid file",
+        description: "Please upload an HTML file.",
+        variant: "destructive",
+      });
+      event.currentTarget.value = "";
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const text = typeof reader.result === "string" ? reader.result : "";
+      if (!text.trim()) {
+        toast({
+          title: "Empty file",
+          description: "This file has no HTML content.",
+          variant: "destructive",
+        });
+        return;
+      }
+      setImportHtml(text);
+      setImportHtmlFileName(file.name);
+      setShowImportDialog(true);
+    };
+    reader.onerror = () => {
+      toast({
+        title: "Upload failed",
+        description: "Could not read the HTML file.",
+        variant: "destructive",
+      });
+    };
+    reader.readAsText(file);
+    event.currentTarget.value = "";
   };
 
   if (loadingNewsletter) {
@@ -303,124 +365,143 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
   const formattedSendDate = newsletter.expectedSendDate
     ? format(new Date(newsletter.expectedSendDate), "MMM d, yyyy")
     : "No send date";
-  const desktopRailWidthClass = rightRailMode === "ai" && chatCollapsed ? "w-14" : "w-[380px] xl:w-[440px]";
+  const clientId = client?.id || newsletter.clientId;
+  const clientName = client?.name || "Client";
+  const desktopRailWidthClass = chatCollapsed
+    ? "w-14"
+    : leftRailCollapsed
+      ? "w-[420px] xl:w-[520px]"
+      : "w-[360px] lg:w-[420px] xl:w-[500px]";
+  const topControlButtonClass = "h-9 px-3 text-sm font-medium rounded-full border-0 bg-muted/35 hover:bg-muted/55 shadow-none";
+  const topIconButtonClass = "h-9 w-9 rounded-full border-0 bg-muted/35 hover:bg-muted/55";
+  const topSegmentClass = "inline-flex items-center rounded-full bg-muted/30 p-0.5";
 
   return (
     <div className="flex flex-col h-screen w-full bg-background">
       <TopNav />
       <div className="flex flex-1 overflow-hidden bg-background">
-        <div className="hidden lg:flex w-64 xl:w-72 flex-shrink-0 bg-background/80 flex-col px-3 pb-3">
-          <div className="pt-3 pb-2 space-y-2">
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-8 w-full justify-start px-2"
-              onClick={() => setLocation("/newsletters")}
-              data-testid="button-back"
-            >
-              <ArrowLeft className="w-4 h-4 mr-1.5" />
-              <span className="truncate">{newsletter.title}</span>
-            </Button>
-            {client && (
-              <button
-                type="button"
-                className="w-full rounded-md px-2 py-1.5 text-left hover:bg-muted/30 transition-colors"
-                onClick={() => openRightRail("client", { openClientSheet: true })}
-                data-testid="button-left-client-context"
-              >
-                <div className="text-sm font-medium truncate">{client.name}</div>
-                <div className="text-[11px] text-muted-foreground">{formattedSendDate}</div>
-              </button>
-            )}
-            {client && (
+        {!isDiySimpleMode && (
+          <div
+            className={`hidden lg:flex flex-shrink-0 bg-background/70 flex-col pb-3 transition-all ${
+              leftRailCollapsed ? "w-14 px-2" : "w-60 xl:w-64 px-3"
+            }`}
+          >
+            <div className="pt-3 pb-2 flex items-center justify-between gap-1">
               <Button
-                variant="outline"
+                variant="ghost"
                 size="sm"
-                className="h-8 w-full justify-start text-xs"
-                onClick={() => setShowClientPanel(true)}
-                data-testid="button-open-client-card-side"
+                className="h-8 w-8 justify-center px-0 rounded-full"
+                onClick={() => setLocation("/newsletters")}
+                data-testid="button-back"
               >
-                <UserSquare2 className="w-3.5 h-3.5 mr-1.5" />
-                Client Card
+                <ArrowLeft className="w-4 h-4" />
               </Button>
-            )}
-          </div>
-          <div className="flex-1 min-h-0 rounded-lg bg-background/70">
-            <RightPanel
-              newsletterId={newsletterId}
-              status={newsletter.status}
-              onStatusChange={(status) => updateStatusMutation.mutate(status)}
-              assignedToId={newsletter.assignedToId}
-              onAssignedToChange={(assignedToId) => updateAssignedToMutation.mutate(assignedToId)}
-            />
-          </div>
-        </div>
-
-        <div className="flex-1 flex flex-col min-w-0">
-          <header className="bg-background px-3 sm:px-5 pt-3 pb-2">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="flex min-w-0 flex-wrap items-center gap-2">
+              {leftRailCollapsed ? (
                 <Button
                   variant="ghost"
-                  size="icon"
-                  className="h-8 w-8 lg:hidden"
-                  onClick={() => setLocation("/newsletters")}
-                  data-testid="button-back-mobile"
+                  size="sm"
+                  className="h-8 w-8 justify-center px-0 rounded-full"
+                  onClick={() => setLeftRailCollapsed(false)}
+                  data-testid="button-toggle-left-rail"
                 >
-                  <ArrowLeft className="w-4 h-4" />
+                  <PanelLeftOpen className="w-4 h-4" />
                 </Button>
-                {isEditingTitle ? (
-                  <div className="flex items-center gap-1">
-                    <Input
-                      value={editedTitle}
-                      onChange={(e) => setEditedTitle(e.target.value)}
-                      className="h-8 w-56"
-                      autoFocus
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" && editedTitle.trim()) {
-                          updateTitleMutation.mutate(editedTitle.trim());
-                        } else if (e.key === "Escape") {
-                          setIsEditingTitle(false);
-                        }
-                      }}
-                      data-testid="input-edit-title"
-                    />
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8"
-                      onClick={() => editedTitle.trim() && updateTitleMutation.mutate(editedTitle.trim())}
-                      data-testid="button-save-title"
-                    >
-                      <Check className="w-4 h-4" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8"
-                      onClick={() => setIsEditingTitle(false)}
-                      data-testid="button-cancel-title"
-                    >
-                      <X className="w-4 h-4" />
-                    </Button>
-                  </div>
-                ) : (
-                  <button
-                    onClick={() => {
-                      setEditedTitle(newsletter.title);
-                      setIsEditingTitle(true);
-                    }}
-                    className="text-[15px] font-semibold tracking-tight truncate hover:underline cursor-pointer flex items-center gap-1.5 group"
-                    data-testid="button-edit-title"
+              ) : (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 rounded-full px-3 text-xs font-medium"
+                  onClick={() => setLeftRailCollapsed(true)}
+                  data-testid="button-toggle-left-rail"
+                >
+                  Menu
+                </Button>
+              )}
+            </div>
+
+            {leftRailCollapsed ? (
+              <div className="flex-1 min-h-0" />
+            ) : (
+              <div className="flex-1 min-h-0 rounded-lg bg-background/70">
+                <RightPanel
+                  newsletterId={newsletterId}
+                  status={newsletter.status}
+                  onStatusChange={(status) => updateStatusMutation.mutate(status)}
+                  assignedToId={newsletter.assignedToId}
+                  onAssignedToChange={(assignedToId) => updateAssignedToMutation.mutate(assignedToId)}
+                />
+              </div>
+            )}
+          </div>
+        )}
+
+        <div className="flex-1 flex flex-col min-w-0">
+          <header className="bg-background px-4 lg:px-5 py-3">
+            <div className="flex flex-wrap items-center justify-between gap-2.5">
+              <div className="flex min-w-0 flex-wrap items-center gap-2.5">
+                <div className="flex min-w-0 items-center gap-2 lg:hidden">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className={topIconButtonClass}
+                    onClick={() => setLocation("/newsletters")}
+                    data-testid="button-back-mobile"
                   >
-                    {newsletter.title}
-                    <Pencil className="w-3 h-3 opacity-0 group-hover:opacity-50 transition-opacity" />
-                  </button>
-                )}
+                    <ArrowLeft className="w-4 h-4" />
+                  </Button>
+                  {isEditingTitle ? (
+                    <div className="flex items-center gap-1">
+                      <Input
+                        value={editedTitle}
+                        onChange={(e) => setEditedTitle(e.target.value)}
+                        className="h-9 w-56 text-base"
+                        autoFocus
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && editedTitle.trim()) {
+                            updateTitleMutation.mutate(editedTitle.trim());
+                          } else if (e.key === "Escape") {
+                            setIsEditingTitle(false);
+                          }
+                        }}
+                        data-testid="input-edit-title"
+                      />
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className={topIconButtonClass}
+                        onClick={() => editedTitle.trim() && updateTitleMutation.mutate(editedTitle.trim())}
+                        data-testid="button-save-title"
+                      >
+                        <Check className="w-4 h-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className={topIconButtonClass}
+                        onClick={() => setIsEditingTitle(false)}
+                        data-testid="button-cancel-title"
+                      >
+                        <X className="w-4 h-4" />
+                      </Button>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => {
+                        setEditedTitle(newsletter.title);
+                        setIsEditingTitle(true);
+                      }}
+                      className="text-base font-semibold tracking-tight truncate hover:underline cursor-pointer flex items-center gap-1.5 group"
+                      data-testid="button-edit-title"
+                    >
+                      {newsletter.title}
+                      <Pencil className="w-3 h-3 opacity-0 group-hover:opacity-50 transition-opacity" />
+                    </button>
+                  )}
+                </div>
 
                 <Popover open={showDatePicker} onOpenChange={setShowDatePicker}>
                   <PopoverTrigger asChild>
-                    <Button variant="outline" size="sm" className="h-8 px-2.5 text-xs sm:text-sm" data-testid="button-edit-date">
+                    <Button variant="ghost" size="sm" className={topControlButtonClass} data-testid="button-edit-date">
                       <CalendarIcon className="w-3.5 h-3.5 mr-1.5" />
                       {formattedSendDate}
                     </Button>
@@ -436,9 +517,9 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
                 </Popover>
 
                 <Button
-                  variant={editingHtml ? "secondary" : "outline"}
+                  variant={editingHtml ? "secondary" : "ghost"}
                   size="sm"
-                  className="h-8 px-2.5 text-xs sm:text-sm"
+                  className={topControlButtonClass}
                   onClick={() => {
                     if (!editingHtml) {
                       setHtmlDraft(newsletterData?.html || "");
@@ -451,11 +532,11 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
                   {editingHtml ? "Preview" : "Edit HTML"}
                 </Button>
 
-                <div className="inline-flex items-center rounded-md bg-background overflow-hidden">
+                <div className={topSegmentClass}>
                   <Button
                     size="icon"
                     variant={previewDevice === "desktop" ? "secondary" : "ghost"}
-                    className="h-8 w-8 rounded-none"
+                    className="h-8 w-8 rounded-full"
                     onClick={() => setPreviewDevice("desktop")}
                     data-testid="button-device-desktop-topbar"
                   >
@@ -464,7 +545,7 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
                   <Button
                     size="icon"
                     variant={previewDevice === "mobile" ? "secondary" : "ghost"}
-                    className="h-8 w-8 rounded-none"
+                    className="h-8 w-8 rounded-full"
                     onClick={() => setPreviewDevice("mobile")}
                     data-testid="button-device-mobile-topbar"
                   >
@@ -484,12 +565,17 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
                     Saved
                   </span>
                 )}
+                {isDiySimpleMode && (
+                  <span className="inline-flex items-center rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary">
+                    Simple Mode
+                  </span>
+                )}
               </div>
 
               <div className="flex flex-wrap items-center justify-end gap-1.5 pl-1">
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
-                    <Button variant="outline" size="sm" className="h-8 px-2.5 text-xs sm:text-sm" data-testid="button-file-menu">
+                    <Button variant="ghost" size="sm" className={topControlButtonClass} data-testid="button-file-menu">
                       <Upload className="w-4 h-4 mr-1" />
                       File
                       <ChevronDown className="w-3.5 h-3.5 ml-1" />
@@ -500,10 +586,12 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
                       <Upload className="w-4 h-4 mr-2" />
                       Import HTML
                     </DropdownMenuItem>
-                    <DropdownMenuItem onClick={handleGetReviewLink} disabled={!hasContent} data-testid="button-review-link">
-                      <ExternalLink className="w-4 h-4 mr-2" />
-                      Get review link
-                    </DropdownMenuItem>
+                    {!isDiySimpleMode && (
+                      <DropdownMenuItem onClick={handleGetReviewLink} disabled={!hasContent} data-testid="button-review-link">
+                        <ExternalLink className="w-4 h-4 mr-2" />
+                        Get review link
+                      </DropdownMenuItem>
+                    )}
                     <DropdownMenuSeparator />
                     <DropdownMenuItem onClick={handleCopyHtml} disabled={!hasContent} data-testid="button-copy-html">
                       <Copy className="w-4 h-4 mr-2" />
@@ -519,7 +607,7 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
                 <Button
                   variant="default"
                   size="sm"
-                  className="h-8 px-2.5 text-xs sm:text-sm"
+                  className="h-9 px-3 text-sm font-medium rounded-full"
                   onClick={() => setSendDialogOpen(true)}
                   disabled={!hasContent}
                   data-testid="button-open-delivery-panel"
@@ -528,57 +616,19 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
                   Delivery
                 </Button>
 
-                {client && (
-                  <div className="inline-flex items-center rounded-md bg-background overflow-hidden">
-                    <Button
-                      size="sm"
-                      variant={rightRailMode === "client" ? "secondary" : "ghost"}
-                      className="h-8 rounded-none text-xs px-2.5"
-                      onClick={() => {
-                        openRightRail("client");
-                      }}
-                      data-testid="button-open-client-rail"
-                    >
-                      <UserSquare2 className="w-3.5 h-3.5 mr-1.5" />
-                      <span className="hidden sm:inline">Client</span>
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant={rightRailMode === "ai" ? "secondary" : "ghost"}
-                      className="h-8 rounded-none text-xs px-2.5"
-                      onClick={() => {
-                        openRightRail("ai");
-                      }}
-                      data-testid="button-open-ai-rail"
-                    >
-                      <Bot className="w-3.5 h-3.5 mr-1.5" />
-                      <span className="hidden sm:inline">AI</span>
-                    </Button>
-                  </div>
-                )}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className={`${topControlButtonClass} lg:hidden`}
+                  onClick={openAiRail}
+                  data-testid="button-open-ai-chat-mobile"
+                >
+                  <Bot className="w-4 h-4 mr-1" />
+                  AI
+                </Button>
+
               </div>
             </div>
-            {client && (
-              <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
-                <button
-                  type="button"
-                  className="inline-flex items-center gap-1 hover:text-foreground transition-colors"
-                  onClick={() => openRightRail("client", { openClientSheet: true })}
-                  data-testid="link-client-name"
-                >
-                  <User className="w-3.5 h-3.5" />
-                  {client.name}
-                </button>
-                <span>·</span>
-                <span>{formattedSendDate}</span>
-                {newsletterData?.invoice?.id && (
-                  <>
-                    <span>·</span>
-                    <span>Order #{newsletterData.invoice.id.slice(0, 8)}</span>
-                  </>
-                )}
-              </div>
-            )}
           </header>
 
           <div className="flex-1 min-h-0 relative p-2 sm:p-4 sm:pt-2">
@@ -622,7 +672,7 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
             ) : (
               <>
                 {hasContent ? (
-                  <div className="h-full rounded-xl bg-card/80 overflow-hidden shadow-sm">
+                  <div className="h-full rounded-2xl overflow-hidden">
                     <HTMLPreviewFrame
                       html={newsletterData?.html || ""}
                       isLoading={loadingNewsletter}
@@ -635,21 +685,23 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
                     />
                   </div>
                 ) : (
-                  <div className="flex-1 rounded-xl bg-card/70 flex items-center justify-center">
-                    <div className="flex flex-col items-center justify-center text-center p-12 max-w-md">
-                      <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center mb-4">
-                        <Code className="w-8 h-8 text-primary/60" />
+                  <div className="flex-1 rounded-2xl bg-background flex items-center justify-center">
+                    <div className="flex flex-col items-center justify-center text-center p-12 max-w-md space-y-3">
+                      <div className="w-14 h-14 rounded-full bg-muted/35 flex items-center justify-center">
+                        <Code className="w-7 h-7 text-muted-foreground" />
                       </div>
-                      <p className="text-lg font-medium mb-2">Get started</p>
-                      <p className="text-sm text-muted-foreground mb-5">
-                        Import HTML from Postcards (or any builder), then make quick edits directly in preview.
+                      <p className="text-lg font-medium">Get started</p>
+                      <p className="text-sm text-muted-foreground max-w-sm">
+                        Import HTML from Postcards, then edit directly in preview.
                       </p>
-                      <div className="flex items-center gap-3">
-                        <Button onClick={() => setShowImportDialog(true)} data-testid="button-import-html">
-                          <Upload className="w-4 h-4 mr-2" />
-                          Import HTML
-                        </Button>
-                      </div>
+                      <Button
+                        onClick={() => setShowImportDialog(true)}
+                        className="rounded-full px-5"
+                        data-testid="button-import-html"
+                      >
+                        <Upload className="w-4 h-4 mr-2" />
+                        Import HTML
+                      </Button>
                     </div>
                   </div>
                 )}
@@ -658,164 +710,91 @@ export default function NewsletterEditorPage({ newsletterId }: NewsletterEditorP
           </div>
         </div>
 
-        {client && (
-          <div className={`hidden lg:flex ${desktopRailWidthClass} flex-shrink-0 bg-background/80 transition-all`}>
-            {rightRailMode === "ai" ? (
-              <GeminiChatPanel
-                newsletterId={newsletterId}
-                clientId={client.id}
-                clientName={client.name}
-                collapsed={chatCollapsed}
-                onToggleCollapse={() => setChatCollapsed(!chatCollapsed)}
-                enableBlockSuggestions={false}
-                fullWidth
-                hideOuterBorder
-                className="h-full"
-              />
-            ) : (
-              <div className="w-full p-4 space-y-3">
-                <div className="text-sm font-medium">Client Context</div>
-                <div className="rounded-lg bg-card/80 p-3 space-y-2">
-                  <div className="text-sm font-semibold">{client.name}</div>
-                  <div className="text-xs text-muted-foreground">{client.primaryEmail}</div>
-                  {client.locationCity || client.locationRegion ? (
-                    <div className="text-xs text-muted-foreground">
-                      {[client.locationCity, client.locationRegion].filter(Boolean).join(", ")}
-                    </div>
-                  ) : null}
-                  <div className="flex items-center gap-2 pt-1">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="h-8 text-xs"
-                      onClick={() => setShowClientPanel(true)}
-                      data-testid="button-open-client-card"
-                    >
-                      Open Client Card
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="h-8 text-xs"
-                      onClick={() => setLocation(`/clients?clientId=${client.id}`)}
-                      data-testid="button-open-in-clients"
-                    >
-                      Open in Clients
-                    </Button>
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
+	        <div className={`hidden md:flex ${desktopRailWidthClass} flex-shrink-0 bg-background/80 transition-all`}>
+	          <GeminiChatPanel
+	            newsletterId={newsletterId}
+	            clientId={clientId}
+	            clientName={clientName}
+	            collapsed={chatCollapsed}
+	            onToggleCollapse={() => setChatCollapsed(!chatCollapsed)}
+	            enableBlockSuggestions={false}
+              allowPromptEditing={false}
+	            fullWidth
+	            hideOuterBorder
+	            className="h-full"
+	          />
+	        </div>
+	      </div>
 
-      {client && (
-        <Sheet open={mobileRailOpen} onOpenChange={setMobileRailOpen}>
-          <SheetContent side="right" className="w-[94vw] max-w-[420px] p-0 lg:hidden">
-            <div className="flex h-full flex-col bg-background">
-              <div className="flex items-center justify-between border-b px-3 py-2">
-                <div className="text-sm font-medium">{rightRailMode === "ai" ? "AI Chat" : "Client Context"}</div>
-                <div className="inline-flex items-center rounded-md border border-border bg-background overflow-hidden">
-                  <Button
-                    size="sm"
-                    variant={rightRailMode === "client" ? "secondary" : "ghost"}
-                    className="h-8 rounded-none text-xs px-2.5"
-                    onClick={() => openRightRail("client")}
-                  >
-                    <UserSquare2 className="w-3.5 h-3.5 mr-1.5" />
-                    Client
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant={rightRailMode === "ai" ? "secondary" : "ghost"}
-                    className="h-8 rounded-none text-xs px-2.5"
-                    onClick={() => openRightRail("ai")}
-                  >
-                    <Bot className="w-3.5 h-3.5 mr-1.5" />
-                    AI
-                  </Button>
-                </div>
-              </div>
-              <div className="flex-1 min-h-0">
-                {rightRailMode === "ai" ? (
-                  <GeminiChatPanel
-                    newsletterId={newsletterId}
-                    clientId={client.id}
-                    clientName={client.name}
-                    collapsed={false}
-                    onToggleCollapse={() => setMobileRailOpen(false)}
-                    enableBlockSuggestions={false}
-                    fullWidth
-                    hideOuterBorder
-                    className="h-full"
-                  />
-                ) : (
-                  <div className="p-4 space-y-3">
-                    <div className="rounded-md border bg-card p-3 space-y-2">
-                      <div className="text-sm font-semibold">{client.name}</div>
-                      <div className="text-xs text-muted-foreground">{client.primaryEmail}</div>
-                      {client.locationCity || client.locationRegion ? (
-                        <div className="text-xs text-muted-foreground">
-                          {[client.locationCity, client.locationRegion].filter(Boolean).join(", ")}
-                        </div>
-                      ) : null}
-                      <div className="flex items-center gap-2 pt-1">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="h-8 text-xs"
-                          onClick={() => {
-                            setShowClientPanel(true);
-                            setMobileRailOpen(false);
-                          }}
-                        >
-                          Open Client Card
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          className="h-8 text-xs"
-                          onClick={() => {
-                            setMobileRailOpen(false);
-                            setLocation(`/clients?clientId=${client.id}`);
-                          }}
-                        >
-                          Open in Clients
-                        </Button>
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-          </SheetContent>
-        </Sheet>
-      )}
-
-      {client && (
-        <ClientSidePanel
-          clientId={client.id}
-          open={showClientPanel}
-          onClose={() => setShowClientPanel(false)}
-        />
-      )}
+	      <Sheet open={mobileRailOpen} onOpenChange={setMobileRailOpen}>
+	        <SheetContent side="right" className="w-[94vw] max-w-[420px] p-0 md:hidden">
+	          <div className="flex h-full flex-col bg-background">
+	            <div className="flex items-center justify-between border-b px-3 py-2">
+	              <div className="text-sm font-medium">AI Chat</div>
+	            </div>
+	            <div className="flex-1 min-h-0">
+	              <GeminiChatPanel
+	                newsletterId={newsletterId}
+	                clientId={clientId}
+	                clientName={clientName}
+	                collapsed={false}
+	                onToggleCollapse={() => setMobileRailOpen(false)}
+	                enableBlockSuggestions={false}
+                  allowPromptEditing={false}
+	                fullWidth
+	                hideOuterBorder
+	                className="h-full"
+	              />
+	            </div>
+	          </div>
+	        </SheetContent>
+	      </Sheet>
 
       <Dialog open={showImportDialog} onOpenChange={setShowImportDialog}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle>Import HTML</DialogTitle>
             <DialogDescription>
-              Paste your newsletter HTML code below
+              Paste your newsletter HTML code below, or upload an .html file.
             </DialogDescription>
           </DialogHeader>
-          <Textarea
-            value={importHtml}
-            onChange={(e) => setImportHtml(e.target.value)}
-            placeholder="Paste HTML here..."
-            className="min-h-[200px] font-mono text-xs"
-            data-testid="textarea-import-html"
-          />
+          <div className="space-y-3">
+            <div className="flex items-center gap-2">
+              <Input
+                ref={importHtmlInputRef}
+                type="file"
+                accept=".html,.htm,text/html"
+                onChange={handleImportHtmlFileChange}
+                className="hidden"
+                id="import-html-file-input"
+              />
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => importHtmlInputRef.current?.click()}
+                className="gap-2"
+                data-testid="button-upload-html-file"
+              >
+                <Upload className="w-4 h-4" />
+                Upload HTML File
+              </Button>
+              {importHtmlFileName && (
+                <span className="text-xs text-muted-foreground truncate" title={importHtmlFileName}>
+                  {importHtmlFileName}
+                </span>
+              )}
+            </div>
+            <Textarea
+              value={importHtml}
+              onChange={(e) => {
+                setImportHtml(e.target.value);
+                if (importHtmlFileName) setImportHtmlFileName("");
+              }}
+              placeholder="Paste HTML here..."
+              className="min-h-[200px] font-mono text-xs"
+              data-testid="textarea-import-html"
+            />
+          </div>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setShowImportDialog(false)}>
               Cancel

@@ -19,6 +19,7 @@ import {
   contacts,
   contactImportJobs,
   contactSegments,
+  clientCrmConnections,
   type User,
   type InsertUser,
   type Client,
@@ -57,6 +58,8 @@ import {
   type InsertContactImportJob,
   type ContactSegment,
   type InsertContactSegment,
+  type ClientCrmConnection,
+  type InsertClientCrmConnection,
   type NewsletterDocument,
   type NewsletterStatus,
   NEWSLETTER_STATUSES,
@@ -77,6 +80,7 @@ export interface IStorage {
   getUserByEmail(email: string): Promise<User | undefined>;
   getUsers(): Promise<User[]>;
   createUser(user: InsertUser): Promise<User>;
+  updateUser(id: string, data: Partial<InsertUser>): Promise<User | undefined>;
 
   // Clients
   getClients(): Promise<Client[]>;
@@ -153,6 +157,7 @@ export interface IStorage {
   markOnboardingTokenUsed(id: string): Promise<void>;
 
   // Review Comments
+  getReviewComment(id: string): Promise<ReviewComment | undefined>;
   getReviewCommentsByNewsletter(newsletterId: string): Promise<ReviewComment[]>;
   createReviewComment(comment: InsertReviewComment): Promise<ReviewComment>;
   updateReviewComment(id: string, data: Partial<InsertReviewComment>): Promise<ReviewComment | undefined>;
@@ -180,6 +185,7 @@ export interface IStorage {
   deleteProductionTask(id: string): Promise<void>;
 
   // Client Notes
+  getClientNote(id: string): Promise<ClientNote | undefined>;
   getClientNotes(clientId: string): Promise<ClientNote[]>;
   createClientNote(data: InsertClientNote): Promise<ClientNote>;
   updateClientNote(id: string, data: Partial<ClientNote>): Promise<ClientNote>;
@@ -194,12 +200,30 @@ export interface IStorage {
   updateContact(id: string, data: Partial<InsertContact>): Promise<Contact | undefined>;
   deleteContact(id: string): Promise<void>;
   getContactSegmentsByClient(clientId: string): Promise<ContactSegment[]>;
+  getContactSegment(id: string): Promise<ContactSegment | undefined>;
   createContactSegment(data: InsertContactSegment): Promise<ContactSegment>;
   updateContactSegment(id: string, data: Partial<InsertContactSegment>): Promise<ContactSegment | undefined>;
   deleteContactSegment(id: string): Promise<void>;
   getContactImportJobsByClient(clientId: string): Promise<ContactImportJob[]>;
   createContactImportJob(data: InsertContactImportJob): Promise<ContactImportJob>;
   updateContactImportJob(id: string, data: Partial<InsertContactImportJob>): Promise<ContactImportJob | undefined>;
+
+  // Client CRM Connections
+  getClientCrmConnection(
+    clientId: string,
+    provider: "follow_up_boss" | "kvcore" | "boldtrail"
+  ): Promise<ClientCrmConnection | undefined>;
+  getClientCrmConnections(clientId: string): Promise<ClientCrmConnection[]>;
+  upsertClientCrmConnection(data: InsertClientCrmConnection): Promise<ClientCrmConnection>;
+  updateClientCrmConnection(
+    clientId: string,
+    provider: "follow_up_boss" | "kvcore" | "boldtrail",
+    data: Partial<InsertClientCrmConnection>
+  ): Promise<ClientCrmConnection | undefined>;
+  deleteClientCrmConnection(
+    clientId: string,
+    provider: "follow_up_boss" | "kvcore" | "boldtrail"
+  ): Promise<void>;
 
   // Newsletter Chat Messages
   getChatMessages(newsletterId: string): Promise<NewsletterChatMessage[]>;
@@ -230,6 +254,15 @@ export class DatabaseStorage implements IStorage {
 
   async createUser(insertUser: InsertUser): Promise<User> {
     const [user] = await db.insert(users).values(insertUser).returning();
+    return user;
+  }
+
+  async updateUser(id: string, data: Partial<InsertUser>): Promise<User | undefined> {
+    const [user] = await db
+      .update(users)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(users.id, id))
+      .returning();
     return user;
   }
 
@@ -675,6 +708,11 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Review Comments
+  async getReviewComment(id: string): Promise<ReviewComment | undefined> {
+    const [comment] = await db.select().from(reviewComments).where(eq(reviewComments.id, id));
+    return comment;
+  }
+
   async getReviewCommentsByNewsletter(newsletterId: string): Promise<ReviewComment[]> {
     return db
       .select()
@@ -747,6 +785,11 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Client Notes
+  async getClientNote(id: string): Promise<ClientNote | undefined> {
+    const [note] = await db.select().from(clientNotes).where(eq(clientNotes.id, id));
+    return note;
+  }
+
   async getClientNotes(clientId: string): Promise<ClientNote[]> {
     return db.select().from(clientNotes).where(eq(clientNotes.clientId, clientId)).orderBy(desc(clientNotes.createdAt));
   }
@@ -860,6 +903,11 @@ export class DatabaseStorage implements IStorage {
       .orderBy(desc(contactSegments.isDefault), contactSegments.name);
   }
 
+  async getContactSegment(id: string): Promise<ContactSegment | undefined> {
+    const [segment] = await db.select().from(contactSegments).where(eq(contactSegments.id, id));
+    return segment;
+  }
+
   async createContactSegment(data: InsertContactSegment): Promise<ContactSegment> {
     const [segment] = await db.insert(contactSegments).values(data).returning();
     return segment;
@@ -898,6 +946,70 @@ export class DatabaseStorage implements IStorage {
       .where(eq(contactImportJobs.id, id))
       .returning();
     return job;
+  }
+
+  // Client CRM Connections
+  async getClientCrmConnection(
+    clientId: string,
+    provider: "follow_up_boss" | "kvcore" | "boldtrail"
+  ): Promise<ClientCrmConnection | undefined> {
+    const [connection] = await db
+      .select()
+      .from(clientCrmConnections)
+      .where(and(eq(clientCrmConnections.clientId, clientId), eq(clientCrmConnections.provider, provider)));
+    return connection;
+  }
+
+  async getClientCrmConnections(clientId: string): Promise<ClientCrmConnection[]> {
+    return db
+      .select()
+      .from(clientCrmConnections)
+      .where(eq(clientCrmConnections.clientId, clientId))
+      .orderBy(desc(clientCrmConnections.updatedAt));
+  }
+
+  async upsertClientCrmConnection(data: InsertClientCrmConnection): Promise<ClientCrmConnection> {
+    const existing = await this.getClientCrmConnection(
+      data.clientId,
+      data.provider as "follow_up_boss" | "kvcore" | "boldtrail"
+    );
+
+    if (existing) {
+      const [updated] = await db
+        .update(clientCrmConnections)
+        .set({
+          ...data,
+          updatedAt: new Date(),
+        })
+        .where(eq(clientCrmConnections.id, existing.id))
+        .returning();
+      return updated;
+    }
+
+    const [created] = await db.insert(clientCrmConnections).values(data).returning();
+    return created;
+  }
+
+  async updateClientCrmConnection(
+    clientId: string,
+    provider: "follow_up_boss" | "kvcore" | "boldtrail",
+    data: Partial<InsertClientCrmConnection>
+  ): Promise<ClientCrmConnection | undefined> {
+    const [updated] = await db
+      .update(clientCrmConnections)
+      .set({ ...data, updatedAt: new Date() })
+      .where(and(eq(clientCrmConnections.clientId, clientId), eq(clientCrmConnections.provider, provider)))
+      .returning();
+    return updated;
+  }
+
+  async deleteClientCrmConnection(
+    clientId: string,
+    provider: "follow_up_boss" | "kvcore" | "boldtrail"
+  ): Promise<void> {
+    await db
+      .delete(clientCrmConnections)
+      .where(and(eq(clientCrmConnections.clientId, clientId), eq(clientCrmConnections.provider, provider)));
   }
 
   // Newsletter Chat Messages

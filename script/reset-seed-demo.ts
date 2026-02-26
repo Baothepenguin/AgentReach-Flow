@@ -19,6 +19,8 @@ async function main() {
   assertSafeMode();
 
   const resetOrder = [
+    "crm_sync_events",
+    "diy_funnel_events",
     "newsletter_events",
     "newsletter_deliveries",
     "review_comments",
@@ -30,6 +32,8 @@ async function main() {
     "invoices",
     "subscriptions",
     "contact_import_jobs",
+    "client_crm_connections",
+    "client_postmark_tenants",
     "contact_segments",
     "contacts",
     "client_notes",

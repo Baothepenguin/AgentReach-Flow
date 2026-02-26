@@ -1,8 +1,7 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, type ReactNode } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
@@ -12,12 +11,10 @@ import {
   Loader2,
   ChevronRight,
   ChevronLeft,
+  Sparkles,
   Settings2,
-  Trash2,
   ChevronDown,
   ChevronUp,
-  AlertCircle,
-  CheckCircle2,
 } from "lucide-react";
 import type { NewsletterChatMessage, AiPrompt } from "@shared/schema";
 import type { BlockEditOperation } from "@shared/schema";
@@ -33,6 +30,7 @@ interface GeminiChatPanelProps {
   className?: string;
   fullWidth?: boolean;
   hideOuterBorder?: boolean;
+  allowPromptEditing?: boolean;
 }
 
 function describeOperation(operation: BlockEditOperation): string {
@@ -61,6 +59,7 @@ export function GeminiChatPanel({
   className,
   fullWidth = false,
   hideOuterBorder = false,
+  allowPromptEditing = true,
 }: GeminiChatPanelProps) {
   const [message, setMessage] = useState("");
   const [showPromptEditor, setShowPromptEditor] = useState(false);
@@ -76,18 +75,6 @@ export function GeminiChatPanel({
   const [showSuggestionDetails, setShowSuggestionDetails] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
-
-  const { data: aiStatus } = useQuery<{ geminiConfigured: boolean; openaiConfigured: boolean; postmarkConfigured: boolean }>({
-    queryKey: ["/api/integrations/ai-status"],
-    queryFn: async () => {
-      const res = await fetch("/api/integrations/ai-status", { credentials: "include" });
-      if (!res.ok) {
-        return { geminiConfigured: false, openaiConfigured: false, postmarkConfigured: false };
-      }
-      return res.json();
-    },
-    enabled: !collapsed,
-  });
 
   const { data: chatMessages = [], isLoading: loadingMessages } = useQuery<NewsletterChatMessage[]>({
     queryKey: ["/api/newsletters", newsletterId, "chat"],
@@ -106,7 +93,7 @@ export function GeminiChatPanel({
       if (!res.ok) return null;
       return res.json();
     },
-    enabled: !collapsed,
+    enabled: allowPromptEditing && !collapsed,
   });
 
   const { data: clientPrompt } = useQuery<AiPrompt | null>({
@@ -116,16 +103,136 @@ export function GeminiChatPanel({
       if (!res.ok) return null;
       return res.json();
     },
-    enabled: !collapsed && !!clientId,
+    enabled: allowPromptEditing && !collapsed && !!clientId,
   });
 
   useEffect(() => {
-    if (!promptsLoaded && (masterPrompt !== undefined || clientPrompt !== undefined)) {
+    if (allowPromptEditing && !promptsLoaded && (masterPrompt !== undefined || clientPrompt !== undefined)) {
       setMasterPromptDraft(masterPrompt?.prompt || "");
       setClientPromptDraft(clientPrompt?.prompt || "");
       setPromptsLoaded(true);
     }
-  }, [masterPrompt, clientPrompt, promptsLoaded]);
+  }, [allowPromptEditing, masterPrompt, clientPrompt, promptsLoaded]);
+
+  const renderInlineRichText = (text: string, keyPrefix: string): ReactNode[] => {
+    const nodes: ReactNode[] = [];
+    const tokenRegex = /(\*\*([^*]+)\*\*|\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)|(https?:\/\/[^\s<]+))/g;
+    let cursor = 0;
+    let match: RegExpExecArray | null = null;
+    let idx = 0;
+
+    while ((match = tokenRegex.exec(text)) !== null) {
+      const [fullMatch, , boldText, markdownLabel, markdownUrl, plainUrlRaw] = match;
+      const start = match.index;
+      if (start > cursor) {
+        nodes.push(text.slice(cursor, start));
+      }
+
+      if (boldText) {
+        nodes.push(
+          <strong key={`${keyPrefix}-b-${idx++}`} className="font-semibold">
+            {boldText}
+          </strong>
+        );
+      } else if (markdownLabel && markdownUrl) {
+        nodes.push(
+          <a
+            key={`${keyPrefix}-m-${idx++}`}
+            href={markdownUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="underline underline-offset-2 decoration-primary/50 hover:decoration-primary"
+          >
+            {markdownLabel}
+          </a>
+        );
+      } else if (plainUrlRaw) {
+        const plainUrl = plainUrlRaw.replace(/[),.;!?]+$/g, "");
+        const trailing = plainUrlRaw.slice(plainUrl.length);
+        nodes.push(
+          <a
+            key={`${keyPrefix}-u-${idx++}`}
+            href={plainUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="underline underline-offset-2 decoration-primary/50 hover:decoration-primary break-all"
+          >
+            {plainUrl}
+          </a>
+        );
+        if (trailing) nodes.push(trailing);
+      } else {
+        nodes.push(fullMatch);
+      }
+
+      cursor = start + fullMatch.length;
+    }
+
+    if (cursor < text.length) {
+      nodes.push(text.slice(cursor));
+    }
+
+    return nodes;
+  };
+
+  const renderRichTextMessage = (content: string, messageId: string) => {
+    const lines = content.replace(/\r/g, "").split("\n");
+
+    return lines.map((line, lineIndex) => {
+      const trimmed = line.trim();
+      const key = `${messageId}-${lineIndex}`;
+
+      if (!trimmed) {
+        return <div key={key} className="h-3" />;
+      }
+
+      if (/^---+$/.test(trimmed)) {
+        return <div key={key} className="my-2 h-px w-full bg-border/70" />;
+      }
+
+      const headingMatch = trimmed.match(/^(#{1,4})\s+(.+)$/);
+      if (headingMatch) {
+        const [, hashes, headingText] = headingMatch;
+        const sizeClass =
+          hashes.length <= 1
+            ? "text-base"
+            : hashes.length === 2
+              ? "text-[15px]"
+              : "text-sm";
+        return (
+          <h4 key={key} className={`${sizeClass} leading-6 font-semibold tracking-tight mt-1`}>
+            {renderInlineRichText(headingText, `${key}-h`)}
+          </h4>
+        );
+      }
+
+      const numberedMatch = trimmed.match(/^(\d+)\.\s+(.+)$/);
+      if (numberedMatch) {
+        return (
+          <div key={key} className="flex gap-2 leading-7">
+            <span className="w-5 shrink-0 text-muted-foreground">{numberedMatch[1]}.</span>
+            <span>{renderInlineRichText(numberedMatch[2], `${key}-ol`)}</span>
+          </div>
+        );
+      }
+
+      const bulletMatch = trimmed.match(/^[-*]\s+(.+)$/);
+      if (bulletMatch) {
+        return (
+          <div key={key} className="flex gap-2 leading-7">
+            <span className="w-4 shrink-0 text-muted-foreground">•</span>
+            <span>{renderInlineRichText(bulletMatch[1], `${key}-ul`)}</span>
+          </div>
+        );
+      }
+
+      return (
+        <p key={key} className="leading-7">
+          {renderInlineRichText(line, `${key}-p`)}
+        </p>
+      );
+    });
+  };
 
   const sendMessageMutation = useMutation({
     mutationFn: async (msg: string) => {
@@ -201,17 +308,6 @@ export function GeminiChatPanel({
     },
   });
 
-  const clearChatMutation = useMutation({
-    mutationFn: async () => {
-      await apiRequest("DELETE", `/api/newsletters/${newsletterId}/chat`);
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/newsletters", newsletterId, "chat"] });
-      setPendingSuggestion(null);
-      setShowSuggestionDetails(false);
-    },
-  });
-
   const saveMasterPromptMutation = useMutation({
     mutationFn: async (prompt: string) => {
       const res = await apiRequest("PUT", "/api/ai-prompts/master", { prompt });
@@ -265,8 +361,8 @@ export function GeminiChatPanel({
         >
           <ChevronLeft className="w-4 h-4" />
         </Button>
-        <div className="mt-5 -rotate-90 whitespace-nowrap text-[11px] tracking-wide text-muted-foreground font-medium">
-          AI Chat
+        <div className="mt-3 rounded-full bg-primary/10 p-2 text-primary/80">
+          <Sparkles className="w-4 h-4" />
         </div>
       </div>
     );
@@ -282,32 +378,22 @@ export function GeminiChatPanel({
       )}
       data-testid="panel-gemini-chat"
     >
-      <div className="flex items-center justify-between px-3 h-12 border-b border-border/70">
+      <div className="flex items-center justify-between px-3 h-12 border-b border-border/60">
         <div className="flex items-center gap-2 min-w-0">
           <MessageSquare className="w-4 h-4 text-primary" />
-          <div className="min-w-0">
-            <span className="text-sm font-medium block leading-tight">AI Chat</span>
-            <span className="text-[11px] text-muted-foreground">Content copilot</span>
-          </div>
+          <span className="text-base font-semibold tracking-tight">AI Chat</span>
         </div>
         <div className="flex items-center gap-1">
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => setShowPromptEditor(!showPromptEditor)}
-            data-testid="button-toggle-prompts"
-          >
-            <Settings2 className="w-4 h-4" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => clearChatMutation.mutate()}
-            disabled={chatMessages.length === 0}
-            data-testid="button-clear-chat"
-          >
-            <Trash2 className="w-4 h-4" />
-          </Button>
+          {allowPromptEditing ? (
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setShowPromptEditor(!showPromptEditor)}
+              data-testid="button-toggle-prompts"
+            >
+              <Settings2 className="w-4 h-4" />
+            </Button>
+          ) : null}
           <Button
             variant="ghost"
             size="icon"
@@ -319,23 +405,7 @@ export function GeminiChatPanel({
         </div>
       </div>
 
-      {aiStatus && (
-        <div className="px-3 py-2 border-b border-border/70 text-xs flex items-center gap-1.5 bg-muted/20">
-          {aiStatus.geminiConfigured ? (
-            <>
-              <CheckCircle2 className="w-3.5 h-3.5 text-blue-600" />
-              <span className="text-muted-foreground">Gemini connected</span>
-            </>
-          ) : (
-            <>
-              <AlertCircle className="w-3.5 h-3.5 text-amber-600" />
-              <span className="text-muted-foreground">Gemini not configured — chat replies will be limited.</span>
-            </>
-          )}
-        </div>
-      )}
-
-      {showPromptEditor && (
+      {allowPromptEditing && showPromptEditor && (
         <div className="border-b overflow-auto max-h-64">
           <PromptSection
             title="Master Prompt"
@@ -437,8 +507,8 @@ export function GeminiChatPanel({
         </div>
       )}
 
-      <div className="flex-1 min-h-0 overflow-auto bg-gradient-to-b from-transparent to-muted/20" ref={scrollRef}>
-        <div className="p-3 space-y-3">
+      <div className="flex-1 min-h-0 overflow-auto bg-muted/[0.15]" ref={scrollRef}>
+        <div className="p-3.5 space-y-3.5">
           {loadingMessages ? (
             <div className="flex justify-center py-8">
               <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
@@ -447,7 +517,7 @@ export function GeminiChatPanel({
             <div className="text-center py-8 text-sm text-muted-foreground">
               <MessageSquare className="w-8 h-8 mx-auto mb-2 opacity-30" />
               <p>Start a conversation</p>
-              <p className="text-xs mt-1">Ask about content, strategy, or get writing help</p>
+              <p className="text-xs mt-1">History is saved for this newsletter.</p>
             </div>
           ) : (
             chatMessages.map((msg) => (
@@ -457,13 +527,13 @@ export function GeminiChatPanel({
                 data-testid={`chat-message-${msg.id}`}
               >
                 <div
-                  className={`max-w-[85%] rounded-xl px-3 py-2 text-sm shadow-sm ${
+                  className={`max-w-[90%] rounded-2xl px-4 py-3 text-[15px] shadow-sm ${
                     msg.role === "user"
                       ? "bg-primary text-primary-foreground"
-                      : "bg-card border"
+                      : "bg-background border border-border/60"
                   }`}
                 >
-                  <p className="whitespace-pre-wrap break-words">{msg.content}</p>
+                  <div className="break-words">{renderRichTextMessage(msg.content, msg.id)}</div>
                 </div>
               </div>
             ))
@@ -478,7 +548,7 @@ export function GeminiChatPanel({
         </div>
       </div>
 
-      <div className="p-3 border-t border-border/70 bg-background/95">
+      <div className="p-3 border-t border-border/60 bg-background/95">
         <div className="flex gap-2">
           <Textarea
             value={message}
@@ -490,12 +560,13 @@ export function GeminiChatPanel({
               }
             }}
             placeholder="Ask AI..."
-            className="min-h-[40px] max-h-32 resize-none text-sm"
+            className="min-h-[44px] max-h-32 resize-none text-base rounded-xl"
             disabled={sendMessageMutation.isPending}
             data-testid="input-chat-message"
           />
           <Button
             size="icon"
+            className="rounded-xl"
             onClick={handleSend}
             disabled={!message.trim() || sendMessageMutation.isPending}
             data-testid="button-send-chat"

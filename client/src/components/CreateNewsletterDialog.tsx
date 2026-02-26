@@ -1,11 +1,12 @@
-import { useState } from "react";
+import { ChangeEvent, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
-import { Loader2, Calendar, Code, ChevronLeft, ChevronRight } from "lucide-react";
+import { Loader2, Calendar, Code, ChevronLeft, ChevronRight, Upload } from "lucide-react";
 import { format, addDays, startOfDay, addWeeks, startOfWeek, endOfWeek, isSameDay, isSameMonth } from "date-fns";
 import { NEWSLETTER_TEMPLATES, type NewsletterTemplateId } from "@/lib/newsletterTemplates";
 
@@ -47,6 +48,8 @@ export function CreateNewsletterDialog({
   const suggestedDate = getSuggestedDate(clientFrequency, lastSendDate);
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
   const [importedHtml, setImportedHtml] = useState("");
+  const [importedHtmlFileName, setImportedHtmlFileName] = useState("");
+  const importHtmlInputRef = useRef<HTMLInputElement | null>(null);
   const [activeTab, setActiveTab] = useState<"blank" | "templates" | "import">("blank");
   const [selectedTemplateId, setSelectedTemplateId] = useState<NewsletterTemplateId | null>(null);
   const [calendarWeekOffset, setCalendarWeekOffset] = useState(0);
@@ -83,10 +86,31 @@ export function CreateNewsletterDialog({
   const handleClose = () => {
     setSelectedDate(null);
     setImportedHtml("");
+    setImportedHtmlFileName("");
     setActiveTab("blank");
     setSelectedTemplateId(null);
     setCalendarWeekOffset(0);
     onClose();
+  };
+
+  const handleImportHtmlFileChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.currentTarget.files?.[0];
+    if (!file) return;
+    const fileName = file.name.toLowerCase();
+    const hasHtmlExtension = /\.(html?|xhtml)$/i.test(fileName);
+    const hasHtmlMime = !file.type || ["text/html", "text/plain", "application/xhtml+xml"].includes(file.type.toLowerCase());
+    if (!hasHtmlExtension && !hasHtmlMime) {
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const text = typeof reader.result === "string" ? reader.result : "";
+      setImportedHtml(text);
+      setImportedHtmlFileName(file.name);
+    };
+    reader.readAsText(file);
+    event.currentTarget.value = "";
   };
 
   const monthLabel = format(currentWeekStart, "MMMM yyyy");
@@ -121,10 +145,32 @@ export function CreateNewsletterDialog({
             <Textarea
               placeholder="Paste your email HTML here..."
               value={importedHtml}
-              onChange={(e) => setImportedHtml(e.target.value)}
+              onChange={(e) => {
+                setImportedHtml(e.target.value);
+                if (importedHtmlFileName) setImportedHtmlFileName("");
+              }}
               className="min-h-[160px] font-mono text-xs"
               data-testid="textarea-import-html"
             />
+            <div className="flex items-center gap-2">
+              <Input
+                ref={importHtmlInputRef}
+                type="file"
+                accept=".html,.htm,text/html"
+                onChange={handleImportHtmlFileChange}
+                className="hidden"
+                id="create-newsletter-import-html"
+              />
+              <Button type="button" variant="outline" onClick={() => importHtmlInputRef.current?.click()} className="gap-2">
+                <Upload className="w-4 h-4" />
+                Upload HTML File
+              </Button>
+              {importedHtmlFileName && (
+                <span className="text-xs text-muted-foreground truncate" title={importedHtmlFileName}>
+                  {importedHtmlFileName}
+                </span>
+              )}
+            </div>
           </TabsContent>
 
           <TabsContent value="blank" className="mt-4">

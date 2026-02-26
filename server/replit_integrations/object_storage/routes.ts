@@ -305,10 +305,28 @@ function isAllowedPublicContentType(type: string): boolean {
   return PUBLIC_ALLOWED_TYPES.has(type);
 }
 
+function inferContentTypeFromName(name: string): string {
+  const normalized = String(name || "").trim().toLowerCase();
+  if (!normalized) return "";
+  if (normalized.endsWith(".png")) return "image/png";
+  if (normalized.endsWith(".jpg") || normalized.endsWith(".jpeg")) return "image/jpeg";
+  if (normalized.endsWith(".webp")) return "image/webp";
+  if (normalized.endsWith(".gif")) return "image/gif";
+  if (normalized.endsWith(".svg")) return "image/svg+xml";
+  if (normalized.endsWith(".heic")) return "image/heic";
+  if (normalized.endsWith(".pdf")) return "application/pdf";
+  if (normalized.endsWith(".doc")) return "application/msword";
+  if (normalized.endsWith(".docx")) {
+    return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  }
+  return "";
+}
+
 function validateUploadMetadata(input: any, auth: UploadAuthContext): { name: string; size: number; contentType: string } {
   const name = typeof input?.name === "string" ? input.name.trim() : "";
   const size = typeof input?.size === "number" ? input.size : Number(input?.size);
-  const contentType = typeof input?.contentType === "string" ? input.contentType.trim() : "";
+  const requestedContentType = typeof input?.contentType === "string" ? input.contentType.trim() : "";
+  const contentType = requestedContentType || inferContentTypeFromName(name);
 
   if (!name) {
     throw new Error("Missing required field: name");
@@ -431,38 +449,41 @@ export function registerObjectStorageRoutes(app: Express): void {
 
       const { name, size, contentType } = validateUploadMetadata(req.body, auth);
 
-      let uploadURL: string;
-      let objectPath: string;
-      let uploadToken: string | undefined;
-      try {
-        uploadURL = await objectStorageService.getObjectEntityUploadURL();
-        objectPath = objectStorageService.normalizeObjectEntityPath(uploadURL);
-      } catch (e: any) {
-        // Fallback: Supabase Storage direct upload route.
-        const supabaseConfig = getSupabaseStorageConfig();
-        if (!supabaseConfig) {
-          return res.status(503).json({
-            error:
-              e instanceof Error
-                ? e.message
-                : "Uploads not configured (object storage unavailable)",
-          });
-        }
-
-        objectPath = buildSupabaseObjectPath(supabaseConfig.bucket, name, contentType);
-        uploadToken = encodeUploadToken({
+      const supabaseConfig = getSupabaseStorageConfig();
+      if (supabaseConfig) {
+        const objectPath = buildSupabaseObjectPath(supabaseConfig.bucket, name, contentType);
+        const uploadToken = encodeUploadToken({
           objectPath,
           contentType,
           expiresAt: Date.now() + 15 * 60_000,
           auth: { type: "user", id: auth.userId },
         });
-        uploadURL = `/api/uploads/direct?token=${encodeURIComponent(uploadToken)}`;
+        const uploadURL = `/api/uploads/direct?token=${encodeURIComponent(uploadToken)}`;
+        return res.json({
+          uploadURL,
+          objectPath,
+          uploadToken,
+          metadata: { name, size, contentType },
+        });
+      }
+
+      let uploadURL: string;
+      let objectPath: string;
+      try {
+        uploadURL = await objectStorageService.getObjectEntityUploadURL();
+        objectPath = objectStorageService.normalizeObjectEntityPath(uploadURL);
+      } catch (e: any) {
+        return res.status(503).json({
+          error:
+            e instanceof Error
+              ? e.message
+              : "Uploads not configured (object storage unavailable)",
+        });
       }
 
       res.json({
         uploadURL,
         objectPath,
-        ...(uploadToken ? { uploadToken } : {}),
         // Echo back the metadata for client convenience
         metadata: { name, size, contentType },
       });
@@ -676,48 +697,51 @@ export function registerObjectStorageRoutes(app: Express): void {
 
       const { name, size, contentType } = validateUploadMetadata(req.body, auth);
 
-      let uploadURL: string;
-      let objectPath: string;
-      let uploadToken: string | undefined;
-      let objectUrl: string | undefined;
-      try {
-        uploadURL = await objectStorageService.getObjectEntityUploadURL();
-        objectPath = objectStorageService.normalizeObjectEntityPath(uploadURL);
-      } catch (e: any) {
-        const supabaseConfig = getSupabaseStorageConfig();
-        if (!supabaseConfig) {
-          return res.status(503).json({
-            error:
-              e instanceof Error
-                ? e.message
-                : "Uploads not configured (object storage unavailable)",
-          });
-        }
-
-        objectPath = buildSupabaseObjectPath(supabaseConfig.bucket, name, contentType);
-        uploadToken = encodeUploadToken({
+      const supabaseConfig = getSupabaseStorageConfig();
+      if (supabaseConfig) {
+        const objectPath = buildSupabaseObjectPath(supabaseConfig.bucket, name, contentType);
+        const uploadToken = encodeUploadToken({
           objectPath,
           contentType,
           expiresAt: Date.now() + 15 * 60_000,
           auth: { type: "review", id: auth.reviewToken, newsletterId: auth.newsletterId },
         });
-        uploadURL = `/api/uploads/direct?token=${encodeURIComponent(uploadToken)}`;
-
+        const uploadURL = `/api/uploads/direct?token=${encodeURIComponent(uploadToken)}`;
         const parsedPath = parseSupabaseObjectPath(objectPath);
-        if (parsedPath) {
-          objectUrl = buildSupabasePublicUrl(
-            supabaseConfig.url,
-            parsedPath.bucket,
-            parsedPath.objectName
-          );
-        }
+        const objectUrl = parsedPath
+          ? buildSupabasePublicUrl(
+              supabaseConfig.url,
+              parsedPath.bucket,
+              parsedPath.objectName
+            )
+          : undefined;
+
+        return res.json({
+          uploadURL,
+          objectPath,
+          uploadToken,
+          ...(objectUrl ? { objectUrl } : {}),
+          metadata: { name, size, contentType },
+        });
+      }
+
+      let uploadURL: string;
+      let objectPath: string;
+      try {
+        uploadURL = await objectStorageService.getObjectEntityUploadURL();
+        objectPath = objectStorageService.normalizeObjectEntityPath(uploadURL);
+      } catch (e: any) {
+        return res.status(503).json({
+          error:
+            e instanceof Error
+              ? e.message
+              : "Uploads not configured (object storage unavailable)",
+        });
       }
 
       res.json({
         uploadURL,
         objectPath,
-        ...(uploadToken ? { uploadToken } : {}),
-        ...(objectUrl ? { objectUrl } : {}),
         metadata: { name, size, contentType },
       });
     } catch (error) {

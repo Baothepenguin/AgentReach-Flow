@@ -137,6 +137,8 @@ export function HTMLPreviewFrame({
   const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const imageFileInputRef = useRef<HTMLInputElement>(null);
+  const heightRafRef = useRef<number | null>(null);
+  const initialSyncTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
   const activeDeviceMode = deviceMode ?? internalDeviceMode;
   const setActiveDeviceMode = onDeviceModeChange ?? setInternalDeviceMode;
 
@@ -187,6 +189,16 @@ export function HTMLPreviewFrame({
     iframe.style.height = `${nextHeight}px`;
   }, []);
 
+  const scheduleSyncHeight = useCallback(() => {
+    if (heightRafRef.current !== null) {
+      cancelAnimationFrame(heightRafRef.current);
+    }
+    heightRafRef.current = requestAnimationFrame(() => {
+      heightRafRef.current = null;
+      syncHeight();
+    });
+  }, [syncHeight]);
+
   const markSelectedElement = useCallback((id?: string) => {
     const doc = iframeRef.current?.contentDocument;
     if (!doc) return;
@@ -200,15 +212,31 @@ export function HTMLPreviewFrame({
     }
   }, []);
 
+  const setInlineEditableTarget = useCallback((id?: string) => {
+    const doc = iframeRef.current?.contentDocument;
+    if (!doc) return;
+    doc.querySelectorAll<HTMLElement>(`[${EDIT_ATTR}]`).forEach((node) => {
+      node.removeAttribute("contenteditable");
+      node.removeAttribute("spellcheck");
+    });
+    if (!id) return;
+    const node = doc.querySelector<HTMLElement>(`[${EDIT_ATTR}="${id}"]`);
+    if (!node) return;
+    if (node.tagName.toLowerCase() === "img") return;
+    node.setAttribute("contenteditable", "true");
+    node.setAttribute("spellcheck", "true");
+  }, []);
+
   useEffect(() => {
     markSelectedElement(selectedElement?.id);
-  }, [selectedElement?.id, markSelectedElement]);
+    setInlineEditableTarget(selectedElement?.id);
+  }, [selectedElement?.id, markSelectedElement, setInlineEditableTarget]);
 
   useEffect(() => {
     // Reflow iframe after device mode switches so desktop/mobile toggles don't keep stale sizing.
-    const timeout = setTimeout(() => syncHeight(), 50);
+    const timeout = setTimeout(() => scheduleSyncHeight(), 50);
     return () => clearTimeout(timeout);
-  }, [activeDeviceMode, syncHeight, html]);
+  }, [activeDeviceMode, scheduleSyncHeight, html]);
 
   const describeElement = useCallback((element: HTMLElement): SelectedElementState => {
     const id = element.getAttribute(EDIT_ATTR) || createEditId();
@@ -350,10 +378,10 @@ export function HTMLPreviewFrame({
       selectedRef.current = nextState;
       setSelectedElement(nextState);
       markSelectedElement(nextState.id);
-      syncHeight();
+      scheduleSyncHeight();
       queuePersist();
     },
-    [describeElement, markSelectedElement, queuePersist, syncHeight]
+    [describeElement, markSelectedElement, queuePersist, scheduleSyncHeight]
   );
 
   const handleImageFileSelected = useCallback(async (event: ChangeEvent<HTMLInputElement>) => {
@@ -493,6 +521,8 @@ export function HTMLPreviewFrame({
         markSelectedElement();
         return;
       }
+      event.preventDefault();
+      event.stopPropagation();
 
       const frameWidth = iframe.clientWidth || 680;
       const frameHeight = iframe.clientHeight || 680;
@@ -506,16 +536,38 @@ export function HTMLPreviewFrame({
       selectedRef.current = snapshot;
       setSelectedElement(snapshot);
       markSelectedElement(snapshot.id);
-
-      event.preventDefault();
-      event.stopPropagation();
+      if (snapshot.canEditText) {
+        requestAnimationFrame(() => {
+          try {
+            editable.focus({ preventScroll: true });
+          } catch {}
+        });
+      } else if (editable.tagName.toLowerCase() === "a" || editable.closest("a")) {
+        event.preventDefault();
+      }
     };
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         setSelectedElement(null);
         markSelectedElement();
+        setInlineEditableTarget();
       }
+    };
+
+    const handleInlineInput = (event: Event) => {
+      const target = event.target as HTMLElement | null;
+      const editable = getEditableTarget(target);
+      if (!editable || editable.tagName.toLowerCase() === "img") return;
+      const id = editable.getAttribute(EDIT_ATTR) || createEditId();
+      editable.setAttribute(EDIT_ATTR, id);
+
+      const snapshot = describeElement(editable);
+      selectedRef.current = snapshot;
+      setSelectedElement(snapshot);
+      markSelectedElement(snapshot.id);
+      scheduleSyncHeight();
+      queuePersist();
     };
 
     const handleLoad = () => {
@@ -538,13 +590,16 @@ export function HTMLPreviewFrame({
         }
         [${EDITABLE_ATTR}="true"] {
           cursor: pointer;
-          transition: box-shadow 120ms ease;
+          transition: background-color 120ms ease, box-shadow 120ms ease;
         }
         [${EDITABLE_ATTR}="true"]:hover {
-          box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.16);
+          background-color: rgba(15, 23, 42, 0.03);
         }
         [${EDIT_ATTR}][data-flow-selected="true"] {
-          box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.28);
+          box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.18);
+        }
+        [${EDIT_ATTR}][contenteditable="true"] {
+          cursor: text;
         }
         [${EDIT_ATTR}] {
           scroll-margin-top: 80px;
@@ -555,41 +610,48 @@ export function HTMLPreviewFrame({
       markEditableElements(doc);
 
       doc.addEventListener("click", handleSelect, true);
-      doc.addEventListener("dblclick", handleSelect, true);
+      doc.addEventListener("input", handleInlineInput, true);
       doc.addEventListener("keydown", handleKeyDown, true);
 
       const observer = new MutationObserver(() => {
-        syncHeight();
+        scheduleSyncHeight();
       });
       observer.observe(doc.documentElement, {
         childList: true,
         subtree: true,
         characterData: true,
-        attributes: true,
       });
 
       doc.querySelectorAll("img").forEach((img) => {
         if (!img.complete) {
-          img.addEventListener("load", syncHeight, { once: true });
-          img.addEventListener("error", syncHeight, { once: true });
+          img.addEventListener("load", scheduleSyncHeight, { once: true });
+          img.addEventListener("error", scheduleSyncHeight, { once: true });
         }
       });
       (doc as any).__flowResizeObserver = observer;
 
-      syncHeight();
-      setTimeout(syncHeight, 50);
-      setTimeout(syncHeight, 200);
+      scheduleSyncHeight();
+      initialSyncTimersRef.current = [
+        setTimeout(scheduleSyncHeight, 50),
+        setTimeout(scheduleSyncHeight, 200),
+      ];
     };
 
     iframe.addEventListener("load", handleLoad);
-    window.addEventListener("resize", syncHeight);
+    window.addEventListener("resize", scheduleSyncHeight);
 
     return () => {
       iframe.removeEventListener("load", handleLoad);
-      window.removeEventListener("resize", syncHeight);
+      window.removeEventListener("resize", scheduleSyncHeight);
+      if (heightRafRef.current !== null) {
+        cancelAnimationFrame(heightRafRef.current);
+        heightRafRef.current = null;
+      }
+      initialSyncTimersRef.current.forEach((timer) => clearTimeout(timer));
+      initialSyncTimersRef.current = [];
       if (mountedDoc) {
         mountedDoc.removeEventListener("click", handleSelect, true);
-        mountedDoc.removeEventListener("dblclick", handleSelect, true);
+        mountedDoc.removeEventListener("input", handleInlineInput, true);
         mountedDoc.removeEventListener("keydown", handleKeyDown, true);
         const observer = (mountedDoc as any).__flowResizeObserver as MutationObserver | undefined;
         observer?.disconnect();
@@ -598,7 +660,7 @@ export function HTMLPreviewFrame({
         clearTimeout(persistTimerRef.current);
       }
     };
-  }, [html, describeElement, markSelectedElement, syncHeight]);
+  }, [html, describeElement, markSelectedElement, queuePersist, scheduleSyncHeight, setInlineEditableTarget]);
 
   return (
     <div className="flex flex-col h-full relative overflow-hidden">
@@ -662,32 +724,29 @@ export function HTMLPreviewFrame({
 
               {selectedElement && (
                 <div
-                  className="absolute z-20 w-72 rounded-xl border bg-background/95 backdrop-blur-sm shadow-lg"
+                  className="absolute z-20 w-[324px] rounded-xl border border-border/70 bg-background/95 backdrop-blur-sm shadow-lg"
                   style={{ left: `${inspectorPosition.x}px`, top: `${inspectorPosition.y}px` }}
                   data-testid="panel-element-inspector"
                 >
-                  <div className="flex items-center justify-between border-b px-3 py-2">
-                    <div className="text-xs font-medium">Edit {selectedElement.tag}</div>
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      className="h-7 w-7"
-                      onClick={() => {
-                        setSelectedElement(null);
-                        markSelectedElement();
-                      }}
-                      data-testid="button-close-inspector"
-                    >
-                      <X className="w-4 h-4" />
-                    </Button>
-                  </div>
-                  <div className="space-y-2.5 p-3 max-h-[58vh] overflow-y-auto">
+                  <div className="space-y-2 p-2.5 max-h-[58vh] overflow-y-auto">
+                    <div className="flex items-center justify-end">
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        className="h-7 w-7 rounded-full"
+                        onClick={() => {
+                          setSelectedElement(null);
+                          markSelectedElement();
+                          setInlineEditableTarget();
+                        }}
+                        data-testid="button-close-inspector"
+                      >
+                        <X className="w-4 h-4" />
+                      </Button>
+                    </div>
+
                     {selectedElement.canEditImage && (
-                      <div className="space-y-2">
-                        <label className="text-[11px] font-medium text-muted-foreground mb-1 block">
-                          <ImageIcon className="inline w-3 h-3 mr-1" />
-                          Image
-                        </label>
+                      <div className="space-y-2 rounded-lg bg-muted/25 p-2">
                         <Input
                           value={selectedElement.imageSrc}
                           onChange={(event) => applySelectedElementUpdate({ imageSrc: event.target.value })}
@@ -725,78 +784,56 @@ export function HTMLPreviewFrame({
                       </div>
                     )}
 
-                    {selectedElement.canEditText && (
-                      <div>
-                        <label className="text-[11px] font-medium text-muted-foreground mb-1 block">
-                          <Type className="inline w-3 h-3 mr-1" />
-                          Text
-                        </label>
-                        <Textarea
-                          value={selectedElement.text}
-                          onChange={(event) => applySelectedElementUpdate({ text: event.target.value })}
-                          className="min-h-[90px] text-xs bg-card"
-                          data-testid="input-inspector-text"
-                        />
-                      </div>
-                    )}
-
                     {selectedElement.canEditLink && (
-                      <div>
-                        <label className="text-[11px] font-medium text-muted-foreground mb-1 block">
-                          <Link2 className="inline w-3 h-3 mr-1" />
-                          Link
-                        </label>
+                      <div className="flex items-center gap-2 rounded-lg bg-muted/25 px-2 py-1.5">
+                        <Link2 className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
                         <Input
                           value={selectedElement.href}
                           onChange={(event) => applySelectedElementUpdate({ href: event.target.value })}
-                          className="h-8 text-xs bg-card"
+                          className="h-8 text-xs bg-card border-border/60"
                           placeholder="https://..."
                           data-testid="input-inspector-link"
                         />
                       </div>
                     )}
 
-                    <div className="grid grid-cols-2 gap-2">
-                      <div>
-                        <label className="text-[11px] font-medium text-muted-foreground mb-1 block">Font size</label>
+                    <div className="grid grid-cols-2 gap-2 rounded-lg bg-muted/25 p-2">
+                      <div className="flex items-center gap-1.5">
+                        <Type className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
                         <Input
                           value={selectedElement.fontSize}
                           onChange={(event) => applySelectedElementUpdate({ fontSize: event.target.value })}
-                          className="h-8 text-xs bg-card"
+                          className="h-8 text-xs bg-card border-border/60"
                           placeholder="16px"
                           data-testid="input-inspector-font-size"
                         />
                       </div>
                       <div>
-                        <label className="text-[11px] font-medium text-muted-foreground mb-1 block">Font family</label>
                         <Input
                           list="flow-font-family-presets"
                           value={selectedElement.fontFamily}
                           onChange={(event) => applySelectedElementUpdate({ fontFamily: event.target.value })}
-                          className="h-8 text-xs bg-card"
+                          className="h-8 text-xs bg-card border-border/60"
                           placeholder="Arial, sans-serif"
                           data-testid="input-inspector-font-family"
                         />
                       </div>
                     </div>
                     {selectedElement.canEditColor && (
-                      <div>
-                        <label className="text-[11px] font-medium text-muted-foreground mb-1 block">
-                          <Palette className="inline w-3 h-3 mr-1" />
-                          Font color
-                        </label>
+                      <div className="flex items-center gap-2 rounded-lg bg-muted/25 px-2 py-1.5">
+                        <Palette className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
                         <div className="flex items-center gap-2">
                           <Input
                             type="color"
                             value={normalizeColorToHex(selectedElement.color)}
                             onChange={(event) => applySelectedElementUpdate({ color: event.target.value })}
-                            className="h-8 w-10 p-1 bg-card"
+                            className="h-8 w-10 p-1 bg-card border-border/60"
                             data-testid="input-inspector-font-color-picker"
                           />
                           <Input
                             value={selectedElement.color}
                             onChange={(event) => applySelectedElementUpdate({ color: event.target.value })}
-                            className="h-8 text-xs bg-card"
+                            className="h-8 text-xs bg-card border-border/60"
                             placeholder="#111827"
                             data-testid="input-inspector-font-color"
                           />
