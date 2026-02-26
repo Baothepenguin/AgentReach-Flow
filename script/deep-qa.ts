@@ -355,6 +355,7 @@ async function runSmokeSuite(baseUrl: string): Promise<void> {
       email: userEmail,
       password: userPassword,
       name: `QA User ${unique}`,
+      accountType: "internal_operator",
     },
   });
   const registerJson = requireObject(registerResp.json, "auth register response");
@@ -388,7 +389,78 @@ async function runSmokeSuite(baseUrl: string): Promise<void> {
     expectedStatus: 200,
   });
 
-  log("API smoke 2/6: create client");
+  log("API smoke 2/7: DIY mode onboarding + hire-us handoff");
+  const diySession = new ApiSession(baseUrl);
+  const diyEmail = `qa-diy-${unique}@agentreach.test`;
+  const diyRegisterResp = await diySession.request("POST", "/api/auth/register", {
+    label: "diy auth register",
+    expectedStatus: 200,
+    body: {
+      email: diyEmail,
+      password: userPassword,
+      name: `QA DIY ${unique}`,
+      accountType: "diy_customer",
+    },
+  });
+  const diyRegisterJson = requireObject(diyRegisterResp.json, "diy auth register response");
+  const diyRegisterUser = requireObject(diyRegisterJson.user ?? null, "diy auth register user");
+  assert(
+    getString(diyRegisterUser.accountType ?? null, "diy account type") === "diy_customer",
+    "diy account type mismatch"
+  );
+
+  const diyPlanResp = await diySession.request("GET", "/api/diy/plan", {
+    label: "diy plan",
+    expectedStatus: 200,
+  });
+  const diyPlanJson = requireObject(diyPlanResp.json, "diy plan response");
+  assert(getString(diyPlanJson.code ?? null, "diy plan code").includes("diy"), "diy plan code missing");
+
+  const onboardingBeforeResp = await diySession.request("GET", "/api/auth/diy/onboarding-status", {
+    label: "diy onboarding status before hire-us",
+    expectedStatus: 200,
+  });
+  const onboardingBeforeJson = requireObject(onboardingBeforeResp.json, "diy onboarding status before response");
+  assert(
+    getString(onboardingBeforeJson.serviceMode ?? null, "diy service mode before") === "diy_active",
+    "expected diy_active before hire-us"
+  );
+
+  const hireUsResp = await diySession.request("POST", "/api/diy/hire-us", {
+    label: "diy hire-us",
+    expectedStatus: 200,
+    body: {},
+  });
+  const hireUsJson = requireObject(hireUsResp.json, "diy hire-us response");
+  const hireUsMode = getString(hireUsJson.serviceMode ?? null, "diy hire-us mode");
+  assert(
+    hireUsMode === "dfy_requested" || hireUsMode === "dfy_active",
+    `unexpected service mode after hire-us: ${hireUsMode}`
+  );
+
+  const onboardingAfterResp = await diySession.request("GET", "/api/auth/diy/onboarding-status", {
+    label: "diy onboarding status after hire-us",
+    expectedStatus: 200,
+  });
+  const onboardingAfterJson = requireObject(onboardingAfterResp.json, "diy onboarding status after response");
+  const onboardingMode = getString(onboardingAfterJson.serviceMode ?? null, "diy service mode after");
+  assert(
+    onboardingMode === "dfy_requested" || onboardingMode === "dfy_active",
+    `unexpected diy onboarding service mode after hire-us: ${onboardingMode}`
+  );
+
+  const funnelSummaryResp = await diySession.request("GET", "/api/diy/funnel-summary", {
+    label: "diy funnel summary",
+    expectedStatus: 200,
+  });
+  const funnelSummaryJson = requireObject(funnelSummaryResp.json, "diy funnel summary response");
+  const funnelCounts = requireObject(funnelSummaryJson.counts ?? null, "diy funnel summary counts");
+  assert(
+    Number(funnelCounts.onboarding_started || 0) >= 1,
+    "diy funnel summary should include onboarding_started event"
+  );
+
+  log("API smoke 3/7: create client");
   const clientResp = await session.request("POST", "/api/clients", {
     label: "create client",
     expectedStatus: 201,
@@ -405,7 +477,19 @@ async function runSmokeSuite(baseUrl: string): Promise<void> {
   const clientJson = requireObject(clientResp.json, "create client response");
   const clientId = getString(clientJson.id ?? null, "create client id");
 
-  log("API smoke 3/6: create subscription + invoice auto-newsletter");
+  const verificationResp = await session.request("GET", `/api/clients/${clientId}/verification-status`, {
+    label: "client verification status",
+    expectedStatus: [200, 400],
+  });
+  if (verificationResp.status === 200) {
+    const verificationJson = requireObject(verificationResp.json, "verification status response");
+    assert(typeof verificationJson.isVerified === "boolean", "verification status: expected boolean isVerified");
+  } else {
+    const verificationErr = requireObject(verificationResp.json, "verification status error response");
+    assert(typeof verificationErr.error === "string", "verification status error: expected string error");
+  }
+
+  log("API smoke 4/7: create subscription + invoice auto-newsletter");
   const subscriptionResp = await session.request("POST", "/api/subscriptions", {
     label: "create subscription",
     expectedStatus: 201,
@@ -458,7 +542,13 @@ async function runSmokeSuite(baseUrl: string): Promise<void> {
     "manual newsletter should keep subscription linkage"
   );
 
-  log("API smoke 4/6: audience contact + archive/restore/delete sanity");
+  const sendJobsResp = await session.request("GET", `/api/newsletters/${newsletterId}/send-jobs`, {
+    label: "list send jobs",
+    expectedStatus: 200,
+  });
+  assert(Array.isArray(sendJobsResp.json), "send jobs list: expected array response");
+
+  log("API smoke 5/7: audience contact + archive/restore/delete sanity");
   const contactResp = await session.request("POST", `/api/clients/${clientId}/contacts`, {
     label: "create contact",
     expectedStatus: [200, 201],
@@ -580,7 +670,7 @@ async function runSmokeSuite(baseUrl: string): Promise<void> {
     expectedStatus: 204,
   });
 
-  log("API smoke 5/6: status transition guard + send-test no mutation");
+  log("API smoke 6/7: status transition guard + send-test no mutation");
   const invalidSentResp = await session.request("PATCH", `/api/newsletters/${newsletterId}`, {
     label: "guard draft->sent",
     expectedStatus: 400,
@@ -648,7 +738,7 @@ async function runSmokeSuite(baseUrl: string): Promise<void> {
   const postTestNewsletter = requireObject(postTestNewsletterJson.newsletter ?? null, "newsletter after test");
   assert(getString(postTestNewsletter.status ?? null, "newsletter status after test") === "approved", "send-test must not change newsletter status");
 
-  log("API smoke 6/6: upload request-url -> upload -> complete (fallback-aware)");
+  log("API smoke 7/7: upload request-url -> upload -> complete (fallback-aware)");
   const uploadFile = Buffer.from(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2B9kAAAAASUVORK5CYII=",
     "base64"

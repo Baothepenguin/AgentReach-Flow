@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Loader2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import logoPath from "@assets/Logo_Colored_Trans_1770505643619.png";
@@ -19,6 +20,7 @@ const loginSchema = z.object({
 
 const registerSchema = loginSchema.extend({
   name: z.string().min(2, "Name must be at least 2 characters"),
+  accountType: z.enum(["diy_customer", "internal_operator"]).default("diy_customer"),
 });
 
 type LoginForm = z.infer<typeof loginSchema>;
@@ -29,6 +31,7 @@ export default function LoginPage() {
   const { toast } = useToast();
   const [isLoading, setIsLoading] = useState(false);
   const [activeTab, setActiveTab] = useState("login");
+  const allowInternalSignup = import.meta.env.DEV || import.meta.env.VITE_ALLOW_INTERNAL_SIGNUP === "1";
 
   const loginForm = useForm<LoginForm>({
     resolver: zodResolver(loginSchema),
@@ -37,7 +40,7 @@ export default function LoginPage() {
 
   const registerForm = useForm<RegisterForm>({
     resolver: zodResolver(registerSchema),
-    defaultValues: { email: "", password: "", name: "" },
+    defaultValues: { email: "", password: "", name: "", accountType: "diy_customer" },
   });
 
   const handleLogin = async (data: LoginForm) => {
@@ -59,7 +62,7 @@ export default function LoginPage() {
   const handleRegister = async (data: RegisterForm) => {
     setIsLoading(true);
     try {
-      await register(data.email, data.password, data.name);
+      await register(data.email, data.password, data.name, data.accountType);
       toast({ title: "Account created!" });
     } catch (error) {
       toast({
@@ -163,6 +166,29 @@ export default function LoginPage() {
                         </FormItem>
                       )}
                     />
+                    {allowInternalSignup ? (
+                      <FormField
+                        control={registerForm.control}
+                        name="accountType"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Account Type</FormLabel>
+                            <Select value={field.value} onValueChange={field.onChange}>
+                              <FormControl>
+                                <SelectTrigger data-testid="select-register-account-type">
+                                  <SelectValue />
+                                </SelectTrigger>
+                              </FormControl>
+                              <SelectContent>
+                                <SelectItem value="diy_customer">$49/mo DIY Customer</SelectItem>
+                                <SelectItem value="internal_operator">Internal Operator</SelectItem>
+                              </SelectContent>
+                            </Select>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    ) : null}
                     <FormField
                       control={registerForm.control}
                       name="email"
@@ -215,7 +241,7 @@ export default function LoginPage() {
           </Tabs>
         </Card>
         <p className="text-center text-xs text-muted-foreground mt-6">
-          Internal use only. Contact admin for access.
+          DIY and internal fulfillment in one workspace.
         </p>
       </div>
     </div>

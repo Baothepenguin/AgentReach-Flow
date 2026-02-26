@@ -11,6 +11,12 @@ async function initStripe() {
     return;
   }
 
+  const stripeSecret = String(process.env.STRIPE_SECRET_KEY || "").trim();
+  if (!stripeSecret || /\s/.test(stripeSecret) || !stripeSecret.startsWith("sk_")) {
+    console.warn("STRIPE_SECRET_KEY missing/invalid, skipping Stripe initialization");
+    return;
+  }
+
   try {
     console.log('Initializing Stripe schema...');
     await runMigrations({ databaseUrl } as any);

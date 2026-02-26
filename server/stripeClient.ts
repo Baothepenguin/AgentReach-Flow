@@ -2,10 +2,18 @@ import Stripe from 'stripe';
 
 let connectionSettings: any;
 
+function sanitizeStripeKey(value: unknown): string {
+  const normalized = String(value || "").trim();
+  // Keys with spaces/newlines break Authorization headers.
+  return /\s/.test(normalized) ? "" : normalized;
+}
+
 async function getCredentials() {
   // Prefer normal env vars (Vercel/standard hosting). Keep connector fallback for Replit.
-  const publishableEnv = process.env.STRIPE_PUBLISHABLE_KEY || process.env.VITE_STRIPE_PUBLISHABLE_KEY;
-  const secretEnv = process.env.STRIPE_SECRET_KEY;
+  const publishableEnv = sanitizeStripeKey(
+    process.env.STRIPE_PUBLISHABLE_KEY || process.env.VITE_STRIPE_PUBLISHABLE_KEY
+  );
+  const secretEnv = sanitizeStripeKey(process.env.STRIPE_SECRET_KEY);
   if (publishableEnv && secretEnv) {
     return { publishableKey: publishableEnv, secretKey: secretEnv };
   }
